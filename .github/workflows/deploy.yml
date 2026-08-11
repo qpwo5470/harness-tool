@@ -17,7 +17,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # 20 은 jsdom→undici 의 webidl.util.markAsUncloneable 부재로 DOM 테스트가 깨진다.
+          node-version: 22
           cache: npm
       - run: npm ci
       - run: npm run typecheck
