@@ -1,0 +1,210 @@
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #111827; }
+
+.app { display: flex; flex-direction: column; height: 100%; }
+
+.topbar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 14px; border-bottom: 1px solid #e5e7eb; background: #fff;
+}
+.topbar .doc-name { color: #6b7280; font-size: 13px; }
+.topbar .spacer { flex: 1; }
+.topbar button {
+  padding: 5px 10px; font-size: 13px; border: 1px solid #d1d5db;
+  background: #fff; border-radius: 6px; cursor: pointer;
+}
+.topbar button:hover { background: #f3f4f6; }
+.view-toggle { display: flex; gap: 4px; }
+.view-toggle .on { background: #3b82f6; color: #fff; border-color: #3b82f6; }
+
+.body { flex: 1; display: grid; grid-template-columns: 200px 1fr 280px; min-height: 0; }
+.canvas-area { min-width: 0; border-left: 1px solid #e5e7eb; border-right: 1px solid #e5e7eb; }
+.right { display: flex; flex-direction: column; overflow: auto; }
+
+.panel { padding: 12px; border-bottom: 1px solid #e5e7eb; }
+.panel h3 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: #374151; }
+.muted { color: #9ca3af; font-size: 12px; }
+.prop { font-size: 11px; background: #f9fafb; padding: 8px; border-radius: 6px; overflow: auto; max-height: 240px; }
+.parts { width: 100%; font-size: 12px; border-collapse: collapse; }
+.parts td { padding: 3px 0; border-bottom: 1px solid #f3f4f6; }
+.parts .qty { text-align: right; color: #6b7280; }
+
+/* --- 라이브러리 --- */
+.lib .lib-cat { margin-bottom: 10px; }
+.lib-cat-title { font-size: 11px; color: #6b7280; margin: 6px 0 3px; }
+.lib-item {
+  display: block; width: 100%; text-align: left; margin: 2px 0;
+  padding: 5px 8px; font-size: 12px; border: 1px solid #e5e7eb;
+  background: #fff; border-radius: 5px; cursor: pointer;
+}
+.lib-item:hover { background: #eff6ff; border-color: #3b82f6; }
+
+/* --- 속성 편집기 --- */
+.prop-kind { font-size: 12px; font-weight: 600; color: #3b82f6; margin-bottom: 6px; }
+.prop-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 4px 0; font-size: 12px; }
+.prop-row span { color: #6b7280; white-space: nowrap; }
+.prop-row input, .prop-row select { width: 130px; padding: 3px 6px; font-size: 12px; border: 1px solid #d1d5db; border-radius: 5px; }
+button.danger { margin-top: 10px; width: 100%; padding: 6px; font-size: 12px; color: #b91c1c; background: #fff; border: 1px solid #fca5a5; border-radius: 6px; cursor: pointer; }
+button.danger:hover { background: #fef2f2; }
+.parts .cat { color: #9ca3af; font-size: 11px; padding-right: 8px; white-space: nowrap; }
+
+/* --- 문서명 / 탭 / 접속표 --- */
+.doc-name-input {
+  font-size: 13px; padding: 3px 7px; border: 1px solid transparent;
+  border-radius: 5px; background: transparent; color: #374151; width: 150px;
+}
+.doc-name-input:hover { border-color: #e5e7eb; }
+.doc-name-input:focus { border-color: #3b82f6; background: #fff; outline: none; }
+.topbar button.primary { background: #3b82f6; color: #fff; border-color: #3b82f6; }
+.topbar button.primary:hover { background: #2563eb; }
+
+.tabs { display: flex; border-bottom: 1px solid #e5e7eb; }
+.tabs button {
+  flex: 1; padding: 7px 4px; font-size: 12px; border: none;
+  background: #f9fafb; cursor: pointer; color: #6b7280;
+  border-bottom: 2px solid transparent;
+}
+.tabs button.on { background: #fff; color: #3b82f6; border-bottom-color: #3b82f6; font-weight: 600; }
+
+.parts thead th {
+  text-align: left; font-size: 10px; color: #9ca3af; font-weight: 600;
+  padding-bottom: 4px; border-bottom: 1px solid #e5e7eb;
+}
+.parts.runs td { vertical-align: top; padding: 5px 0; line-height: 1.4; }
+.parts tr.sel { background: #eff6ff; }
+
+/* --- 라이브러리 검색/뱃지 --- */
+.lib-search {
+  width: 100%; padding: 5px 8px; margin-bottom: 8px; font-size: 12px;
+  border: 1px solid #d1d5db; border-radius: 5px;
+}
+.lib-item { display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+.lib-item:disabled { opacity: .55; cursor: default; }
+.lib-item:disabled:hover { background: #fff; border-color: #e5e7eb; }
+.pin-badge {
+  font-size: 9px; color: #6b7280; background: #f3f4f6;
+  padding: 1px 5px; border-radius: 8px; flex-shrink: 0;
+}
+.body { grid-template-columns: 215px 1fr 300px; }
+.lib { overflow-y: auto; max-height: 100%; }
+
+/* --- 라이브러리 행/액션 --- */
+.lib-row { display: flex; align-items: center; gap: 3px; margin: 2px 0; }
+.lib-row .lib-item { margin: 0; flex: 1; min-width: 0; }
+.lib-row .lib-item > :first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-row-actions { display: flex; gap: 2px; flex-shrink: 0; }
+.lib-row-actions button {
+  width: 22px; height: 24px; padding: 0; font-size: 11px; line-height: 1;
+  border: 1px solid #e5e7eb; background: #fff; border-radius: 4px;
+  cursor: pointer; color: #6b7280;
+}
+.lib-row-actions button:hover { background: #f3f4f6; color: #111827; }
+.lib-new {
+  width: 100%; padding: 6px; margin-bottom: 6px; font-size: 12px; font-weight: 600;
+  color: #fff; background: #3b82f6; border: none; border-radius: 5px; cursor: pointer;
+}
+.lib-new:hover { background: #2563eb; }
+.lib-io { display: flex; gap: 4px; margin-bottom: 8px; }
+.lib-io button {
+  flex: 1; padding: 4px; font-size: 11px; border: 1px solid #d1d5db;
+  background: #fff; border-radius: 5px; cursor: pointer; color: #6b7280;
+}
+.lib-io button:hover:not(:disabled) { background: #f3f4f6; }
+.lib-io button:disabled { opacity: .45; cursor: default; }
+
+/* --- 핀맵 에디터 --- */
+.pme-backdrop {
+  position: fixed; inset: 0; background: rgba(17, 24, 39, .45);
+  display: flex; align-items: center; justify-content: center; z-index: 50;
+}
+.pme {
+  background: #fff; border-radius: 10px; width: min(940px, 94vw);
+  max-height: 88vh; display: flex; flex-direction: column; overflow: hidden;
+  box-shadow: 0 20px 50px rgba(0,0,0,.25);
+}
+.pme-head {
+  display: flex; align-items: center; gap: 8px; padding: 12px 16px;
+  border-bottom: 1px solid #e5e7eb;
+}
+.pme-head .spacer { flex: 1; }
+.pme-head button {
+  padding: 5px 12px; font-size: 13px; border: 1px solid #d1d5db;
+  background: #fff; border-radius: 6px; cursor: pointer;
+}
+.pme-head button.primary { background: #3b82f6; color: #fff; border-color: #3b82f6; }
+.pme-head button.primary:disabled { opacity: .5; cursor: default; }
+
+.pme-body { display: grid; grid-template-columns: 240px 1fr 230px; overflow: auto; }
+.pme-meta, .pme-pin-edit { padding: 14px; }
+.pme-meta { border-right: 1px solid #e5e7eb; }
+.pme-pin-edit { border-left: 1px solid #e5e7eb; }
+.pme-sep { height: 1px; background: #e5e7eb; margin: 12px 0; }
+.pme-renumber { display: flex; gap: 4px; }
+.pme-renumber button {
+  flex: 1; padding: 5px 2px; font-size: 11px; border: 1px solid #d1d5db;
+  background: #fff; border-radius: 5px; cursor: pointer;
+}
+.pme-renumber button:hover { background: #eff6ff; border-color: #3b82f6; }
+
+.pme-grid-wrap { padding: 14px; overflow: auto; }
+.pme-grid {
+  position: relative; margin-top: 8px;
+  background-image: linear-gradient(#f3f4f6 1px, transparent 1px),
+                    linear-gradient(90deg, #f3f4f6 1px, transparent 1px);
+  background-size: 34px 34px;
+  border: 1px solid #e5e7eb; border-radius: 6px;
+}
+.pme-pin {
+  position: absolute; width: 32px; height: 32px; padding: 0;
+  border: 1.5px solid #9ca3af; border-radius: 5px; background: #fff;
+  cursor: pointer; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; overflow: hidden;
+}
+.pme-pin:hover { border-color: #3b82f6; }
+.pme-pin.on { border-color: #3b82f6; border-width: 2.5px; box-shadow: 0 0 0 2px #dbeafe; }
+.pme-pin-num { font-size: 11px; font-weight: 600; line-height: 1; }
+.pme-pin-sig { font-size: 7px; color: #6b7280; line-height: 1; max-width: 30px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* --- 실행취소 --- */
+.undo-group { display: flex; gap: 2px; margin-left: 4px; }
+.undo-group button { padding: 4px 9px; font-size: 14px; line-height: 1; }
+
+/* --- 핀별 터미널 지정 --- */
+.pin-terminals { margin-top: 10px; border-top: 1px solid #e5e7eb; padding-top: 8px; }
+.pin-term-list {
+  max-height: 200px; overflow-y: auto; margin: 6px 0;
+  border: 1px solid #f3f4f6; border-radius: 5px; padding: 4px;
+}
+.pin-term-row {
+  display: flex; align-items: center; gap: 6px; padding: 2px 0; font-size: 11px;
+}
+.pin-term-num {
+  width: 26px; flex-shrink: 0; text-align: center; font-weight: 600;
+  background: #f3f4f6; border-radius: 3px; padding: 1px 0; color: #374151;
+}
+.pin-term-row select {
+  flex: 1; min-width: 0; padding: 2px 4px; font-size: 11px;
+  border: 1px solid #d1d5db; border-radius: 4px;
+}
+
+/* --- 배선/노드 레이어 --- */
+/* 배선(SVG)은 항상 커넥터 블록 아래에 그린다.
+   그러지 않으면 검은 와이어가 블록 위를 가로질러 "까만 줄"처럼 보인다. */
+.react-flow__edges { z-index: 0 !important; }
+.react-flow__nodes { z-index: 1 !important; }
+/* 선택된 배선의 라벨은 노드 위로 올려 가려지지 않게 */
+.react-flow__edgelabel-renderer { z-index: 2 !important; }
+
+/* --- 배선 라벨 가독성 --- */
+.react-flow__edge-textbg { fill: #fff !important; }
+.react-flow__edge-text {
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  fill: #111827 !important;
+  paint-order: stroke;          /* 흰 외곽선을 글자 뒤에 깔아 배경과 분리 */
+  stroke: #fff;
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
