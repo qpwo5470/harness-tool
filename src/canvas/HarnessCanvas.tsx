@@ -5,9 +5,10 @@
  * - 도면 프레임 + 제목블록
  * - 배선 hover → 상세 카드 + 접속표 동기 강조
  * - 드래그로 핀↔핀 결선(loose 모드) → 스토어에 Wire 생성
+ * - 라이브러리에서 부품을 끌어다 놓으면(HTML5 DnD) 그 자리에 커넥터/장치 생성
  * - 선택 모델(§11): 호버(임시) / 클릭 고정 / Shift·박스 드래그 다중 / ESC 한 단계
  */
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -17,6 +18,7 @@ import {
   ConnectionMode,
   useNodesState,
   useEdgesState,
+  useReactFlow,
   type Connection,
   type Node,
   type Edge,
@@ -28,14 +30,51 @@ import { useHarnessStore } from '../store/harnessStore';
 import { useHoverStore } from '../store/hoverStore';
 import { useSelectionStore } from '../store/selectionStore';
 import { docToNodes, docToEdges, highlightedWires, refLabels, colorAbbr } from './docToFlow';
-import { nodeTypes } from './nodes';
+import { nodeTypes, PAD, PITCH } from './nodes';
 import { edgeTypes } from './OrthogonalEdge';
 import { WireCard } from './WireCard';
-import type { Endpoint, Wire } from '../types';
-import { suggestedColor } from '../library/seed';
+import type { Device, Endpoint, PartLibraryItem, Wire } from '../types';
+import { SEED_PARTS, instantiate, suggestedColor } from '../library/seed';
+import { loadCustomParts } from '../library/customParts';
+import { PART_DND_MIME, DEVICE_DND_ID } from '../library/LibraryPanel';
 
 let wireSeq = 0;
 const nextWireId = () => `w-${Date.now().toString(36)}-${wireSeq++}`;
+
+let devSeq = 0;
+const nextDeviceId = () => `dev-${Date.now().toString(36)}-${devSeq++}`;
+
+/** nodes.tsx 의 하우징 안쪽 여백과 같은 값 */
+const INSET = 6;
+/** 장치 블록은 단자 수에 따라 커지므로 빈 블록 기준 대략치로만 보정한다 */
+const DEVICE_OFFSET = { x: 30, y: 16 };
+
+/**
+ * 드롭 좌표는 노드 "좌상단"이 된다. 그대로 쓰면 부품이 커서 오른쪽 아래로
+ * 밀려 나와 놓고 싶은 자리와 어긋난다. 하우징 박스의 절반만큼 당겨
+ * 커서가 부품 가운데에 오게 한다. (크기 식은 nodes.tsx 논리 뷰와 동일)
+ */
+function centerOffset(item: PartLibraryItem) {
+  const layout = item.pinLayout;
+  const cols = layout?.length
+    ? Math.max(...layout.map((s) => s.offset.x)) + 1
+    : Math.max(1, item.pinCount ?? 2);
+  const rows = layout?.length ? Math.max(...layout.map((s) => s.offset.y)) + 1 : 1;
+  return {
+    x: (cols * PITCH + INSET * 2 - (PITCH - PAD)) / 2,
+    y: (rows * PITCH + INSET * 2 - (PITCH - PAD)) / 2,
+  };
+}
+
+/**
+ * 우리 드래그인지 판별. dragover 에서는 값을 못 읽으므로 types 로만 본다.
+ * (다른 곳에서 온 파일·텍스트 드래그에는 드롭 표시를 켜지 않는다)
+ */
+function isPartDrag(e: React.DragEvent) {
+  const types = e.dataTransfer?.types;
+  if (!types) return false;
+  return Array.from(types as ArrayLike<string>).includes(PART_DND_MIME);
+}
 
 function toEndpoint(store: ReturnType<typeof useHarnessStore.getState>, nodeId: string, handle: string | null): Endpoint | null {
   const doc = store.doc;
@@ -55,6 +94,10 @@ function Flow() {
   const updateConnector = useHarnessStore((s) => s.updateConnector);
   const updateDevice = useHarnessStore((s) => s.updateDevice);
   const addWire = useHarnessStore((s) => s.addWire);
+  const addConnector = useHarnessStore((s) => s.addConnector);
+  const addUsedPart = useHarnessStore((s) => s.addUsedPart);
+  const addDevice = useHarnessStore((s) => s.addDevice);
+  const select = useHarnessStore((s) => s.select);
   const selection = useHarnessStore((s) => s.selection);
 
   const hoverWire = useHoverStore((s) => s.wireId);
@@ -72,6 +115,39 @@ function Flow() {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const wrapRef = useRef<HTMLDivElement>(null);
+
+  // 라이브러리에서 부품을 끌고 들어온 동안만 드롭 표시를 켠다
+  const [dropping, setDropping] = useState(false);
+  /**
+   * 스페이스를 누르고 있는 동안은 화면 이동 모드.
+   * 박스 선택이 좌클릭을 가져갔기 때문에, 트랙패드에서도 쓸 수 있는
+   * 팬 수단이 하나는 있어야 한다(그림 도구의 오랜 관례).
+   */
+  const [spaceHeld, setSpaceHeld] = useState(false);
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => {
+      if (e.code !== 'Space') return;
+      const el = e.target as HTMLElement | null;
+      if (el && /INPUT|TEXTAREA|SELECT/.test(el.tagName)) return; // 입력 중 공백은 글자다
+      e.preventDefault();
+      setSpaceHeld(true);
+    };
+    const up = (e: KeyboardEvent) => {
+      if (e.code === 'Space') setSpaceHeld(false);
+    };
+    // 창을 벗어난 사이 키를 떼면 눌린 채로 남는다
+    const blur = () => setSpaceHeld(false);
+    window.addEventListener('keydown', down);
+    window.addEventListener('keyup', up);
+    window.addEventListener('blur', blur);
+    return () => {
+      window.removeEventListener('keydown', down);
+      window.removeEventListener('keyup', up);
+      window.removeEventListener('blur', blur);
+    };
+  }, []);
+  // 화면 좌표 → flow 좌표 (줌·팬을 반영). ReactFlowProvider 안에서만 쓸 수 있다.
+  const { screenToFlowPosition } = useReactFlow();
 
   // 강조 대상: hover 가 있으면 hover 우선, 없으면 선택.
   // 다중일 때는 "선택된 것만" 진하게 하므로 네트 확장(active)을 쓰지 않는다.
@@ -147,6 +223,58 @@ function Flow() {
     addWire(wire);
   };
 
+  /* ── 라이브러리 → 캔버스 드래그 배치 ─────────────────────────────────
+     클릭 배치(LibraryPanel.addPart)는 그대로 남아 있다. 여기서는 좌표만
+     "놓은 자리"로 바뀔 뿐, addUsedPart → instantiate → addConnector → select
+     순서는 클릭 경로와 똑같이 지킨다. */
+
+  const onDragOver = (e: React.DragEvent) => {
+    if (!isPartDrag(e)) return;
+    // preventDefault 를 해야 브라우저가 이 영역을 드롭 대상으로 인정한다
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    if (!dropping) setDropping(true);
+  };
+
+  const onDragLeave = (e: React.DragEvent) => {
+    // 자식 요소 사이를 지날 때도 dragleave 가 뜬다 — 래퍼 밖으로 나갈 때만 끈다
+    // (여기서 Node 는 React Flow 의 노드 타입이라 DOM 쪽은 HTMLElement 로 좁힌다)
+    if (e.currentTarget.contains(e.relatedTarget as HTMLElement | null)) return;
+    setDropping(false);
+  };
+
+  const onDrop = (e: React.DragEvent) => {
+    setDropping(false);
+    if (!isPartDrag(e)) return;
+    e.preventDefault();
+    const payload = e.dataTransfer.getData(PART_DND_MIME);
+    if (!payload) return;
+
+    const at = screenToFlowPosition({ x: e.clientX, y: e.clientY });
+
+    if (payload === DEVICE_DND_ID) {
+      const pos = { x: at.x - DEVICE_OFFSET.x, y: at.y - DEVICE_OFFSET.y };
+      const d: Device = {
+        id: nextDeviceId(),
+        name: '새 장치',
+        positions: { logical: pos, physical: pos },
+      };
+      addDevice(d);
+      select(d.id);
+      return;
+    }
+
+    // 부품 목록은 [...custom, ...SEED_PARTS] — id 로 되찾는다
+    const item = [...loadCustomParts(), ...SEED_PARTS].find((p) => p.id === payload);
+    if (!item || item.category === 'terminal') return; // 단자는 캔버스에 놓지 않음
+
+    const off = centerOffset(item);
+    addUsedPart(item);
+    const conn = instantiate(item, { x: at.x - off.x, y: at.y - off.y });
+    addConnector(conn);
+    select(conn.id);
+  };
+
   // 노드는 단일 선택만 다룬다 — 다중 선택 속성 탭은 배선 공통 속성용이다.
   const onNodeClick: NodeMouseHandler = (_e, n) => setIds([n.id]);
   const onEdgeClick: EdgeMouseHandler = (e, ed) => clickSelect(ed.id, e.shiftKey || e.metaKey);
@@ -208,7 +336,14 @@ function Flow() {
   const pinned = multi || selection != null;
 
   return (
-    <div className="hz-canvas-wrap" ref={wrapRef} onMouseMove={onMouseMove}>
+    <div
+      className={`hz-canvas-wrap${dropping ? ' hz-dropping' : ''}`}
+      ref={wrapRef}
+      onMouseMove={onMouseMove}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -225,10 +360,15 @@ function Flow() {
         onSelectionChange={onSelectionChange}
         onPaneClick={() => setIds([])}
         connectionMode={ConnectionMode.Loose}
-        // 빈 곳을 끌면 점선 박스로 다중 선택. 화면 이동은 가운데·오른쪽 버튼으로 넘긴다.
-        // (React Flow 는 이 둘을 짝으로 써야 좌클릭 드래그가 박스가 된다)
-        selectionOnDrag
-        panOnDrag={[1, 2]}
+        // 박스 선택을 켜면 좌클릭 드래그를 선택이 가져가므로 화면 이동 수단을
+        // 따로 남겨야 한다. CAD 관례대로 가운데/오른쪽 버튼 드래그를 두되,
+        // 트랙패드에서 그 둘은 사실상 불가능하므로 두 손가락 스크롤(panOnScroll)과
+        // 스페이스+드래그를 함께 연다. 확대·축소는 ⌘/Ctrl + 스크롤.
+        selectionOnDrag={!spaceHeld}
+        panOnDrag={spaceHeld ? [0, 1, 2] : [1, 2]}
+        panOnScroll
+        zoomOnScroll={false}
+        zoomActivationKeyCode="Meta"
         // 배선을 노드 아래층에 그린다.
         // 기본값이면 검은 선이 커넥터 블록 위를 가로질러 "까만 줄"처럼 보인다.
         elevateNodesOnSelect

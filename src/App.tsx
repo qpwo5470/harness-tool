@@ -315,7 +315,11 @@ export default function App() {
       <div className="body">
         <LibraryPanel />
         <main className="canvas-area">
-          {isEmpty ? (
+          {/* 빈 상태에서도 캔버스는 살아 있어야 한다 —
+              온보딩이 "끌어다 놓으라"고 안내하는데 정작 드롭을 못 받으면 거짓말이 된다.
+              캔버스를 그대로 두고 그 위에 온보딩을 얹는다(드롭은 통과시킨다). */}
+          <HarnessCanvas />
+          {isEmpty && (
             <EmptyCanvas
               onFocusLibrary={() => {
                 (document.querySelector('.lib-search') as HTMLInputElement | null)?.focus();
@@ -325,8 +329,6 @@ export default function App() {
               }}
               onImport={() => fileRef.current?.click()}
             />
-          ) : (
-            <HarnessCanvas />
           )}
         </main>
         <div className="right">

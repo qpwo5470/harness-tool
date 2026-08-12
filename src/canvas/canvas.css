@@ -150,6 +150,29 @@
 .hz-multi-badge b { font-weight: 700; }
 
 /* ============================================================
+   라이브러리 → 캔버스 드롭 표시
+   ============================================================ */
+
+/* 부품을 끌고 들어온 동안만 나타난다. 도면 프레임(inset 14px)에 맞춰
+   점선 테두리를 겹쳐 "여기에 놓을 수 있다"를 알린다.
+   도면 요소이므로 radius 0, 색은 스틸(--accent) 하나만 쓴다. */
+.hz-canvas-wrap.hz-dropping::before,
+.hz-canvas-wrap.hz-dropping::after {
+  content: '';
+  position: absolute; inset: 14px; z-index: 6; pointer-events: none;
+}
+/* 옅은 틴트 — 도면을 가리지 않는 선에서 영역만 알린다 */
+.hz-canvas-wrap.hz-dropping::before {
+  background: var(--accent-tint);
+  opacity: .45;
+}
+/* 점선 테두리는 흐려지면 안 되므로 틴트와 분리한다 */
+.hz-canvas-wrap.hz-dropping::after {
+  border: 2px dashed var(--accent);
+  border-radius: 0;
+}
+
+/* ============================================================
    배선 상세 카드
    ============================================================ */
 .hz-card {

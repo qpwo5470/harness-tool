@@ -102,14 +102,14 @@ export function parseCustomParts(json: string): PartLibraryItem[] {
  */
 export function parsePartsFile(text: string, filename?: string): CsvParseResult {
   const ext = (filename ?? '').toLowerCase().match(/\.([a-z0-9]+)$/)?.[1];
-  if (ext === 'csv' || ext === 'txt') {
+  if (ext === 'csv' || ext === 'tsv' || ext === 'txt') {
     return parsePartsCsv(text);
   }
   if (ext === 'json') {
     return { parts: parseCustomParts(text), warnings: [] };
   }
   // 확장자를 모르면 내용으로 판별한다 — JSON 은 { 나 [ 로 시작한다
-  const head = (text ?? '').replace(/^\uFEFF/, '').trimStart()[0];
+  const head = (text ?? '').replace(/^﻿/, '').trimStart()[0];
   if (head === '{' || head === '[') {
     return { parts: parseCustomParts(text), warnings: [] };
   }

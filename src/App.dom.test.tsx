@@ -210,6 +210,15 @@ describe('빈 상태 (§5)', () => {
     expect((screen.getByText('PDF 도면') as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it('빈 상태에서도 캔버스가 살아 있어 드롭을 받을 수 있다', () => {
+    render(<App />);
+    fireEvent.click(screen.getByText('+ 하네스'));
+    // 온보딩이 캔버스를 대체하지 않고 위에 얹힌다 —
+    // "끌어다 놓으라"고 안내하면서 드롭을 못 받으면 거짓말이 된다
+    expect(screen.getByText('아직 커넥터가 없습니다')).toBeTruthy();
+    expect(document.querySelector('.hz-canvas-wrap')).toBeTruthy();
+  });
+
   it('빈 상태에서도 좌우 패널은 자리를 지킨다', () => {
     render(<App />);
     fireEvent.click(screen.getByText('+ 하네스'));

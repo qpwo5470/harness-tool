@@ -7,7 +7,7 @@ import { useHarnessStore } from '../store/harnessStore';
 import { SEED_PARTS, instantiate } from './seed';
 import {
   loadCustomParts, upsertCustomPart, deleteCustomPart,
-  isCustomPart, exportCustomParts, parseCustomParts, saveCustomParts,
+  isCustomPart, exportCustomParts, parsePartsFile, saveCustomParts,
 } from './customParts';
 import { PinMapEditor } from './PinMapEditor';
 import type { PartLibraryItem, Device } from '../types';
@@ -31,6 +31,25 @@ const GROUPS: { label: string; openByDefault?: boolean; match: (p: PartLibraryIt
   { label: '스플라이스', openByDefault: true, match: (p) => p.id.startsWith('lib-splice') },
 ];
 
+/**
+ * 라이브러리 → 캔버스 드래그 페이로드 (HTML5 DnD, 외부 라이브러리 없음).
+ *
+ * 커스텀 MIME 을 쓰는 이유: 브라우저는 dragover 단계에서 dataTransfer 의 "값"을
+ * 감춘다(보호 모드). types 만 읽을 수 있으므로, 우리 드래그인지 아닌지는
+ * 타입 이름으로 판별해야 한다. 값(부품 id)은 drop 에서 꺼낸다.
+ */
+export const PART_DND_MIME = 'application/x-harness-part';
+/** 장치 블록은 라이브러리 항목이 아니라 이 sentinel 로 싣는다 */
+export const DEVICE_DND_ID = '__device__';
+
+/** dragstart 공통 — 커스텀 MIME + text/plain(폴백) 둘 다 싣는다 */
+export function startPartDrag(e: React.DragEvent, payload: string) {
+  e.dataTransfer.setData(PART_DND_MIME, payload);
+  // text/plain 이 비어 있으면 드래그 자체를 시작하지 않는 브라우저가 있다
+  e.dataTransfer.setData('text/plain', payload);
+  e.dataTransfer.effectAllowed = 'copy';
+}
+
 let devSeq = 0;
 
 export function LibraryPanel() {
@@ -52,6 +71,8 @@ export function LibraryPanel() {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(
     () => Object.fromEntries(GROUPS.map((g) => [g.label, !g.openByDefault])),
   );
+  /** 가져오기 결과 안내 — alert 대신 패널 안에 남겨 건너뛴 행을 읽을 수 있게 */
+  const [importNote, setImportNote] = useState<{ ok: boolean; text: string } | null>(null);
   const toggle = (label: string) =>
     setCollapsed((c) => ({ ...c, [label]: !c[label] }));
 
@@ -118,13 +139,25 @@ export function LibraryPanel() {
     URL.revokeObjectURL(url);
   };
 
+  /**
+   * 부품 일괄 등록 — JSON(내보내기 왕복) + CSV(엑셀 부품표) 둘 다 받는다.
+   * 실무 부품표는 엑셀로 오므로 CSV 가 실제 통로다.
+   *
+   * 한 행이 잘못돼도 전체를 버리지 않는다. 파서가 그 행만 건너뛰고
+   * 사유를 남기므로, 몇 건이 들어왔고 무엇이 걸렸는지 함께 알린다.
+   */
   const doImport = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (!f) return;
     f.text().then((txt) => {
-      const incoming = parseCustomParts(txt);
+      const { parts: incoming, warnings } = parsePartsFile(txt, f.name);
       if (!incoming.length) {
-        alert('부품 파일 형식이 아닙니다.');
+        setImportNote({
+          ok: false,
+          text: warnings.length
+            ? `등록된 부품이 없습니다.\n${warnings.slice(0, 5).join('\n')}`
+            : '부품 파일 형식이 아닙니다. (JSON 또는 CSV)',
+        });
         return;
       }
       const merged = [...custom];
@@ -135,35 +168,50 @@ export function LibraryPanel() {
       }
       saveCustomParts(merged);
       setCustom(merged);
+      setImportNote({
+        ok: true,
+        text: warnings.length
+          ? `부품 ${incoming.length}종을 등록했습니다. 건너뛴 행 ${warnings.length}건:\n${warnings.slice(0, 5).join('\n')}`
+          : `부품 ${incoming.length}종을 등록했습니다.`,
+      });
     });
     e.target.value = '';
   };
 
-  const renderItem = (p: PartLibraryItem) => (
-    <div key={p.id} className="lib-row">
-      <button
-        className="lib-item"
-        onClick={() => addPart(p)}
-        title={[p.mpn && `MPN ${p.mpn}`, ...Object.entries(p.spec ?? {}).map(([k, v]) => `${k}: ${v}`)]
-          .filter(Boolean)
-          .join('\n')}
-        disabled={p.category === 'terminal'}
+  const renderItem = (p: PartLibraryItem) => {
+    // 단자는 캔버스에 놓지 않는다 — 클릭과 마찬가지로 드래그도 막는다.
+    const droppable = p.category !== 'terminal';
+    return (
+      <div
+        key={p.id}
+        className="lib-row"
+        draggable={droppable}
+        onDragStart={droppable ? (e) => startPartDrag(e, p.id) : undefined}
       >
-        {p.name}
-        {p.pinCount ? <span className="pin-badge">{p.pinCount}P</span> : null}
-      </button>
-      <div className="lib-row-actions">
-        {isCustomPart(p.id) ? (
-          <>
-            <button title="편집" onClick={() => setEditing(p)}>✎</button>
-            <button title="삭제" onClick={() => handleDelete(p.id)}>✕</button>
-          </>
-        ) : (
-          <button title="복제해서 편집" onClick={() => duplicate(p)}>⧉</button>
-        )}
+        <button
+          className="lib-item"
+          onClick={() => addPart(p)}
+          title={[p.mpn && `MPN ${p.mpn}`, ...Object.entries(p.spec ?? {}).map(([k, v]) => `${k}: ${v}`)]
+            .filter(Boolean)
+            .join('\n')}
+          disabled={p.category === 'terminal'}
+        >
+          {p.name}
+          {p.pinCount ? <span className="pin-badge">{p.pinCount}P</span> : null}
+        </button>
+        <div className="lib-row-actions">
+          {isCustomPart(p.id) ? (
+            <>
+              <button title="편집" onClick={() => setEditing(p)}>✎</button>
+              <button title="삭제" onClick={() => handleDelete(p.id)}>✕</button>
+            </>
+          ) : (
+            <button title="복제해서 편집" onClick={() => duplicate(p)}>⧉</button>
+          )}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <aside className="panel lib">
@@ -175,9 +223,24 @@ export function LibraryPanel() {
       </div>
       <div className="lib-io">
         <button onClick={doExport} disabled={!custom.length}>내보내기</button>
-        <button onClick={() => importRef.current?.click()}>가져오기</button>
-        <input ref={importRef} type="file" accept="application/json" hidden onChange={doImport} />
+        <button onClick={() => importRef.current?.click()} title="JSON 또는 CSV 부품표">
+          가져오기
+        </button>
+        <input
+          ref={importRef}
+          type="file"
+          accept="application/json,.json,text/csv,.csv,.txt"
+          hidden
+          onChange={doImport}
+        />
       </div>
+
+      {importNote && (
+        <div className={`lib-note${importNote.ok ? '' : ' warn'}`} role="status">
+          <span>{importNote.text}</span>
+          <button onClick={() => setImportNote(null)} title="닫기">✕</button>
+        </div>
+      )}
 
       <input
         className="lib-search"
@@ -229,7 +292,14 @@ export function LibraryPanel() {
           <span className="caret" />
           <span className="name">장치</span>
         </div>
-        <button className="lib-item" onClick={addDeviceBlock}>+ 장치 블록</button>
+        <button
+          className="lib-item"
+          draggable
+          onDragStart={(e) => startPartDrag(e, DEVICE_DND_ID)}
+          onClick={addDeviceBlock}
+        >
+          + 장치 블록
+        </button>
       </div>
 
       {(creating || editing) && (

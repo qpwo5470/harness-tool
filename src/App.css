@@ -120,6 +120,7 @@ body {
   grid-template-columns: var(--w-library) 1fr var(--w-side);
 }
 .canvas-area {
+  position: relative;   /* 빈 상태 온보딩이 캔버스 위에 얹힌다 */
   min-width: 0; background: var(--bg-canvas);
   border-left: 1px solid var(--line); border-right: 1px solid var(--line);
 }
@@ -261,6 +262,23 @@ body {
 }
 .lib-io button:hover:not(:disabled) { background: var(--accent-tint); }
 .lib-io button:disabled { opacity: .45; cursor: default; }
+
+/* 가져오기 결과 — 건너뛴 행을 읽을 수 있게 패널 안에 남긴다 */
+.lib-note {
+  display: flex; gap: 6px; align-items: flex-start;
+  margin-bottom: 6px; padding: 6px 7px;
+  background: var(--accent-tint); border-left: 3px solid var(--accent);
+  font-size: var(--fs-cap); line-height: 1.5; color: var(--text-2);
+  white-space: pre-wrap; word-break: break-word;
+}
+.lib-note.warn { background: var(--bg-subtle); border-left-color: var(--muted); }
+.lib-note span { flex: 1; min-width: 0; }
+.lib-note button {
+  flex-shrink: 0; width: 16px; height: 16px; padding: 0; line-height: 1;
+  border: none; background: none; color: var(--muted); cursor: pointer;
+  font-size: var(--fs-cap);
+}
+.lib-note button:hover { color: var(--text); }
 
 .lib-search {
   width: 100%; height: var(--h-control); padding: 0 7px; margin-bottom: 8px;
