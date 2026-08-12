@@ -12,20 +12,23 @@ import {
 import { PinMapEditor } from './PinMapEditor';
 import type { PartLibraryItem, Device } from '../types';
 
-/** id 접두사로 실무 그룹핑 */
-const GROUPS: { label: string; match: (p: PartLibraryItem) => boolean }[] = [
-  { label: 'MDB (자판기)', match: (p) => p.id.startsWith('lib-mdb') || p.id === 'lib-minifit-terminal' },
-  { label: '연호 SMH250 (2.5mm)', match: (p) => p.id.startsWith('lib-yh-smh250') },
+/**
+ * id 접두사로 실무 그룹핑.
+ * openByDefault: 자주 쓰는 그룹만 펼쳐두고 나머지는 접는다.
+ */
+const GROUPS: { label: string; openByDefault?: boolean; match: (p: PartLibraryItem) => boolean }[] = [
+  { label: 'MDB (자판기)', openByDefault: true, match: (p) => p.id.startsWith('lib-mdb') || p.id === 'lib-minifit-terminal' },
+  { label: '연호 SMH250 (2.5mm)', openByDefault: true, match: (p) => p.id.startsWith('lib-yh-smh250') },
   { label: '연호 SMH200 (2.0mm)', match: (p) => p.id.startsWith('lib-yh-smh200') },
   { label: '연호 YH396 (3.96mm)', match: (p) => p.id.startsWith('lib-yh-yh396') },
   { label: '연호 웨이퍼 (보드실장)', match: (p) => /^lib-yh-sma?w(250|200)/.test(p.id) },
   { label: '연호 터미널', match: (p) => /^lib-yh-(yst|yt)/.test(p.id) },
-  { label: 'LAN', match: (p) => p.id.startsWith('lib-rj45') },
+  { label: 'LAN', openByDefault: true, match: (p) => p.id.startsWith('lib-rj45') },
   { label: 'USB', match: (p) => p.id.startsWith('lib-usb') },
   { label: '범용 하우징', match: (p) => /^lib-(xh|ph|minifit-4p|molex)/.test(p.id) },
   { label: '와이어투와이어', match: (p) => p.id.startsWith('lib-w2w') },
   { label: '보드투와이어', match: (p) => p.id.startsWith('lib-b2w') || p.id.startsWith('lib-terminal-block') },
-  { label: '스플라이스', match: (p) => p.id.startsWith('lib-splice') },
+  { label: '스플라이스', openByDefault: true, match: (p) => p.id.startsWith('lib-splice') },
 ];
 
 let devSeq = 0;
@@ -41,8 +44,19 @@ export function LibraryPanel() {
   const [editing, setEditing] = useState<PartLibraryItem | null>(null);
   const [creating, setCreating] = useState(false);
   const importRef = useRef<HTMLInputElement>(null);
+  /**
+   * 접힌 그룹. 80종이 한 줄씩 나열되면 스크롤이 너무 길어져
+   * 자주 쓰지 않는 그룹은 기본으로 접어둔다.
+   * 검색 중에는 접힘을 무시하고 전부 펼친다(결과가 숨으면 안 되므로).
+   */
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>(
+    () => Object.fromEntries(GROUPS.map((g) => [g.label, !g.openByDefault])),
+  );
+  const toggle = (label: string) =>
+    setCollapsed((c) => ({ ...c, [label]: !c[label] }));
 
   const allParts = useMemo(() => [...custom, ...SEED_PARTS], [custom]);
+  const searching = q.trim().length > 0;
 
   const filtered = useMemo(() => {
     const t = q.trim().toLowerCase();
@@ -153,11 +167,12 @@ export function LibraryPanel() {
 
   return (
     <aside className="panel lib">
-      <h3>라이브러리</h3>
-
-      <button className="lib-new" onClick={() => { setEditing(null); setCreating(true); }}>
-        + 새 부품 만들기
-      </button>
+      <div className="lib-head">
+        <h3>라이브러리</h3>
+        <button className="lib-new" onClick={() => { setEditing(null); setCreating(true); }}>
+          + 새 부품 만들기
+        </button>
+      </div>
       <div className="lib-io">
         <button onClick={doExport} disabled={!custom.length}>내보내기</button>
         <button onClick={() => importRef.current?.click()}>가져오기</button>
@@ -171,13 +186,17 @@ export function LibraryPanel() {
         onChange={(e) => setQ(e.target.value)}
       />
 
-      {/* 내 부품 */}
+      {/* 내 부품 — 항상 맨 위, 접지 않는다 */}
       {(() => {
         const mine = filtered.filter((p) => isCustomPart(p.id));
         if (!mine.length) return null;
         return (
           <div className="lib-cat">
-            <div className="lib-cat-title">내 부품 ({mine.length})</div>
+            <div className="lib-cat-title" aria-hidden>
+              <span className="caret" />
+              <span className="name">내 부품</span>
+              <span className="count">{mine.length}</span>
+            </div>
             {mine.map(renderItem)}
           </div>
         );
@@ -186,16 +205,30 @@ export function LibraryPanel() {
       {GROUPS.map((g) => {
         const items = filtered.filter((p) => !isCustomPart(p.id) && g.match(p));
         if (!items.length) return null;
+        // 검색 중에는 접힘을 무시한다 — 결과가 숨으면 검색이 무의미하다.
+        const open = searching || !collapsed[g.label];
         return (
           <div key={g.label} className="lib-cat">
-            <div className="lib-cat-title">{g.label}</div>
-            {items.map(renderItem)}
+            <button
+              className="lib-cat-title"
+              onClick={() => toggle(g.label)}
+              aria-expanded={open}
+              title={open ? '접기' : '펼치기'}
+            >
+              <span className="caret">{open ? '▾' : '▸'}</span>
+              <span className="name">{g.label}</span>
+              <span className="count">{items.length}</span>
+            </button>
+            {open && items.map(renderItem)}
           </div>
         );
       })}
 
       <div className="lib-cat">
-        <div className="lib-cat-title">장치</div>
+        <div className="lib-cat-title" aria-hidden>
+          <span className="caret" />
+          <span className="name">장치</span>
+        </div>
         <button className="lib-item" onClick={addDeviceBlock}>+ 장치 블록</button>
       </div>
 

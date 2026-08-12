@@ -146,3 +146,65 @@ describe('배선 정보 확인 경로', () => {
     expect(screen.getAllByText(/AWG22/).length).toBeGreaterThan(0);
   });
 });
+
+/** 리디자인(도면형 1단계) 으로 들어온 동작 */
+describe('접속표 패널 — 리디자인', () => {
+  it('NET 열은 짧은 코드(N1…)로 표시되고 긴 이름은 title 로 남는다', () => {
+    render(<App />);
+    fireEvent.click(screen.getAllByText(/^접속표 \d+$/)[0]);
+    const net = screen.getAllByText(/^N\d+$/);
+    expect(net.length).toBeGreaterThan(0);
+    // 좁은 NET 열이 줄바꿈되던 원인(긴 라벨)은 title 로 옮겼다
+    expect(net[0].getAttribute('title')).toBeTruthy();
+  });
+
+  it('검색으로 행을 걸러낸다', () => {
+    render(<App />);
+    fireEvent.click(screen.getAllByText(/^접속표 \d+$/)[0]);
+    const before = screen.getAllByTitle(/클릭하면 캔버스에서/).length;
+    fireEvent.change(screen.getByPlaceholderText('네트 · 커넥터 검색'), {
+      target: { value: '존재하지않는커넥터' },
+    });
+    expect(screen.queryAllByTitle(/클릭하면 캔버스에서/).length).toBe(0);
+    expect(screen.getByText('검색 결과가 없습니다')).toBeTruthy();
+
+    fireEvent.change(screen.getByPlaceholderText('네트 · 커넥터 검색'), { target: { value: '' } });
+    expect(screen.getAllByTitle(/클릭하면 캔버스에서/).length).toBe(before);
+  });
+
+  it('하단 상태바에 본수·네트수가 보인다', () => {
+    render(<App />);
+    fireEvent.click(screen.getAllByText(/^접속표 \d+$/)[0]);
+    expect(screen.getByText(/\d+본 · \d+네트/)).toBeTruthy();
+  });
+});
+
+describe('상단바 — 내보내기 메뉴', () => {
+  it('내보내기 버튼을 눌러야 CSV·JSON 항목이 나타난다', () => {
+    render(<App />);
+    expect(screen.queryByText('접속표 CSV')).toBeNull();
+    fireEvent.click(screen.getByText('내보내기 ▾'));
+    expect(screen.getByText('접속표 CSV')).toBeTruthy();
+    expect(screen.getByText('파트리스트 CSV')).toBeTruthy();
+    expect(screen.getByText('JSON 저장')).toBeTruthy();
+  });
+});
+
+describe('라이브러리 — 그룹 접기', () => {
+  it('접힌 그룹은 항목이 숨고, 헤더를 누르면 펼쳐진다', () => {
+    render(<App />);
+    // USB 는 기본 접힘 → 항목이 안 보인다
+    expect(screen.queryByText(/USB 2\.0/)).toBeNull();
+    fireEvent.click(screen.getByText('USB'));
+    expect(screen.getAllByText(/USB/).length).toBeGreaterThan(1);
+  });
+
+  it('검색 중에는 접힘을 무시하고 결과를 보여준다', () => {
+    render(<App />);
+    fireEvent.change(screen.getByPlaceholderText('이름·MPN·신호 검색'), {
+      target: { value: 'USB' },
+    });
+    // 접혀 있던 USB 그룹의 항목이 검색 결과로 드러나야 한다
+    expect(screen.getAllByText(/USB/).length).toBeGreaterThan(1);
+  });
+});

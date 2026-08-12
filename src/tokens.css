@@ -1,0 +1,91 @@
+/**
+ * 디자인 토큰 — Claude Design 리디자인(도면형) 기준.
+ *
+ * 원칙 세 가지:
+ * 1) UI 강조색은 스틸(--accent) 하나로 통일한다.
+ *    빨강은 캔버스의 전선 색이므로 UI에서 쓰지 않는다.
+ * 2) 도면 요소는 각진 모서리를 유지한다(radius 0). 컨트롤만 2px.
+ * 3) 숫자·식별자는 Barlow, 한글 본문은 IBM Plex Sans KR.
+ *    폰트를 못 받아오는 환경에서도 tabular-nums 로 자릿수 정렬은 유지된다.
+ */
+:root {
+  /* --- 강조 --- */
+  --accent: #5980a6;
+  --accent-deep: #416180;   /* 눌림 상태 */
+  --accent-dark: #2c455d;   /* 핀 번호 · 링크 */
+  --accent-tint: #eef6ff;   /* 선택 행 배경 */
+  --accent-pad: #dfeaf4;    /* 강조된 핀 패드 */
+
+  /* --- 텍스트 --- */
+  --text: #1d1f20;
+  --text-2: #424244;
+  --text-3: #5d5d60;
+  --muted: #7a7a7d;
+  --muted-2: #b7b7ba;       /* 미배정 · 비활성 */
+
+  /* --- 배경 --- */
+  --bg-panel: #f2f2f3;      /* 좌우 패널 */
+  --bg-canvas: #fff;
+  --bg-subtle: #f5f5f8;     /* 표 헤더 · 줄무늬 · 패드 채움 */
+  --bg-tabbar: #e7e7ea;
+
+  /* --- 경계선 --- */
+  --line-strong: #424244;
+  --line-mid: #b7b7ba;
+  --line: #d4d4d7;
+  --line-row: #f0f0f2;
+
+  /* --- 상태 --- */
+  --danger: #b3261e;
+  --danger-line: #e3b5b2;
+  --danger-tint: #fdf4f3;
+
+  /* --- 타이포 --- */
+  --font-ui: 'IBM Plex Sans KR', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-num: 'Barlow', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-title: 'Barlow Condensed', 'IBM Plex Sans KR', system-ui, sans-serif;
+
+  --fs-body: 12.5px;   /* 본문 */
+  --fs-table: 12px;    /* 표 */
+  --fs-sub: 11.5px;    /* 보조 */
+  --fs-cap: 11px;      /* 캡션 */
+  --fs-micro: 10px;    /* 최소 — 이보다 작게 쓰지 않는다 */
+
+  /* --- 치수 --- */
+  --h-control: 26px;
+  --h-control-sm: 22px;
+  --h-row: 26px;
+  --pad-panel: 8px;
+  --radius: 2px;       /* 컨트롤 전용. 도면 요소는 0 */
+
+  /* --- 레이아웃 --- */
+  --w-library: 260px;
+  --w-side: 440px;     /* 접속표 3열이 겹치지 않는 최소 폭 */
+
+  /* --- 그림자 (팝오버·모달에만) --- */
+  --shadow-pop: 0 4px 14px rgba(43, 43, 45, .22);
+  --shadow-modal: 0 3px 10px rgba(43, 43, 45, .16);
+}
+
+/* 숫자·식별자 공통: 자릿수가 세로로 정렬돼야 도면에서 읽힌다.
+   Barlow 를 못 받아도 tabular-nums 로 정렬은 유지된다. */
+.num {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 대문자 섹션 라벨 */
+.label-caps {
+  font-family: var(--font-num);
+  font-size: var(--fs-cap);
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+/* 키보드 포커스 */
+:where(button, input, select, textarea):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

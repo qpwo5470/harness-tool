@@ -39,6 +39,11 @@ export type Net = {
   wireIds: string[];
   /** 사람이 읽을 수 있는 라벨 (대표 끝점 기준) */
   label: string;
+  /**
+   * 짧은 네트 코드 (N1, N2 …). 접속표의 NET 열처럼 폭이 좁은 곳에서 쓴다.
+   * label 은 "Raspberry Pi.5V" 처럼 길어질 수 있어 좁은 열에서 줄바꿈된다.
+   */
+  code: string;
 };
 
 export function computeNets(doc: HarnessDocument): Net[] {
@@ -102,6 +107,7 @@ export function computeNets(doc: HarnessDocument): Net[] {
       members,
       wireIds: [...g.wires],
       label: nameOf(devMember ?? members[0] ?? root) || `NET${i + 1}`,
+      code: `N${i + 1}`,
     };
   });
 }

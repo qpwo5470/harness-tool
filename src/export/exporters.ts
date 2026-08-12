@@ -89,7 +89,10 @@ export function toCsv(rows: PartRow[]): string {
 
 export type RunRow = {
   wireId: string;
+  /** 사람이 읽는 네트 이름 (CSV·검색용) */
   net: string;
+  /** 짧은 네트 코드 N1, N2 … (접속표 NET 열용) */
+  netCode: string;
   from: string;
   to: string;
   color: string;
@@ -113,11 +116,18 @@ export function describeEndpoint(doc: HarnessDocument, e: Endpoint): string {
 export function buildRunList(doc: HarnessDocument): RunRow[] {
   const nets = computeNets(doc);
   const netOfWire = new Map<string, string>();
-  for (const n of nets) for (const wid of n.wireIds) netOfWire.set(wid, n.label);
+  const codeOfWire = new Map<string, string>();
+  for (const n of nets) {
+    for (const wid of n.wireIds) {
+      netOfWire.set(wid, n.label);
+      codeOfWire.set(wid, n.code);
+    }
+  }
 
   return doc.wires.map((w) => ({
     wireId: w.id,
     net: netOfWire.get(w.id) ?? '',
+    netCode: codeOfWire.get(w.id) ?? '',
     from: describeEndpoint(doc, w.from),
     to: describeEndpoint(doc, w.to),
     color: w.color.stripe ? `${w.color.base}/${w.color.stripe}` : w.color.base,
@@ -129,6 +139,8 @@ export function buildRunList(doc: HarnessDocument): RunRow[] {
 /** 접속표 → CSV */
 export function runListToCsv(rows: RunRow[]): string {
   const esc = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+  // CSV 헤더는 외부(엑셀 매크로 등)에서 참조할 수 있으므로 바꾸지 않는다.
+  // 화면 전용인 netCode 는 내보내지 않는다.
   const head = ['wire', 'net', 'from', 'to', 'color', 'gauge', 'length_mm'];
   const body = rows.map((r) =>
     [r.wireId, r.net, r.from, r.to, r.color, r.gauge, r.lengthMm].map(esc).join(','),

@@ -4,6 +4,17 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>하네스 설계 툴</title>
+    <!--
+      IBM Plex Sans KR: 한글 본문 / Barlow: 숫자·식별자(핀번호·치수·게이지)
+      사내망에서 Google Fonts 가 막혀도 tokens.css 의 폴백(system-ui)과
+      font-variant-numeric: tabular-nums 로 자릿수 정렬은 유지된다.
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;600;700&family=Barlow+Condensed:wght@500;600&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap"
+    />
   </head>
   <body>
     <div id="root"></div>
