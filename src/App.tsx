@@ -16,11 +16,13 @@ import { PhysicalView } from './physical/PhysicalView';
 import { ExportDialog, type ExportPlan } from './export/ExportDialog';
 import { ToastHost } from './ui/Toast';
 import { EmptyCanvas } from './ui/EmptyCanvas';
+import { ValidationPanel } from './panels/ValidationPanel';
+import { validateHarness } from './store/validate';
 import { letterAt, orderText } from './store/kit';
 import { buildPartList, toCsv, buildRunList, runListToCsv } from './export/exporters';
 import './App.css';
 
-type Tab = 'prop' | 'runs' | 'parts';
+type Tab = 'prop' | 'runs' | 'parts' | 'check';
 /** 상단 하네스 탭: 세트 개요 또는 하네스 id */
 type HarnessTab = 'set' | string;
 
@@ -55,6 +57,7 @@ export default function App() {
   const undo = useHarnessStore((s) => s.undo);
   const redo = useHarnessStore((s) => s.redo);
   const rename = useHarnessStore((s) => s.rename);
+  const setDocMeta = useHarnessStore((s) => s.setDocMeta);
   const replaceDoc = useHarnessStore((s) => s.replaceDoc);
   const exportJson = useHarnessStore((s) => s.exportJson);
   const importJson = useHarnessStore((s) => s.importJson);
@@ -133,9 +136,9 @@ export default function App() {
     replaceDoc(emptyDoc());
   }
   async function exportPdf() {
-    const el = document.querySelector('.react-flow__viewport') as HTMLElement | null;
+    // 더 이상 화면 스냅샷을 찍지 않는다 — 문서에서 벡터로 직접 그린다.
     const { downloadPdf } = await import('./export/pdf'); // 코드 스플릿
-    await downloadPdf(doc, el);
+    await downloadPdf(doc);
   }
   const runMenu = (fn: () => void) => () => {
     setMenuOpen(false);
@@ -180,7 +183,13 @@ export default function App() {
       }
     }
     if (plan.items.json) saveBlob(`${tag}.json`, exportJson(), 'application/json');
-    if (plan.items.pdf) await exportPdf();
+    if (plan.items.pdf) {
+      const { downloadPdf, downloadKitPdf } = await import('./export/pdf');
+      const paper = plan.paper;
+      // 세트 범위면 하네스마다 3면을 이어 붙인 한 권으로 낸다
+      if (scope.kind === 'set') await downloadKitPdf(kit, { paper });
+      else await downloadPdf(targets[0] ?? doc, { paper });
+    }
   };
 
   const parts = buildPartList(doc);
@@ -193,6 +202,10 @@ export default function App() {
   const isEmpty = doc.connectors.length === 0 && doc.devices.length === 0;
   /** 배선이 없으면 내보낼 것이 없다 */
   const nothingToExport = runs.length === 0;
+
+  // 설계 검증 — 발주 전에 도면 단계에서 잡을 수 있는 실수
+  const issues = useMemo(() => validateHarness(doc), [doc]);
+  const errorCount = issues.filter((i) => i.level === 'error').length;
 
   // 와이어 원본을 wireId 로 찾아 색 스와치에 쓴다(RunRow.color 는 표시용 문자열).
   const wireById = useMemo(
@@ -218,6 +231,23 @@ export default function App() {
       <header className="topbar">
         <strong>하네스 설계 툴</strong>
         <input className="doc-name-input" value={doc.name} onChange={(e) => rename(e.target.value)} />
+        {/* 도번·Rev — 제목블록과 PDF 에 그대로 나간다.
+            빈 상태 안내가 "먼저 도번과 이름을 정해 두라"고 하는데
+            정작 입력할 곳이 없어서 제목블록이 늘 '—' 였다. */}
+        <input
+          className="doc-meta-input num"
+          placeholder="도번"
+          title="도면 번호 — 제목블록과 PDF 에 표시됩니다"
+          value={doc.drawingNo ?? ''}
+          onChange={(e) => setDocMeta({ drawingNo: e.target.value || undefined })}
+        />
+        <input
+          className="doc-meta-input num rev"
+          placeholder="Rev"
+          title="리비전"
+          value={doc.rev ?? ''}
+          onChange={(e) => setDocMeta({ rev: e.target.value || undefined })}
+        />
         <div className="view-toggle">
           <button className={view === 'logical' ? 'on' : ''} onClick={() => setView('logical')}>논리 뷰</button>
           {/* 배선이 없으면 제조 도면에 그릴 것이 없다 */}
@@ -336,6 +366,13 @@ export default function App() {
             <button className={tab === 'prop' ? 'on' : ''} onClick={() => setTab('prop')}>속성</button>
             <button className={tab === 'runs' ? 'on' : ''} onClick={() => setTab('runs')}>접속표 {runs.length}</button>
             <button className={tab === 'parts' ? 'on' : ''} onClick={() => setTab('parts')}>파트 {parts.length}</button>
+            <button
+              className={`${tab === 'check' ? 'on' : ''}${errorCount ? ' has-error' : ''}`}
+              onClick={() => setTab('check')}
+              title="설계 검증 — 발주 전에 잡을 수 있는 실수"
+            >
+              검증 {issues.length}
+            </button>
           </div>
 
           {tab === 'prop' && <div className="tab-body"><PropertyPanel /></div>}
@@ -411,6 +448,18 @@ export default function App() {
                 </span>
               </div>
             </>
+          )}
+
+          {tab === 'check' && (
+            <div className="tab-body">
+              <ValidationPanel
+                issues={issues}
+                onGoTo={(id) => {
+                  if (id) select(id);
+                  setTab('prop');
+                }}
+              />
+            </div>
           )}
 
           {tab === 'parts' && (

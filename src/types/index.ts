@@ -317,6 +317,9 @@ export interface HarnessStore {
   // 공통
   remove(id: Id): void;
   replaceDoc(doc: HarnessDocument): void; // 불러오기
+  /** 도번·Rev 등 문서 메타 변경 (제목블록·PDF 에 반영) */
+  setDocMeta(patch: Pick<Partial<HarnessDocument>, 'drawingNo' | 'rev'>): void;
+
   /** 문서 이름 변경 */
   rename(name: string): void;
 

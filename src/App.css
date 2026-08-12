@@ -75,6 +75,21 @@ body {
 .menu-pop button:hover { background: var(--accent-tint); }
 .menu-pop hr { border: none; border-top: 1px solid var(--line-row); margin: 3px 0; }
 
+/* 도번·Rev — 값이 비면 흐리게 두되 자리는 지킨다(있어야 할 정보라는 표시) */
+.doc-meta-input {
+  height: var(--h-control); width: 116px; padding: 0 6px;
+  font: inherit; font-family: var(--font-num); font-size: var(--fs-cap);
+  color: var(--text-3); background: transparent;
+  border: 1px solid transparent; border-radius: var(--radius);
+}
+.doc-meta-input.rev { width: 58px; }
+.doc-meta-input::placeholder { color: var(--muted-2); }
+.doc-meta-input:hover { border-color: var(--line); }
+.doc-meta-input:focus { border-color: var(--accent); background: #fff; color: var(--text); outline: none; }
+
+/* 검증 탭 — 오류가 있으면 개수를 굵게. 빨강은 전선 색이라 쓰지 않는다. */
+.tabs button.has-error { color: var(--accent-dark); font-weight: 600; }
+
 .doc-name-input {
   height: var(--h-control); width: 190px; padding: 0 6px;
   font: inherit; font-size: var(--fs-table); font-weight: 600; color: var(--text);

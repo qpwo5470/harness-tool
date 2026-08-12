@@ -233,6 +233,12 @@ export const useHarnessStore = create<HarnessStore>((set, get) => ({
       return { doc: touch({ ...s.doc, name }) };
     }),
 
+  setDocMeta: (patch) =>
+    set((s) => {
+      pushHistory(s.doc);
+      return { doc: touch({ ...s.doc, ...patch }) };
+    }),
+
   undo: () =>
     set((s) => {
       const prev = past.pop();

@@ -1,0 +1,221 @@
+/**
+ * 검증 탭 스타일 — 440px 패널 기준.
+ *
+ * - 색은 tokens.css 변수만 쓴다. 새 색을 만들지 않는다.
+ * - **빨강 금지.** 빨강은 캔버스의 전선 색이다. error 도 스틸(--accent) 계열이고,
+ *   심각도는 좌측 3px 바의 농도와 배지의 채움으로만 구분한다.
+ * - 컨트롤 26px, radius var(--radius). 경고 바는 도면 요소에 가까우므로 각지게 둔다.
+ */
+
+.vl {
+  height: 100%;
+  width: 100%;
+  max-width: var(--w-side);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  font-family: var(--font-ui);
+  font-size: var(--fs-body);
+  color: var(--text);
+  background: var(--bg-panel);
+}
+
+.vl-grow { flex: 1; }
+.vl .num { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+
+/* ============================================================
+   목록
+   ============================================================ */
+.vl-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--bg-canvas);
+}
+
+.vl-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 8px;
+  background: var(--bg-subtle);
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.vl-group-label {
+  font-family: var(--font-num);
+  font-size: var(--fs-cap);
+  font-weight: 600;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.vl-group-rule {
+  font-family: var(--font-num);
+  font-size: var(--fs-cap);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* 개수 배지 — 채움(오류) → 테두리(확인) → 흐림(참고) */
+.vl-badge {
+  min-width: 16px;
+  height: 15px;
+  padding: 0 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  border-radius: 0;
+}
+.vl-badge.lv-error {
+  color: var(--bg-canvas);
+  background: var(--accent-dark);
+}
+.vl-badge.lv-warn {
+  color: var(--accent-dark);
+  background: var(--accent-tint);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.vl-badge.lv-info {
+  color: var(--text-3);
+  background: var(--bg-tabbar);
+  box-shadow: inset 0 0 0 1px var(--line-mid);
+}
+
+/* ============================================================
+   행 — 좌측 3px 색 바 + 제목 + 위치 + ›
+   ============================================================ */
+.vl-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: var(--fs-table);
+  color: var(--text);
+  text-align: left;
+  background: var(--bg-canvas);
+  border: none;
+  border-bottom: 1px solid var(--line-row);
+  border-left: 3px solid var(--line-mid);
+  border-radius: 0;
+  cursor: pointer;
+}
+.vl-row:hover { background: var(--accent-tint); }
+
+/* 심각도 = 바의 농도. 오류는 굵기까지 준다(빨강을 쓰지 않고 구분하는 방법). */
+.vl-row.lv-error { border-left-width: 3px; border-left-color: var(--accent-dark); }
+.vl-row.lv-warn { border-left-color: var(--accent); }
+.vl-row.lv-info { border-left-color: var(--line-mid); background: var(--bg-subtle); }
+
+.vl-row-main { flex: 1; min-width: 0; line-height: 1.4; }
+
+.vl-row-top {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.vl-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vl-row.lv-error .vl-title { font-weight: 700; }
+.vl-row.lv-warn .vl-title { font-weight: 600; }
+.vl-row.lv-info .vl-title { color: var(--text-2); }
+
+.vl-where {
+  flex-shrink: 0;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-sub);
+  font-weight: 700;
+  color: var(--accent-dark);
+}
+.vl-row.lv-info .vl-where { font-weight: 600; color: var(--text-3); }
+
+/* 이유 — 제목 아래 작은 글씨. 두 줄까지만 보이고 넘치면 자른다. */
+.vl-detail {
+  display: block;
+  margin-top: 1px;
+  font-size: var(--fs-cap);
+  line-height: 1.45;
+  color: var(--text-3);
+  white-space: normal;
+}
+
+.vl-chev {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--muted);
+}
+
+/* ============================================================
+   빈 상태
+   ============================================================ */
+.vl-empty {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 24px 32px;
+  text-align: center;
+  background: var(--bg-canvas);
+}
+.vl-empty-mark {
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 4px;
+  font-family: var(--font-num);
+  font-size: 15px;
+  color: var(--accent-dark);
+  background: var(--accent-tint);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+}
+.vl-empty-title {
+  margin: 0;
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--text-2);
+}
+.vl-empty-sub {
+  margin: 0;
+  font-size: var(--fs-cap);
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+/* ============================================================
+   상태바 — 숫자만 있는 상태바는 두지 않는다
+   ============================================================ */
+.vl-status {
+  flex-shrink: 0;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  font-size: var(--fs-cap);
+  color: var(--text-3);
+  background: var(--bg-panel);
+  border-top: 1px solid var(--line);
+}
+.vl-basis { font-family: var(--font-ui); }

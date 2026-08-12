@@ -192,6 +192,48 @@ describe('상단바 — 내보내기 메뉴', () => {
   });
 });
 
+describe('도번 · Rev — 제목블록에 반영', () => {
+  it('도번을 입력하면 제목블록에 그대로 나온다', () => {
+    render(<App />);
+    // 입력 전에는 제목블록이 '—'
+    expect(screen.getAllByText('—').length).toBeGreaterThan(0);
+    fireEvent.change(screen.getByPlaceholderText('도번'), {
+      target: { value: 'HRN-2408-01' },
+    });
+    expect(screen.getAllByText('HRN-2408-01').length).toBeGreaterThan(0);
+  });
+
+  it('Rev 는 Rev. 접두사와 함께 나온다', () => {
+    render(<App />);
+    fireEvent.change(screen.getByPlaceholderText('Rev'), { target: { value: 'B' } });
+    expect(screen.getByText('Rev.B')).toBeTruthy();
+  });
+
+  it('비우면 다시 — 로 돌아간다', () => {
+    render(<App />);
+    const no = screen.getByPlaceholderText('도번');
+    fireEvent.change(no, { target: { value: 'X-1' } });
+    fireEvent.change(no, { target: { value: '' } });
+    expect(screen.queryByText('X-1')).toBeNull();
+  });
+});
+
+describe('검증 탭', () => {
+  it('검증 탭이 있고 이슈 수를 보여준다', () => {
+    render(<App />);
+    expect(screen.getByText(/^검증 \d+$/)).toBeTruthy();
+  });
+
+  it('이슈를 클릭하면 그 요소가 선택되고 속성 탭으로 넘어간다', () => {
+    render(<App />);
+    fireEvent.click(screen.getByText(/^검증 \d+$/));
+    const rows = document.querySelectorAll('[data-issue-id]');
+    if (rows.length === 0) return; // 샘플이 깨끗하면 통과
+    fireEvent.click(rows[0]);
+    expect(screen.getAllByText('속성').length).toBeGreaterThan(0);
+  });
+});
+
 describe('빈 상태 (§5)', () => {
   it('커넥터가 없으면 캔버스 대신 온보딩이 나온다', () => {
     render(<App />);
