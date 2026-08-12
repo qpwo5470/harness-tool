@@ -31,6 +31,7 @@ import type {
 } from '../types';
 import { SEED_PARTS } from '../library/seed';
 import { loadCustomParts } from '../library/customParts';
+import { GENDER_LABEL, GENDER_LONG } from '../library/gender';
 import { refLabels, colorAbbr, strokeColor } from '../canvas/docToFlow';
 import { computeNets } from '../store/netlist';
 import './property.css';
@@ -570,6 +571,16 @@ function ConnectorEditor({ doc, conn }: { doc: HarnessDocument; conn: Connector 
         <div className="pp-card-meta num">
           {[housing?.mpn, housing?.spec?.['피치'], `배선 ${wireCount}본`].filter(Boolean).join(' · ')}
         </div>
+        {/*
+          결합 성별 — 발주에서 암수를 잘못 사면 현장에서 못 쓴다.
+          값이 있을 때만 한 줄 세운다(미지정은 줄을 만들지 않는다).
+        */}
+        {housing?.gender ? (
+          <div className="pp-card-meta">
+            결합 성별 <b className="num">{GENDER_LABEL[housing.gender]}</b>{' '}
+            <span className="pp-gender-long">{GENDER_LONG[housing.gender]}</span>
+          </div>
+        ) : null}
       </div>
 
       <Section label="방향" note="배선이 나가는 쪽">

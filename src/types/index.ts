@@ -48,6 +48,15 @@ export type PinSlot = {
   stdColor?: string;
 };
 
+/**
+ * 결합 성별.
+ * - `receptacle` 암(리셉터클) — 전선측 하우징, 암 컨택
+ * - `plug`       수(플러그)   — 전선측 플러그, 수 컨택
+ * - `header`     보드 실장 헤더/웨이퍼
+ * - `neutral`    성별 없음(스플라이스·터미널블럭·크림프 터미널 등)
+ */
+export type PartGender = 'receptacle' | 'plug' | 'header' | 'neutral';
+
 export type PartLibraryItem = {
   id: Id;
   category: PartCategory;
@@ -58,6 +67,12 @@ export type PartLibraryItem = {
   mpn?: string;
   /** 자유 스펙: 피치, 정격 전류/전압, 재질 등 */
   spec?: Record<string, string>;
+
+  /**
+   * 결합 성별. 발주 시 암수를 잘못 사면 현장에서 못 쓴다.
+   * optional 이라 기존 저장 파일과 호환된다 — schemaVersion 은 그대로.
+   */
+  gender?: PartGender;
 
   // --- housing / splice / board-to-wire 전용 ---
   /** 핀 개수 */

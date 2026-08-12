@@ -10,6 +10,7 @@
  */
 import type { PartCategory, PartLibraryItem, PinSlot } from '../types';
 import { newCustomPartId } from './customParts';
+import { genderLabel, parseGender } from './gender';
 
 export type CsvParseResult = {
   parts: PartLibraryItem[];
@@ -27,9 +28,14 @@ const MAX_PINS = 512;
 
 type Field =
   | 'name' | 'category' | 'manufacturer' | 'mpn' | 'pitch'
-  | 'cols' | 'rows' | 'pins' | 'signals' | 'colors' | 'note';
+  | 'cols' | 'rows' | 'pins' | 'signals' | 'colors' | 'note' | 'gender';
 
-/** 내보내기용 표준 헤더 (한글) */
+/**
+ * 내보내기용 표준 헤더 (한글).
+ *
+ * `성별` 은 **맨 뒤에** 붙인다 — 열 순서를 위치로 읽는 기존 부품표(성별 열 없음)를
+ * 그대로 받으려면 앞쪽 열 자리가 밀리면 안 된다.
+ */
 const EXPORT_HEADERS: Array<[Field, string]> = [
   ['name', '이름'],
   ['category', '분류'],
@@ -42,6 +48,7 @@ const EXPORT_HEADERS: Array<[Field, string]> = [
   ['signals', '신호'],
   ['colors', '색'],
   ['note', '비고'],
+  ['gender', '성별'],
 ];
 
 const HEADER_ALIASES: Record<Field, string[]> = {
@@ -56,6 +63,7 @@ const HEADER_ALIASES: Record<Field, string[]> = {
   signals: ['신호', '신호명', 'signals', 'signal'],
   colors: ['색', '색상', '규격색', 'colors', 'color'],
   note: ['비고', '메모', 'note', 'notes', 'remark', 'remarks'],
+  gender: ['성별', '암수', '결합성별', 'gender', 'sex'],
 };
 
 /** 헤더·분류 값 비교용 정규화 — 대소문자·공백·구분기호를 무시 */
@@ -262,6 +270,14 @@ export function parsePartsCsv(text: string): CsvParseResult {
     const manufacturer = get('manufacturer');
     const mpn = get('mpn');
 
+    // 성별 — 한글(암/수/보드/—)·영문(receptacle/plug/header/neutral) 둘 다 받는다.
+    // 빈 칸은 "미지정", `—` 은 "성별 없음(neutral)" 으로 서로 다르게 본다.
+    const rawGender = get('gender');
+    const gender = parseGender(rawGender);
+    if (rawGender && !gender) {
+      warnings.push(`${lineNo}행: 성별 '${rawGender}' 를 몰라 비움`);
+    }
+
     const part: PartLibraryItem = {
       id: newCustomPartId(),
       category,
@@ -270,6 +286,7 @@ export function parsePartsCsv(text: string): CsvParseResult {
       mpn: mpn || undefined,
       spec: Object.keys(spec).length ? spec : undefined,
     };
+    if (gender) part.gender = gender;
 
     if (category === 'terminal') {
       // 터미널은 크림프 단자라 핀 배열이 없다
@@ -362,6 +379,8 @@ export function partsToCsv(parts: PartLibraryItem[]): string {
       signals: signals.some(Boolean) ? signals.join(LIST_SEP) : '',
       colors: colors.some(Boolean) ? colors.join(LIST_SEP) : '',
       note: p.spec?.['비고'] ?? '',
+      // 내보낼 때는 언제나 한글 — 엑셀에서 사람이 읽는 표다
+      gender: genderLabel(p.gender),
     };
 
     lines.push(EXPORT_HEADERS.map(([f]) => csvCell(cells[f])).join(','));

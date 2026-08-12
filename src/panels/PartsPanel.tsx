@@ -197,6 +197,8 @@ function aggregate(parts: ScopePart[], withLetter: boolean): AggRow[] {
       acc.count += r.qty * mult;
       acc.len += lenOfDetail(r.detail) * mult;
       for (const u of usage.get(key) ?? []) acc.refs.push(withLetter ? `${letter} ${u}` : u);
+      // 하우징의 detail 은 결합 성별(암/수/보드)이다 — 발주 화면에서 보여야 한다
+      if (group === 'housing' && r.detail) acc.refs.push(r.detail);
       if (group === 'terminal' && r.detail) acc.refs.push(r.detail);
       if (group === 'protect' && r.detail) acc.refs.push(withLetter ? `${letter} ${r.detail}` : r.detail);
     }

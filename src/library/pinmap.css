@@ -109,6 +109,8 @@
 .pm-group { display: flex; flex-direction: column; gap: 6px; }
 
 .pm-cats { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+/* 결합 성별 5택 — 미지정 · 암 · 수 · 보드 · 없음 */
+.pm-genders { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
 .pm-cat {
   height: var(--h-control);
   font: inherit;

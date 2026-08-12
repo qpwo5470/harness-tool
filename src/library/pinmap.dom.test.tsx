@@ -179,6 +179,41 @@ describe('핀맵 에디터 — 저장', () => {
     expect(part.pinLayout!.map((p) => p.index)).toEqual([1, 2, 3, 4]);
   });
 
+  it('결합 성별을 고르면 저장된 부품에 gender 가 들어간다', () => {
+    const { onSave } = open();
+    // 기본은 미지정 — 모르는 값을 지어내지 않는다
+    expect(screen.getByRole('radio', { name: '미지정' }).getAttribute('aria-checked')).toBe('true');
+
+    fireEvent.change(screen.getByLabelText('이름'), { target: { value: '암 하우징 4P' } });
+    fireEvent.click(screen.getByRole('radio', { name: '암' }));
+    fireEvent.click(screen.getByText('저장'));
+
+    expect((onSave.mock.calls[0][0] as PartLibraryItem).gender).toBe('receptacle');
+  });
+
+  it('미지정으로 저장하면 gender 필드를 만들지 않는다', () => {
+    const { onSave } = open();
+    fireEvent.change(screen.getByLabelText('이름'), { target: { value: '모르는 부품' } });
+    fireEvent.click(screen.getByText('저장'));
+    expect((onSave.mock.calls[0][0] as PartLibraryItem).gender).toBeUndefined();
+  });
+
+  it('기존 부품의 성별은 열었을 때 그대로 선택돼 있다', () => {
+    const initial: PartLibraryItem = {
+      id: 'custom-g', category: 'housing', name: '수 하우징', gender: 'plug', pinCount: 2,
+      pinLayout: [
+        { index: 1, label: '1', offset: { x: 0, y: 0 } },
+        { index: 2, label: '2', offset: { x: 1, y: 0 } },
+      ],
+    };
+    const { onSave } = open({ initial });
+    expect(screen.getByRole('radio', { name: '수' }).getAttribute('aria-checked')).toBe('true');
+
+    fireEvent.click(screen.getByRole('radio', { name: '없음' }));
+    fireEvent.click(screen.getByText('저장'));
+    expect((onSave.mock.calls[0][0] as PartLibraryItem).gender).toBe('neutral');
+  });
+
   it('기존 부품을 편집하면 핀 배치와 id 가 보존된다', () => {
     const initial: PartLibraryItem = {
       id: 'custom-xyz',

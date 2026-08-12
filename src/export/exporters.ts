@@ -1,8 +1,9 @@
 /**
  * Agent D 소유 — 파트리스트 집계 + CSV (문서의 순수 함수, 테스트 대상).
  */
-import type { HarnessDocument, Endpoint } from '../types';
+import type { HarnessDocument, Endpoint, PartGender } from '../types';
 import { computeNets } from '../store/netlist';
+import { genderDetail } from '../library/gender';
 
 export type PartRow = {
   category: string;
@@ -16,12 +17,18 @@ export function buildPartList(doc: HarnessDocument): PartRow[] {
   const rows: PartRow[] = [];
 
   // 하우징/커넥터
-  const hc = new Map<string, number>();
+  // 암수(gender)를 detail 에 실어 보낸다 — 발주에서 이게 틀리면 현장에서 못 쓴다.
+  const hc = new Map<string, { qty: number; gender?: PartGender }>();
   for (const c of doc.connectors) {
-    const name = doc.usedParts.find((p) => p.id === c.housingId)?.name ?? c.housingId;
-    hc.set(name, (hc.get(name) ?? 0) + 1);
+    const item = doc.usedParts.find((p) => p.id === c.housingId);
+    const name = item?.name ?? c.housingId;
+    const cur = hc.get(name) ?? { qty: 0, gender: item?.gender };
+    cur.qty += 1;
+    hc.set(name, cur);
   }
-  for (const [part, qty] of hc) rows.push({ category: '커넥터', part, qty });
+  for (const [part, { qty, gender }] of hc) {
+    rows.push({ category: '커넥터', part, qty, detail: genderDetail(gender) });
+  }
 
   // 와이어: 게이지+색 기준 그룹, 총 길이 합산
   const wg = new Map<string, { qty: number; len: number }>();

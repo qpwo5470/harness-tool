@@ -16,8 +16,9 @@
  * 규격 전선색 12색 팔레트만 예외로 hex 를 직접 갖는다(도면 색이라 토큰이 아니다).
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { PartLibraryItem, PinSlot, PartCategory } from '../types';
+import type { PartLibraryItem, PinSlot, PartCategory, PartGender } from '../types';
 import { newCustomPartId } from './customParts';
+import { GENDER_LONG } from './gender';
 import './pinmap.css';
 
 /** 캔버스와 동일 규격: 패드 26px + 간격 4px = 피치 30px */
@@ -40,6 +41,18 @@ const CATEGORIES: { value: PartCategory; label: string }[] = [
   { value: 'board-to-wire', label: '보드투와이어' },
   { value: 'splice', label: '스플라이스' },
   { value: 'terminal', label: '터미널' },
+];
+
+/**
+ * 결합 성별 — 미지정('')을 포함한 5택.
+ * 발주에서 틀리면 현장에서 못 쓰는 값이라 "모르면 미지정"이 기본값이다.
+ */
+const GENDER_CHOICES: { value: PartGender | ''; label: string; hint: string }[] = [
+  { value: '', label: '미지정', hint: '아직 모른다 — 비워 둔다' },
+  { value: 'receptacle', label: '암', hint: GENDER_LONG.receptacle },
+  { value: 'plug', label: '수', hint: GENDER_LONG.plug },
+  { value: 'header', label: '보드', hint: GENDER_LONG.header },
+  { value: 'neutral', label: '없음', hint: GENDER_LONG.neutral },
 ];
 
 /** 1번 핀이 앉는 모서리 */
@@ -143,6 +156,7 @@ export function PinMapEditor({ initial, onSave, onCancel }: Props) {
   const [manufacturer, setManufacturer] = useState(initial?.manufacturer ?? '');
   const [mpn, setMpn] = useState(initial?.mpn ?? '');
   const [category, setCategory] = useState<PartCategory>(initial?.category ?? 'housing');
+  const [gender, setGender] = useState<PartGender | ''>(initial?.gender ?? '');
   const [pitch, setPitch] = useState(initial?.spec?.['피치'] ?? '');
   const [note, setNote] = useState(initial?.spec?.['비고'] ?? '');
   const [applyTo, setApplyTo] = useState(initial?.spec?.['적용'] ?? '');
@@ -236,6 +250,8 @@ export function PinMapEditor({ initial, onSave, onCancel }: Props) {
       pinCount: pins.length,
       pinLayout: [...pins].sort((a, b) => a.index - b.index),
     };
+    // 미지정이면 필드 자체를 만들지 않는다 — 빈 값과 "성별 없음"은 다른 뜻이다
+    if (gender) part.gender = gender;
     onSave(part);
   };
 
@@ -275,6 +291,31 @@ export function PinMapEditor({ initial, onSave, onCancel }: Props) {
           <option key={c.value} value={c.value}>{c.label}</option>
         ))}
       </select>
+    </div>
+  );
+
+  // ── 좌: 결합 성별 ──────────────────────────────────────────
+  const genderButtons = (
+    <div className="pm-group">
+      <div className="label-caps">결합 성별</div>
+      <div className="pm-genders" role="radiogroup" aria-label="결합 성별 선택">
+        {GENDER_CHOICES.map((g) => (
+          <button
+            key={g.value || 'none'}
+            type="button"
+            role="radio"
+            aria-checked={gender === g.value}
+            className={`pm-cat${gender === g.value ? ' on' : ''}`}
+            title={g.hint}
+            onClick={() => setGender(g.value)}
+          >
+            {g.label}
+          </button>
+        ))}
+      </div>
+      <p className="pm-hint">
+        발주에서 암수를 잘못 사면 현장에서 못 씁니다. 모르면 미지정으로 두세요.
+      </p>
     </div>
   );
 
@@ -596,6 +637,7 @@ export function PinMapEditor({ initial, onSave, onCancel }: Props) {
           {/* 좌 340px — 무엇을 만드는지 */}
           <div className="pm-left">
             {catButtons}
+            {genderButtons}
 
             <div className="pm-fields">
               <div className="pm-row">

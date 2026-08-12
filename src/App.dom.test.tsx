@@ -3,7 +3,7 @@
  * 빌드가 통과해도 런타임에서 죽는 경우를 잡는다.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, within } from '@testing-library/react';
 import App from './App';
 
 // jsdom에 없는 API 목
@@ -289,6 +289,37 @@ describe('하네스 탭 — 세트', () => {
     const before = document.querySelectorAll('.htabs button').length;
     fireEvent.click(screen.getByText('+ 하네스'));
     expect(document.querySelectorAll('.htabs button').length).toBe(before + 1);
+  });
+});
+
+describe('라이브러리 — 암수 배지', () => {
+  /** 라이브러리 한 줄(.lib-row) */
+  const rowOf = (name: RegExp) => screen.getByText(name).closest('.lib-row') as HTMLElement;
+
+  it('암 · 수는 핀수 배지 옆에 배지가 붙는다', () => {
+    render(<App />);
+    // 기본으로 펼쳐진 2.5mm 그룹 — SMH250(암) 과 SMP250(수) 이 나란히 있다
+    const smh = rowOf(/^연호 SMH250-02/);
+    expect(within(smh).getByText('2P')).toBeTruthy();
+    expect(within(smh).getByText('암')).toBeTruthy();
+
+    const smp = rowOf(/^연호 SMP250-02/);
+    expect(within(smp).getByText('수')).toBeTruthy();
+  });
+
+  it('성별 없음(스플라이스)에는 배지를 달지 않는다', () => {
+    render(<App />);
+    expect(rowOf(/^스플라이스 3/).querySelector('.gender-badge')).toBeNull();
+  });
+
+  it('신규 설계 비권장(NRND) 부품은 목록에서 바로 보인다', () => {
+    render(<App />);
+    fireEvent.change(screen.getByPlaceholderText('이름·MPN·신호 검색'), {
+      target: { value: '35155' },
+    });
+    const row = rowOf(/35155-0300/);
+    expect(within(row).getByText('암')).toBeTruthy();
+    expect(within(row).getByText('NRND')).toBeTruthy();
   });
 });
 

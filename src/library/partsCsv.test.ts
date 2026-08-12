@@ -3,7 +3,11 @@ import { parsePartsCsv, partsToCsv, parseCsvRecords } from './partsCsv';
 import { parsePartsFile, parseCustomParts, isCustomPart } from './customParts';
 import type { PartLibraryItem } from '../types';
 
-const H = '이름,분류,제조사,MPN,피치,열,행,핀수,신호,색,비고';
+/**
+ * 표준 헤더. `성별` 은 맨 뒤에 붙는다 —
+ * 아래 데이터 행들은 성별 열이 없는 **기존 부품표** 그대로이고, 그래도 읽혀야 한다.
+ */
+const H = '이름,분류,제조사,MPN,피치,열,행,핀수,신호,색,비고,성별';
 
 /** id 는 매번 새로 발급되므로 비교에서 뺀다 */
 const noId = (p: PartLibraryItem) => {
@@ -223,6 +227,72 @@ YST025,터미널,YEONHO,YST025,,,,,,,크림프`;
     const csv = partsToCsv([]);
     expect(csv).toBe(H);
     expect(parsePartsCsv(csv).parts).toEqual([]);
+  });
+});
+
+describe('성별(암수) 열', () => {
+  it('한글도 영문도 받는다', () => {
+    const csv = [
+      H,
+      '암하우징,하우징,,,,2,1,2,,,,암',
+      '수플러그,하우징,,,,2,1,2,,,,수',
+      '보드헤더,보드투와이어,,,,2,1,2,,,,보드',
+      '성별없음,스플라이스,,,,2,1,2,,,,—',
+      'EN-R,하우징,,,,2,1,2,,,,receptacle',
+      'EN-P,하우징,,,,2,1,2,,,,PLUG',
+      'EN-H,보드투와이어,,,,2,1,2,,,,Header',
+      'EN-N,스플라이스,,,,2,1,2,,,,neutral',
+    ].join('\n');
+    const { parts, warnings } = parsePartsCsv(csv);
+    expect(warnings).toEqual([]);
+    expect(parts.map((p) => p.gender)).toEqual([
+      'receptacle', 'plug', 'header', 'neutral',
+      'receptacle', 'plug', 'header', 'neutral',
+    ]);
+  });
+
+  it('성별 열이 없는 기존 CSV 도 그대로 읽힌다 (미지정)', () => {
+    const old = '이름,분류,제조사,MPN,피치,열,행,핀수,신호,색,비고\n예전부품,하우징,YEONHO,SMH250-04,2.5mm,4,1,4,,,메모';
+    const { parts, warnings } = parsePartsCsv(old);
+    expect(warnings).toEqual([]);
+    expect(parts).toHaveLength(1);
+    expect(parts[0].name).toBe('예전부품');
+    expect(parts[0].pinCount).toBe(4);
+    expect(parts[0].gender).toBeUndefined();
+  });
+
+  it('빈 칸(미지정)과 —(성별 없음)은 다른 뜻이다', () => {
+    const { parts } = parsePartsCsv(`${H}\n빈칸,하우징,,,,2,1,2,,,,\n대시,스플라이스,,,,2,1,2,,,,—`);
+    expect(parts[0].gender).toBeUndefined();
+    expect(parts[1].gender).toBe('neutral');
+  });
+
+  it('모르는 값은 경고를 남기고 비운다 — 틀린 암수를 발주하지 않는다', () => {
+    const { parts, warnings } = parsePartsCsv(`${H}\n오타,하우징,,,,2,1,2,,,,양성`);
+    expect(parts[0].gender).toBeUndefined();
+    expect(warnings).toContain("2행: 성별 '양성' 를 몰라 비움");
+  });
+
+  it('내보낼 때는 한글로 나가고 되읽으면 같은 값이 된다', () => {
+    const parts: PartLibraryItem[] = [
+      { id: 'custom-1', category: 'housing', name: '암', gender: 'receptacle', pinCount: 2,
+        pinLayout: [
+          { index: 1, label: '1', offset: { x: 0, y: 0 } },
+          { index: 2, label: '2', offset: { x: 1, y: 0 } },
+        ] },
+      { id: 'custom-2', category: 'terminal', name: '단자', gender: 'neutral' },
+      { id: 'custom-3', category: 'housing', name: '미지정', pinCount: 1,
+        pinLayout: [{ index: 1, label: '1', offset: { x: 0, y: 0 } }] },
+    ];
+    const csv = partsToCsv(parts);
+    expect(csv.split('\n')[0].endsWith(',성별')).toBe(true);
+    expect(csv.split('\n')[1].endsWith(',암')).toBe(true);
+    expect(csv.split('\n')[2].endsWith(',—')).toBe(true);
+    expect(csv.split('\n')[3].endsWith(',')).toBe(true); // 미지정은 빈 칸
+
+    const back = parsePartsCsv(csv);
+    expect(back.warnings).toEqual([]);
+    expect(back.parts.map((p) => p.gender)).toEqual(['receptacle', 'neutral', undefined]);
   });
 });
 

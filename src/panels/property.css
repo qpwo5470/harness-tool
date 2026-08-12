@@ -261,6 +261,9 @@
   white-space: nowrap;
 }
 .pp-card-meta { font-size: var(--fs-cap); color: var(--muted); }
+/* 결합 성별 — 짧은 표기(암/수/보드)는 진하게, 풀어 쓴 이름은 흐리게 */
+.pp-card-meta b { color: var(--accent-dark); font-weight: 700; }
+.pp-gender-long { color: var(--muted-2); }
 .pp-abbr { font-size: var(--fs-table); font-weight: 700; }
 
 .pp-swatch-lg {

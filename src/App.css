@@ -317,7 +317,12 @@ body {
 
 .lib-row { display: flex; align-items: center; gap: 3px; }
 .lib-row .lib-item { margin: 0; flex: 1; min-width: 0; }
-.lib-row .lib-item > :first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 이름만 줄어들고 배지(핀수·암수·NRND)는 잘리지 않는다.
+   이름을 요소로 감싸지 않으면 ellipsis 가 안 걸려 26px 행에서 줄바꿈된다. */
+.lib-item-name {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 
 .lib-item {
   display: flex; justify-content: space-between; align-items: center; gap: 6px;
@@ -341,6 +346,23 @@ body {
 .pin-badge {
   font-family: var(--font-num); font-size: var(--fs-cap); font-weight: 600;
   color: var(--text-3); border: 1px solid var(--line); background: #fff;
+  padding: 0 3px; flex-shrink: 0;
+}
+
+/* 암수 배지 — 발주에서 틀리면 안 되는 값이라 핀수 배지보다 진하게 둔다.
+   빨강은 전선 색이라 쓰지 않는다. 강조는 스틸(--accent) 하나. */
+.gender-badge {
+  font-size: var(--fs-micro); font-weight: 600; line-height: 1.5;
+  color: var(--accent-dark); border: 1px solid var(--accent);
+  background: var(--accent-tint);
+  padding: 0 3px; flex-shrink: 0;
+}
+
+/* 신규 설계 비권장 — 눈에는 띄되 경고색(빨강)은 쓰지 않는다 */
+.nrnd-badge {
+  font-family: var(--font-num); font-size: var(--fs-micro); font-weight: 600;
+  letter-spacing: .04em; line-height: 1.5;
+  color: var(--muted); border: 1px dashed var(--line-mid); background: var(--bg-subtle);
   padding: 0 3px; flex-shrink: 0;
 }
 

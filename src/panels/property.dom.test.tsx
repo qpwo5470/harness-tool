@@ -25,6 +25,7 @@ const housing: PartLibraryItem = {
   name: '테스트 하우징 6P',
   mpn: 'TST-6',
   spec: { 피치: '2.5mm' },
+  gender: 'receptacle',
   pinCount: 6,
   pinLayout: HOUSING_LAYOUT,
 };
@@ -144,6 +145,20 @@ describe('(B) 커넥터 — 방향 카드', () => {
     fireEvent.click(screen.getByLabelText('방향 90° 위쪽'));
     expect(doc().connectors[0].orientation).toBe(90);
     expect(screen.getByLabelText('방향 90° 위쪽').getAttribute('aria-pressed')).toBe('true');
+  });
+});
+
+describe('(B) 커넥터 — 결합 성별', () => {
+  it('요약 카드에 암수가 한 줄로 선다', () => {
+    show('c1');
+    const line = screen.getByText(/결합 성별/);
+    expect(line.textContent).toContain('암');
+    expect(line.textContent).toContain('리셉터클');
+  });
+
+  it('성별이 없는 부품(스플라이스)에는 줄을 만들지 않는다', () => {
+    show('sp1');
+    expect(screen.queryByText(/결합 성별/)).toBeNull();
   });
 });
 

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { SEED_PARTS, instantiate, suggestedColor } from './seed';
+import { GENDERS } from './gender';
 
 const byId = (id: string) => SEED_PARTS.find((p) => p.id === id)!;
 
@@ -146,5 +147,166 @@ describe('연호전자 시리즈', () => {
     const c = instantiate(byId('lib-yh-smh250-6p'), { x: 0, y: 0 });
     expect(c.pins).toHaveLength(6);
     expect(c.kind).toBe('connector');
+  });
+});
+
+// ================================================================
+// 결합 성별 (gender)
+// ================================================================
+describe('결합 성별', () => {
+  it('값이 있으면 반드시 네 값 중 하나다', () => {
+    for (const p of SEED_PARTS) {
+      if (p.gender !== undefined) expect(GENDERS).toContain(p.gender);
+    }
+  });
+
+  it('연호 3종 세트가 암 · 보드 · 수로 갈린다', () => {
+    expect(byId('lib-yh-smh250-4p').gender).toBe('receptacle'); // 하우징(암)
+    expect(byId('lib-yh-smw250-4p').gender).toBe('header');     // 웨이퍼(보드)
+    expect(byId('lib-yh-smaw250-4p').gender).toBe('header');
+    expect(byId('lib-yh-smp250-4p').gender).toBe('plug');       // 전선측 플러그(수)
+  });
+
+  it('스플라이스 · 와이어투와이어 · 터미널블럭 · 크림프 터미널은 성별이 없다', () => {
+    for (const id of [
+      'lib-splice-3', 'lib-splice-4',
+      'lib-w2w-2p', 'lib-w2w-4p', 'lib-w2w-6p',
+      'lib-terminal-block-2p',
+      'lib-minifit-terminal', 'lib-yh-yst025', 'lib-yh-yst200', 'lib-yh-yt396', 'lib-yh-smt025',
+    ]) {
+      expect(byId(id).gender).toBe('neutral');
+    }
+    // 터미널은 한 개도 빠짐없이 neutral 이어야 한다
+    for (const t of SEED_PARTS.filter((p) => p.category === 'terminal')) {
+      expect(t.gender).toBe('neutral');
+    }
+  });
+
+  it('RJ45 는 플러그(수), 보드 실장 잭·리셉터클은 보드다', () => {
+    expect(byId('lib-rj45-t568b').gender).toBe('plug');
+    expect(byId('lib-rj45-t568a').gender).toBe('plug');
+    expect(byId('lib-rj45-jack').gender).toBe('header');
+    expect(byId('lib-usb-c-b2w').gender).toBe('header');
+    expect(byId('lib-usb-a-20').gender).toBe('plug');
+  });
+
+  it('시리즈가 특정되지 않은 부품은 비워 둔다 — 지어내지 않는다', () => {
+    // Mini-Fit 은 5557(암)/5559(수)가 같은 4.2mm 라 이름만으로 못 정한다
+    expect(byId('lib-minifit-4p').gender).toBeUndefined();
+    expect(byId('lib-molex-2x5').gender).toBeUndefined();
+  });
+});
+
+// ================================================================
+// Molex SPOX 2.50mm — 데이터시트 값 그대로 (35155.pdf / 35312.pdf)
+// ================================================================
+describe('Molex 35155 (SPOX 2.50mm 하우징)', () => {
+  const p = () => byId('lib-spox-35155-3p');
+
+  it('데이터시트 스펙이 그대로 들어 있다', () => {
+    expect(p().manufacturer).toBe('Molex');
+    expect(p().mpn).toBe('35155-0300');
+    expect(p().gender).toBe('receptacle');           // Component Type: Receptacle
+    expect(p().spec!.시리즈).toBe('35155');
+    expect(p().spec!.설명).toBe('2.50mm Pitch Wire-to-Board Housing, Positive Lock, Natural');
+    expect(p().spec!.종류).toBe('Receptacle');
+    expect(p().spec!.피치).toBe('2.50mm');
+    expect(p().spec!.열).toContain('1');             // Number of Rows: 1
+    expect(p().spec!.용도).toBe('Wire-to-Wire');
+    expect(p().spec!.결합).toContain('35184');
+    expect(p().spec!.결합).toContain('35312');
+    expect(p().spec!.터미널).toContain('5103');
+    expect(p().spec!.온도).toBe('-40°C ~ +105°C');
+    expect(p().spec!.상태).toBe('Not Recommended For New Design');
+    expect(p().spec!.비고).toContain('Not Recommended For New Design');
+  });
+
+  it('검증된 3 · 4 · 5핀만 있고 품번 규칙은 비고에만 적는다', () => {
+    const all = SEED_PARTS.filter((x) => x.id.startsWith('lib-spox-35155'));
+    expect(all.map((x) => x.pinCount)).toEqual([3, 4, 5]);
+    expect(all.map((x) => x.mpn)).toEqual(['35155-0300', '35155-0400', '35155-0500']);
+    // 규칙으로 만들어낸 미검증 품번이 섞이면 안 된다
+    expect(all.every((x) => x.pinLayout!.length === x.pinCount)).toBe(true);
+    expect(p().spec!.비고).toContain('35155-0N00');
+  });
+});
+
+describe('Molex 35312 (2.50mm 수직 헤더)', () => {
+  const p = () => byId('lib-spox-35312-5p');
+
+  it('데이터시트 스펙이 그대로 들어 있다', () => {
+    expect(p().manufacturer).toBe('Molex');
+    expect(p().mpn).toBe('35312-0560');
+    expect(p().category).toBe('board-to-wire');
+    expect(p().gender).toBe('header');               // Component Type: PCB Header
+    expect(p().spec!.시리즈).toBe('35312');
+    expect(p().spec!.설명).toBe('2.50mm Pitch Header, Vertical, Shrouded, with Positive Lock');
+    expect(p().spec!.종류).toBe('PCB Header');
+    expect(p().spec!.피치).toBe('2.50mm');
+    expect(p().spec!.열).toContain('1');
+    expect(p().spec!.용도).toBe('Wire-to-Board');
+    expect(p().spec!.결합).toBe('35155');
+    expect(p().spec!.정격).toBe('3.0A / 250V');
+    expect(p().spec!.재질).toContain('Nylon 66');
+    expect(p().spec!.실장).toContain('Through Hole');
+    expect(p().spec!.실장).toContain('1.60mm');
+    expect(p().spec!.온도).toBe('-40°C ~ +105°C');
+    expect(p().spec!.상태).toBe('Not Recommended For New Design');
+  });
+
+  it('검증된 5핀 하나만 있다', () => {
+    const all = SEED_PARTS.filter((x) => x.id.startsWith('lib-spox-35312'));
+    expect(all).toHaveLength(1);
+    expect(all[0].pinCount).toBe(5);
+    expect(p().spec!.비고).toContain('35312-0N60');
+  });
+});
+
+// ================================================================
+// 연호 SMP250 — 데이터시트 값 그대로 (SMP250-NN.pdf)
+// ================================================================
+describe('연호 SMP250 (2.50mm 전선측 플러그)', () => {
+  const p = () => byId('lib-yh-smp250-4p');
+
+  it('핀수 02~13 열두 종이 등록된다', () => {
+    const all = SEED_PARTS.filter((x) => x.id.startsWith('lib-yh-smp250'));
+    expect(all).toHaveLength(12);
+    expect(all.map((x) => x.pinCount)).toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
+    expect(all.map((x) => x.mpn)).toEqual([
+      'SMP250-02', 'SMP250-03', 'SMP250-04', 'SMP250-05', 'SMP250-06', 'SMP250-07',
+      'SMP250-08', 'SMP250-09', 'SMP250-10', 'SMP250-11', 'SMP250-12', 'SMP250-13',
+    ]);
+  });
+
+  it('데이터시트 스펙이 그대로 들어 있다', () => {
+    expect(p().manufacturer).toBe('Yeonho Electronics (연호전자)');
+    expect(p().gender).toBe('plug');
+    expect(p().spec!.종류).toBe('Wire to Wire Connector — Plug');
+    expect(p().spec!.피치).toBe('2.50mm');
+    expect(p().spec!.열).toBe('1열');
+    expect(p().spec!.재질).toBe('Nylon 66, UL94V-0');
+    expect(p().spec!.정격).toBe('AC/DC 250V · AC/DC 3A');
+    expect(p().spec!.온도).toBe('-25℃ ~ +85℃');
+    expect(p().spec!.접촉저항).toBe('30mΩ MAX');
+    expect(p().spec!.적용전선).toBe('AWG #22 ~ #28');
+    expect(p().spec!.결합).toContain('SMH250');
+  });
+
+  it('터미널이 SMH250 의 YST025 가 아니라 SMT025 다', () => {
+    expect(p().spec!.터미널).toBe('SMT025');
+    expect(byId('lib-yh-smh250-4p').spec!.터미널).toBe('YST025');
+
+    const smt = byId('lib-yh-smt025');
+    expect(smt.category).toBe('terminal');
+    expect(smt.gender).toBe('neutral');
+    expect(smt.mpn).toBe('SMT025');
+    expect(smt.spec!.적용).toBe('SMP250 (2.5mm)');
+    expect(smt.spec!.비고).toContain('AWG22~28');
+  });
+
+  it('플러그도 캔버스 인스턴스가 만들어진다', () => {
+    const c = instantiate(p(), { x: 0, y: 0 });
+    expect(c.kind).toBe('connector');
+    expect(c.pins).toHaveLength(4);
   });
 });

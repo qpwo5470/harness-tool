@@ -80,8 +80,15 @@ afterEach(() => cleanup());
 const lib = (container: HTMLElement) =>
   within(container.querySelector('.panel.lib') as HTMLElement);
 
-const itemOf = (container: HTMLElement, name: RegExp | string) =>
-  lib(container).getByText(name) as HTMLElement;
+/**
+ * 부품 행의 **버튼**을 돌려준다.
+ * 이름은 `<span class="lib-item-name">` 안에 있으므로(긴 이름의 ellipsis 처리),
+ * getByText 가 잡는 건 span 이다. disabled 같은 버튼 속성을 보려면 올라가야 한다.
+ */
+const itemOf = (container: HTMLElement, name: RegExp | string) => {
+  const el = lib(container).getByText(name) as HTMLElement;
+  return (el.closest('.lib-item') as HTMLElement | null) ?? el;
+};
 
 const rowOf = (container: HTMLElement, name: RegExp) =>
   itemOf(container, name).closest('.lib-row') as HTMLElement;

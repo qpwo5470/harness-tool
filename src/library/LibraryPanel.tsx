@@ -10,7 +10,18 @@ import {
   isCustomPart, exportCustomParts, parsePartsFile, saveCustomParts,
 } from './customParts';
 import { PinMapEditor } from './PinMapEditor';
+import { genderBadge, GENDER_LONG } from './gender';
 import type { PartLibraryItem, Device } from '../types';
+
+/**
+ * 신규 설계 비권장(Not Recommended For New Design).
+ * 발주 판단에 걸리는 값이라 목록에서 바로 보여야 한다.
+ */
+function isNrnd(p: PartLibraryItem): boolean {
+  return /not recommended/i.test(
+    `${p.spec?.['상태'] ?? ''} ${p.spec?.['비고'] ?? ''}`,
+  );
+}
 
 /**
  * id 접두사로 실무 그룹핑.
@@ -18,14 +29,21 @@ import type { PartLibraryItem, Device } from '../types';
  */
 const GROUPS: { label: string; openByDefault?: boolean; match: (p: PartLibraryItem) => boolean }[] = [
   { label: 'MDB (자판기)', openByDefault: true, match: (p) => p.id.startsWith('lib-mdb') || p.id === 'lib-minifit-terminal' },
-  { label: '연호 SMH250 (2.5mm)', openByDefault: true, match: (p) => p.id.startsWith('lib-yh-smh250') },
+  // SMH250(암)과 SMP250(수)은 서로 맞물리는 2.5mm 한 계열이라 한 그룹에 둔다.
+  {
+    label: '연호 SMH250 · SMP250 (2.5mm)',
+    openByDefault: true,
+    match: (p) => p.id.startsWith('lib-yh-smh250') || p.id.startsWith('lib-yh-smp250'),
+  },
   { label: '연호 SMH200 (2.0mm)', match: (p) => p.id.startsWith('lib-yh-smh200') },
   { label: '연호 YH396 (3.96mm)', match: (p) => p.id.startsWith('lib-yh-yh396') },
   { label: '연호 웨이퍼 (보드실장)', match: (p) => /^lib-yh-sma?w(250|200)/.test(p.id) },
-  { label: '연호 터미널', match: (p) => /^lib-yh-(yst|yt)/.test(p.id) },
+  { label: '연호 터미널', match: (p) => /^lib-yh-(yst|yt|smt)/.test(p.id) },
   { label: 'LAN', openByDefault: true, match: (p) => p.id.startsWith('lib-rj45') },
   { label: 'USB', match: (p) => p.id.startsWith('lib-usb') },
   { label: '범용 하우징', match: (p) => /^lib-(xh|ph|minifit-4p|molex)/.test(p.id) },
+  // Molex SPOX 2.5mm — 하우징(35155)과 짝 헤더(35312)를 같이 두어야 짝을 못 놓친다.
+  { label: 'Molex SPOX 2.5mm (35155 · 35312)', match: (p) => p.id.startsWith('lib-spox') },
   { label: '와이어투와이어', match: (p) => p.id.startsWith('lib-w2w') },
   { label: '보드투와이어', match: (p) => p.id.startsWith('lib-b2w') || p.id.startsWith('lib-terminal-block') },
   { label: '스플라이스', openByDefault: true, match: (p) => p.id.startsWith('lib-splice') },
@@ -181,6 +199,9 @@ export function LibraryPanel() {
   const renderItem = (p: PartLibraryItem) => {
     // 단자는 캔버스에 놓지 않는다 — 클릭과 마찬가지로 드래그도 막는다.
     const droppable = p.category !== 'terminal';
+    // 암/수/보드만 배지를 단다. 성별 없음(neutral)·미지정은 달지 않는다 — 노이즈다.
+    const badge = genderBadge(p.gender);
+    const nrnd = isNrnd(p);
     return (
       <div
         key={p.id}
@@ -191,13 +212,27 @@ export function LibraryPanel() {
         <button
           className="lib-item"
           onClick={() => addPart(p)}
-          title={[p.mpn && `MPN ${p.mpn}`, ...Object.entries(p.spec ?? {}).map(([k, v]) => `${k}: ${v}`)]
+          title={[
+            p.mpn && `MPN ${p.mpn}`,
+            p.gender && `성별: ${GENDER_LONG[p.gender]}`,
+            ...Object.entries(p.spec ?? {}).map(([k, v]) => `${k}: ${v}`),
+          ]
             .filter(Boolean)
             .join('\n')}
           disabled={p.category === 'terminal'}
         >
-          {p.name}
+          {/* 이름은 반드시 요소로 감싼다 — 텍스트 노드에는 ellipsis 가 걸리지 않아
+              긴 이름이 26px 행 안에서 줄바꿈되며 겹친다 */}
+          <span className="lib-item-name">{p.name}</span>
           {p.pinCount ? <span className="pin-badge">{p.pinCount}P</span> : null}
+          {badge ? (
+            <span className="gender-badge" title={GENDER_LONG[p.gender!]}>{badge}</span>
+          ) : null}
+          {nrnd ? (
+            <span className="nrnd-badge" title="Not Recommended For New Design — 신규 설계 비권장">
+              NRND
+            </span>
+          ) : null}
         </button>
         <div className="lib-row-actions">
           {isCustomPart(p.id) ? (

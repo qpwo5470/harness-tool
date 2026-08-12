@@ -66,6 +66,40 @@ describe('터미널(크림프핀) 집계', () => {
   });
 });
 
+describe('파트리스트 — 결합 성별', () => {
+  /** 하우징에 성별을 붙인 문서 */
+  const withGender = () => ({
+    ...sampleDoc,
+    usedParts: sampleDoc.usedParts.map((p) =>
+      p.id === 'lib-xh-4p'
+        ? { ...p, gender: 'receptacle' as const }
+        : p.id === 'lib-b2w-2p'
+          ? { ...p, gender: 'header' as const }
+          : { ...p, gender: 'neutral' as const },
+    ),
+  });
+
+  it('커넥터 행에 암수가 실린다 — 발주에서 이게 틀리면 안 된다', () => {
+    const rows = buildPartList(withGender()).filter((r) => r.category === '커넥터');
+    expect(rows.find((r) => r.part === 'JST XH 2.5 4P')!.detail).toBe('암(리셉터클)');
+    expect(rows.find((r) => r.part === 'Board-to-Wire 2P')!.detail).toBe('보드(헤더 · 보드 실장)');
+  });
+
+  it('성별 없음(스플라이스)·미지정은 detail 을 만들지 않는다', () => {
+    const rows = buildPartList(withGender()).filter((r) => r.category === '커넥터');
+    expect(rows.find((r) => r.part === '단순 결선(꼬임)')!.detail).toBeUndefined();
+
+    // 원본 픽스처는 성별이 없다 → 전부 미지정
+    const plain = buildPartList(sampleDoc).filter((r) => r.category === '커넥터');
+    expect(plain.every((r) => r.detail === undefined)).toBe(true);
+  });
+
+  it('CSV 로 내보내도 암수가 detail 열에 남는다', () => {
+    const csv = toCsv(buildPartList(withGender()));
+    expect(csv).toContain('커넥터,JST XH 2.5 4P,1,암(리셉터클)');
+  });
+});
+
 describe('핀별 터미널 지정 반영', () => {
   const termPart = {
     id: 'lib-yh-yst025', category: 'terminal' as const,
