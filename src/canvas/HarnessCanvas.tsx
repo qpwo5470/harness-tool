@@ -89,8 +89,8 @@ function Flow() {
   // 선택/hover 된 네트 하이라이트 (스플라이스 너머까지 이어진 경로가 보임)
   useEffect(() => {
     const isWire = doc.wires.some((w) => w.id === active);
-    setEdges(docToEdges(doc, highlightedWires(doc, active), isWire ? active : null));
-  }, [doc, active, setEdges]);
+    setEdges(docToEdges(doc, highlightedWires(doc, active), isWire ? active : null, view));
+  }, [doc, active, view, setEdges]);
 
   const onConnect = (c: Connection) => {
     const s = useHarnessStore.getState();

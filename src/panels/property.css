@@ -1,0 +1,742 @@
+/**
+ * 속성 패널 스타일 — Claude Design 2차 리디자인 §7.
+ *
+ * 이 파일에만 속성 탭 스타일이 산다(PropertyPanel.tsx 가 import).
+ * - 색은 tokens.css 의 변수만 쓴다. 전선 색은 인라인 style 로 들어온다.
+ * - UI 강조는 스틸(--accent) 하나. 빨강(--danger)은 삭제 버튼에만.
+ * - 컨트롤 26px(보조 22~24px), radius var(--radius), 도면 요소는 0.
+ */
+
+/* ============================================================
+   골격 — 440px 패널 안에서 본문만 스크롤, 푸터는 고정
+   ============================================================ */
+.pp {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  font-size: var(--fs-body);
+  color: var(--text);
+  background: var(--bg-panel);
+}
+.pp-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+.pp-foot {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--bg-panel);
+  border-top: 1px solid var(--line);
+}
+.pp-foot-hint { font-size: var(--fs-cap); color: var(--muted); }
+.pp-spacer { flex: 1; }
+
+.pp-danger {
+  height: var(--h-control);
+  padding: 0 12px;
+  font: inherit;
+  font-size: var(--fs-table);
+  color: var(--danger);
+  background: var(--bg-canvas);
+  border: 1px solid var(--danger-line);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.pp-danger:hover { background: var(--danger-tint); }
+
+/* ============================================================
+   섹션 헤더 · 필드
+   ============================================================ */
+.pp-sec { display: flex; flex-direction: column; gap: 7px; }
+.pp-sec.grow { flex: 1; min-height: 0; }
+
+.pp-sec-head { display: flex; align-items: center; gap: 7px; }
+.pp-sec-label {
+  font-family: var(--font-num);
+  font-size: var(--fs-cap);
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.pp-sec-note {
+  font-size: var(--fs-cap);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.pp-rule { flex: 1; height: 1px; background: var(--line); }
+
+.pp-mini-btn {
+  height: var(--h-control-sm);
+  padding: 0 7px;
+  font: inherit;
+  font-size: var(--fs-cap);
+  color: var(--text-2);
+  background: var(--bg-canvas);
+  border: 1px solid var(--line-mid);
+  border-radius: var(--radius);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.pp-mini-btn:hover { background: var(--accent-tint); }
+
+.pp-field { display: flex; align-items: center; gap: 8px; }
+.pp-flabel {
+  width: 52px;
+  flex-shrink: 0;
+  font-size: var(--fs-body);
+  color: var(--text-2);
+}
+.pp-flabel.sm { width: auto; margin-left: 4px; }
+
+.pp-hint { margin: 0; font-size: var(--fs-cap); color: var(--text-3); line-height: 1.45; }
+.pp-hint.indent { padding-left: 60px; }
+
+/* ============================================================
+   기본 컨트롤
+   ============================================================ */
+.pp-input {
+  height: 24px;
+  min-width: 0;
+  padding: 0 6px;
+  font: inherit;
+  font-size: var(--fs-table);
+  color: var(--text);
+  background: var(--bg-canvas);
+  border: 1px solid var(--line-mid);
+  border-radius: var(--radius);
+}
+.pp-input.grow { flex: 1; }
+.pp-input.sm { height: var(--h-control-sm); font-size: var(--fs-sub); }
+.pp-input.w-gauge { width: 62px; height: var(--h-control); font-weight: 600; }
+.pp-input.w-len { width: 74px; height: var(--h-control); font-weight: 600; }
+
+.pp-select {
+  height: var(--h-control);
+  min-width: 0;
+  padding: 0 4px;
+  font: inherit;
+  font-size: var(--fs-table);
+  color: var(--text);
+  background: var(--bg-canvas);
+  border: 1px solid var(--line-mid);
+  border-radius: var(--radius);
+}
+.pp-select.grow { flex: 1; }
+.pp-select:disabled { color: var(--muted); background: var(--bg-subtle); }
+
+.pp-slash { color: var(--muted); }
+.pp-unit { font-size: var(--fs-table); color: var(--text-3); }
+.pp-alt { font-size: var(--fs-sub); color: var(--muted); }
+
+/* 세그먼트 (AWG | mm²) */
+.pp-seg {
+  display: flex;
+  border: 1px solid var(--line-mid);
+  border-radius: var(--radius);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.pp-seg button {
+  height: var(--h-control);
+  min-width: 52px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: var(--fs-table);
+  color: var(--text-2);
+  background: var(--bg-canvas);
+  border: none;
+  cursor: pointer;
+}
+.pp-seg button + button { border-left: 1px solid var(--line-mid); }
+.pp-seg button:hover { background: var(--accent-tint); }
+.pp-seg button.on {
+  background: var(--accent);
+  color: var(--bg-canvas);
+  font-weight: 600;
+}
+
+/* 옵션 버튼 줄 (케이블 소속) */
+.pp-seg-row { display: flex; gap: 4px; flex-wrap: wrap; }
+.pp-opt {
+  height: var(--h-control);
+  padding: 0 8px;
+  font: inherit;
+  font-size: var(--fs-table);
+  color: var(--text-2);
+  background: var(--bg-canvas);
+  border: 1px solid var(--line-mid);
+  border-radius: var(--radius);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pp-opt.grow { flex: 1 1 auto; min-width: 0; }
+.pp-opt:hover { background: var(--accent-tint); }
+.pp-opt.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg-canvas);
+  font-weight: 600;
+}
+
+/* 스테퍼 */
+.pp-stepper {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--line-mid);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--bg-canvas);
+  flex-shrink: 0;
+}
+.pp-stepper button {
+  width: 22px;
+  height: 24px;
+  padding: 0;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--text-2);
+  background: var(--bg-canvas);
+  border: none;
+  cursor: pointer;
+}
+.pp-stepper button:hover { background: var(--accent-tint); }
+.pp-stepper span {
+  width: 30px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-body);
+  font-weight: 600;
+  border-left: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+}
+
+/* ============================================================
+   요약 카드
+   ============================================================ */
+.pp-card {
+  background: var(--bg-canvas);
+  border: 1px solid var(--line);
+  padding: 8px 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.pp-card.dashed { border-style: dashed; border-color: var(--muted); }
+.pp-card-top { display: flex; align-items: center; gap: 7px; }
+
+.pp-badge {
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  letter-spacing: .07em;
+  color: var(--bg-canvas);
+  background: var(--text);
+  padding: 1px 5px;
+  white-space: nowrap;
+}
+.pp-badge.soft { background: var(--text-3); }
+
+.pp-ref { font-size: 15px; font-weight: 700; line-height: 1; }
+.pp-net { font-size: var(--fs-table); color: var(--text-3); }
+.pp-card-name {
+  font-size: var(--fs-table);
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pp-card-meta { font-size: var(--fs-cap); color: var(--muted); }
+.pp-abbr { font-size: var(--fs-table); font-weight: 700; }
+
+.pp-swatch-lg {
+  width: 44px;
+  height: 11px;
+  flex-shrink: 0;
+  display: inline-block;
+  border: 1px solid var(--line-mid);
+}
+.pp-swatch-sm {
+  width: 14px;
+  height: 8px;
+  flex-shrink: 0;
+  display: inline-block;
+  border: 1px solid var(--muted);
+}
+
+.pp-card-sub {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+  font-size: var(--fs-sub);
+  color: var(--text-3);
+  line-height: 1.4;
+}
+.pp-ep { display: inline-flex; align-items: baseline; gap: 4px; min-width: 0; }
+.pp-ep-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pp-ep-pin { color: var(--accent-deep); }
+.pp-arrow { color: var(--muted); }
+
+/* ============================================================
+   색 칩
+   ============================================================ */
+.pp-chips { display: flex; gap: 3px; flex-wrap: wrap; min-width: 0; }
+.pp-chip {
+  width: 26px;
+  height: 22px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font: inherit;
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  color: var(--bg-canvas);
+  border: 1px solid var(--muted);
+  border-radius: 0;
+  cursor: pointer;
+}
+.pp-chip.light { color: var(--text-2); border-color: var(--line-mid); }
+.pp-chip.on { box-shadow: 0 0 0 2px var(--accent); }
+.pp-chip.sm { width: 24px; }
+.pp-chip.none {
+  width: 34px;
+  font-size: 10.5px;
+  font-weight: 400;
+  color: var(--text-2);
+  background: var(--bg-canvas);
+  border-color: var(--line-mid);
+}
+.pp-chip.none.on {
+  background: var(--accent-tint);
+  border-color: var(--accent);
+  color: var(--accent-dark);
+}
+
+/* ============================================================
+   케이블 소속 카드
+   ============================================================ */
+.pp-cable {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  background: var(--bg-canvas);
+  padding: 8px 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pp-cores {
+  border-top: 1px solid var(--line-row);
+  padding-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.pp-core {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 20px;
+  font-size: var(--fs-sub);
+  color: var(--text-3);
+}
+.pp-core.cur { color: var(--text); }
+.pp-core-code { width: 26px; font-weight: 700; flex-shrink: 0; }
+.pp-core-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ============================================================
+   방향 — 하우징 심볼 4카드
+   ============================================================ */
+.pp-dirs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+.pp-dir {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 2px 5px;
+  font: inherit;
+  background: var(--bg-canvas);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.pp-dir:hover { background: var(--accent-tint); }
+.pp-dir.on { background: var(--accent-tint); border-color: var(--accent); }
+
+.pp-dir-sym {
+  position: relative;
+  width: 56px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pp-mini {
+  position: relative;
+  padding: 3px;
+  border: 1.5px solid var(--muted);
+  background: var(--bg-canvas);
+}
+.pp-dir.on .pp-mini { border-color: var(--accent); }
+.pp-mini-grid { display: grid; grid-template-columns: repeat(3, 5px); gap: 2px; }
+.pp-mini-grid i { width: 5px; height: 5px; background: var(--bg-tabbar); }
+.pp-dir.on .pp-mini-grid i { background: var(--accent-pad); }
+
+/* 래치 돌기 — 하우징 바깥으로 튀어나온 사각형이 결합 방향을 나타낸다 */
+.pp-mini::after {
+  content: '';
+  position: absolute;
+  background: var(--muted);
+}
+.pp-dir.on .pp-mini::after { background: var(--accent); }
+.pp-mini.latch-0::after { left: -4px; top: 50%; width: 3px; height: 10px; transform: translateY(-50%); }
+.pp-mini.latch-90::after { top: -4px; left: 50%; width: 10px; height: 3px; transform: translateX(-50%); }
+.pp-mini.latch-180::after { right: -4px; top: 50%; width: 3px; height: 10px; transform: translateY(-50%); }
+.pp-mini.latch-270::after { bottom: -4px; left: 50%; width: 10px; height: 3px; transform: translateX(-50%); }
+
+/* 배선이 나가는 쪽 점선 */
+.pp-exit { position: absolute; }
+.pp-exit.exit-0 { left: 2px; top: 50%; width: 12px; border-top: 1.5px dashed var(--muted-2); transform: translateY(-50%); }
+.pp-exit.exit-90 { left: 50%; top: 2px; height: 10px; border-left: 1.5px dashed var(--muted-2); transform: translateX(-50%); }
+.pp-exit.exit-180 { right: 2px; top: 50%; width: 12px; border-top: 1.5px dashed var(--muted-2); transform: translateY(-50%); }
+.pp-exit.exit-270 { left: 50%; bottom: 2px; height: 10px; border-left: 1.5px dashed var(--muted-2); transform: translateX(-50%); }
+.pp-dir.on .pp-exit { border-color: var(--accent); }
+
+.pp-dir-deg { font-size: var(--fs-cap); font-weight: 600; color: var(--text-2); }
+.pp-dir.on .pp-dir-deg { font-weight: 700; color: var(--accent-dark); }
+.pp-dir-label { font-size: 10.5px; color: var(--muted); }
+.pp-dir.on .pp-dir-label { color: var(--accent-deep); }
+
+/* ============================================================
+   핀 패드 격자 — 캔버스와 같은 규격 (패드 26px · 피치 30px)
+   ============================================================ */
+.pp-pads-card {
+  background: var(--bg-canvas);
+  border: 1px solid var(--line);
+  padding: 11px 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.pp-housing {
+  position: relative;
+  padding: 6px;
+  border: 1.5px solid var(--accent);
+  background: var(--bg-canvas);
+}
+.pp-housing.dashed { border: 1.5px dashed var(--muted); }
+.pp-pad-grid { display: grid; gap: 4px; }
+
+.pp-pad {
+  position: relative;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font: inherit;
+  font-family: var(--font-num);
+  font-size: var(--fs-cap);
+  font-weight: 700;
+  color: var(--muted-2);
+  background: var(--bg-canvas);
+  border: 1px solid var(--line-strong);
+  border-radius: 0;
+  cursor: pointer;
+}
+.pp-pad.blank { border: none; background: none; cursor: default; }
+.pp-pad.ghost {
+  color: var(--text-3);
+  background: var(--bg-subtle);
+  border-color: var(--line-mid);
+  cursor: default;
+}
+.pp-pad.has { color: var(--text); background: var(--bg-subtle); }
+.pp-pad.lit { background: var(--accent-tint); border-color: var(--accent); }
+.pp-pad.on {
+  background: var(--accent-pad);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent);
+}
+.pp-pad:not(.blank):not(.ghost):hover { border-color: var(--accent); }
+
+.pp-pad-tag {
+  position: absolute;
+  right: 1px;
+  top: 1px;
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--text-3);
+}
+.pp-pad.on .pp-pad-tag { color: var(--accent-dark); }
+
+/* 래치 돌기 + 좌상단 등록 마크 (캔버스 노드와 같은 규칙) */
+.pp-latch {
+  position: absolute;
+  left: 50%;
+  top: -5px;
+  transform: translateX(-50%);
+  width: 20px;
+  height: 4px;
+  background: var(--accent);
+}
+.pp-regmark {
+  position: absolute;
+  left: -1.5px;
+  top: -1.5px;
+  width: 8px;
+  height: 8px;
+  border-top: 2px solid var(--accent);
+  border-left: 2px solid var(--accent);
+}
+.pp-pads-cap { font-size: var(--fs-micro); color: var(--muted); }
+
+/* 일괄 지정 줄 — 컨트롤은 핀 수와 무관하게 항상 2개 */
+.pp-assign { display: flex; align-items: center; gap: 6px; }
+.pp-assign-label { font-size: var(--fs-body); color: var(--text); white-space: nowrap; }
+.pp-assign-label.off { color: var(--muted); }
+
+/* 범례 */
+.pp-legend {
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.pp-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 24px;
+  padding: 0 5px;
+  cursor: pointer;
+}
+.pp-legend-row.lit { background: var(--accent-tint); }
+.pp-legend-badge {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9.5px;
+  font-weight: 700;
+  color: var(--bg-canvas);
+  background: var(--text-3);
+  border: 1px solid var(--text-3);
+}
+.pp-legend-badge.off { background: var(--bg-canvas); border-color: var(--line); }
+.pp-legend-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-table);
+  color: var(--text);
+}
+.pp-legend-name.off { color: var(--muted); }
+.pp-legend-count { font-size: var(--fs-sub); font-weight: 600; color: var(--text-3); }
+
+/* 스플라이스 안내 */
+.pp-splice-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  text-align: center;
+  font-size: var(--fs-body);
+  color: var(--text-2);
+  line-height: 1.5;
+}
+.pp-splice-sub { font-size: var(--fs-sub); color: var(--muted); }
+
+/* ============================================================
+   장치 단자 목록
+   ============================================================ */
+.pp-terms { display: flex; flex-direction: column; gap: 6px; }
+.pp-term-row { display: flex; align-items: center; gap: 6px; }
+.pp-term-grip { width: 16px; text-align: center; color: var(--muted-2); font-size: var(--fs-table); }
+.pp-term-no {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-cap);
+  font-weight: 700;
+  color: var(--text-2);
+  background: var(--bg-subtle);
+  border: 1px solid var(--line);
+}
+.pp-term-row .pp-input { height: var(--h-control); }
+.pp-term-use {
+  width: 72px;
+  flex-shrink: 0;
+  font-size: var(--fs-cap);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pp-term-del {
+  width: 24px;
+  height: var(--h-control);
+  padding: 0;
+  font: inherit;
+  font-size: var(--fs-table);
+  color: var(--text-3);
+  background: var(--bg-canvas);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.pp-term-del:hover:not(:disabled) { background: var(--accent-tint); border-color: var(--accent); }
+.pp-term-del:disabled { color: var(--muted-2); cursor: not-allowed; }
+
+.pp-add {
+  height: var(--h-control);
+  font: inherit;
+  font-size: var(--fs-table);
+  color: var(--accent-deep);
+  background: var(--bg-canvas);
+  border: 1px dashed var(--line-mid);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.pp-add:hover { background: var(--accent-tint); border-color: var(--accent); }
+
+/* ============================================================
+   (D) 미선택 — 빈 상태
+   ============================================================ */
+.pp-empty {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 10px;
+  overflow-y: auto;
+}
+.pp-empty-mid {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 24px 6px;
+}
+
+/* 하우징 2개 + 직교 배선 라인 드로잉 */
+.pp-draw { position: relative; width: 190px; height: 96px; flex-shrink: 0; }
+.pp-draw-box {
+  position: absolute;
+  padding: 4px;
+  border: 1.5px solid var(--line);
+  background: var(--bg-canvas);
+}
+.pp-draw-box.a { left: 0; top: 16px; }
+.pp-draw-box.b { right: 0; top: 52px; }
+.pp-draw-grid { display: grid; grid-template-columns: repeat(2, 14px); gap: 3px; }
+.pp-draw-grid i { width: 14px; height: 14px; border: 1px solid var(--line); background: var(--bg-subtle); }
+.pp-draw-latch {
+  position: absolute;
+  left: 50%;
+  top: -4px;
+  transform: translateX(-50%);
+  width: 14px;
+  height: 3px;
+  background: var(--line);
+}
+.pp-draw-l1 { position: absolute; left: 46px; top: 32px; width: 100px; height: 1.5px; background: var(--line); }
+.pp-draw-l2 { position: absolute; left: 144px; top: 32px; width: 1.5px; height: 34px; background: var(--line); }
+.pp-draw-l3 { position: absolute; left: 144px; top: 64px; width: 44px; height: 1.5px; background: var(--line); }
+
+.pp-empty-text { text-align: center; display: flex; flex-direction: column; gap: 5px; }
+.pp-empty-title {
+  font-family: var(--font-title);
+  font-weight: 600;
+  font-size: 19px;
+  color: var(--text);
+}
+.pp-empty-desc { font-size: var(--fs-table); color: var(--text-3); line-height: 1.5; }
+
+.pp-empty-hints {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--bg-tabbar);
+  border: 1px solid var(--bg-tabbar);
+}
+.pp-empty-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 8px 9px;
+  background: var(--bg-canvas);
+}
+.pp-tag {
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  letter-spacing: .07em;
+  color: var(--text-3);
+  background: var(--bg-subtle);
+  border: 1px solid var(--line);
+  padding: 1px 4px;
+  white-space: nowrap;
+}
+.pp-empty-hint-text { flex: 1; min-width: 0; font-size: var(--fs-table); color: var(--text-2); line-height: 1.45; }
+
+.pp-empty-foot {
+  flex-shrink: 0;
+  border-top: 1px solid var(--line);
+  padding-top: 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pp-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  background: var(--bg-tabbar);
+  border: 1px solid var(--bg-tabbar);
+}
+.pp-stat { background: var(--bg-canvas); padding: 6px 7px; }
+.pp-stat-k { font-size: 9.5px; letter-spacing: .06em; color: var(--muted); }
+.pp-stat-v { font-size: 15px; font-weight: 700; line-height: 1.25; }
+
+.pp-empty-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-sub);
+  color: var(--text-3);
+}
+.pp-dot { width: 7px; height: 7px; background: var(--accent); }

@@ -124,20 +124,46 @@ export function highlightedWires(doc: HarnessDocument, selection: string | null)
 }
 
 /**
- * 레인 자동 배정.
- *
- * Claude Design 목업은 레인 y값을 손으로 넣어뒀다(README 도 "제품에서는
- * 자동 라우팅으로 계산하되 사용자가 조정할 수 있어야 한다"고 적어뒀다).
- * 여기서는 배선 순서로 중앙 기준 대칭 오프셋을 준다:
- *   0, +12, -12, +24, -24 …
- * 수평 구간이 서로 겹치지 않으면서 도면 중앙에서 크게 벗어나지 않는다.
+ * 레인 인덱스 → 화면 오프셋(px). 중앙 기준 대칭: 0, +step, -step, +2step …
+ * 도면 중앙에서 한쪽으로 쏠리지 않게 한다.
  */
-export function assignLanes(count: number, step = 12): number[] {
-  return Array.from({ length: count }, (_, i) => {
-    const k = Math.ceil(i / 2);
-    if (k === 0) return 0;            // -0 이 나오지 않게 먼저 처리
-    return (i % 2 === 1 ? 1 : -1) * k * step;
-  });
+export function laneOffset(lane: number, step = 12): number {
+  const k = Math.ceil(lane / 2);
+  if (k === 0) return 0;              // -0 이 나오지 않게 먼저 처리
+  return (lane % 2 === 1 ? 1 : -1) * k * step;
+}
+
+/**
+ * 레인 자동 배정 — **구간 겹침 채색**(interval graph coloring).
+ *
+ * 이전 방식(배선 순서로 하나씩 벌리기)은 배선 수에 비례해 도면이 세로로
+ * 벌어졌다. 20본이면 ±120px.
+ *
+ * 수평 구간이 실제로 겹치는 배선끼리만 레인을 달리하면 되므로,
+ * x 범위가 안 겹치는 배선은 같은 레인을 재사용한다.
+ * → 레인 수가 **최대 동시 겹침 수**에서 멈춘다(20본 기준 보통 4~5레인).
+ *
+ * @param spans 배선별 수평 구간 [x1, x2] (x1 ≤ x2)
+ * @param gap   같은 레인을 재사용하기 위해 필요한 최소 간격
+ * @returns 배선별 레인 인덱스 (입력과 같은 순서)
+ */
+export function colorLanes(spans: [number, number][], gap = 10): number[] {
+  // x1 오름차순으로 훑어야 그리디 채색이 최적이 된다.
+  // 원래 순서로 되돌려야 하므로 인덱스를 들고 다닌다.
+  const order = spans
+    .map((s, i) => ({ i, x1: Math.min(s[0], s[1]), x2: Math.max(s[0], s[1]) }))
+    .sort((a, b) => a.x1 - b.x1);
+
+  const laneEnds: number[] = [];   // 레인별로 현재까지 쓰인 오른쪽 끝
+  const out = new Array<number>(spans.length).fill(0);
+
+  for (const w of order) {
+    let lane = laneEnds.findIndex((end) => end + gap <= w.x1);
+    if (lane < 0) lane = laneEnds.length;
+    laneEnds[lane] = w.x2;
+    out[w.i] = lane;
+  }
+  return out;
 }
 
 /**
@@ -149,9 +175,21 @@ export function docToEdges(
   doc: HarnessDocument,
   highlight: Set<string> = new Set(),
   labelFor: string | null = null,
+  view: ViewMode = 'logical',
 ): Edge[] {
   const dim = highlight.size > 0;
-  const lanes = assignLanes(doc.wires.length);
+
+  // 각 배선의 수평 구간을 양 끝 노드의 x 로 근사해 레인을 채색한다.
+  // 정확한 핸들 좌표는 React Flow 가 렌더할 때 정해지지만, 겹침 판정에는
+  // 노드 x 로 충분하다(패드 격자 폭은 보통 100px 안쪽).
+  const nodeX = new Map<string, number>();
+  for (const c of doc.connectors) nodeX.set(c.id, pos(c.positions, view, { x: 0, y: 0 }).x);
+  for (const d of doc.devices) nodeX.set(d.id, pos(d.positions, view, { x: 0, y: 0 }).x);
+  const spans = doc.wires.map((w) => [
+    nodeX.get(endpointNodeId(w.from)) ?? 0,
+    nodeX.get(endpointNodeId(w.to)) ?? 0,
+  ] as [number, number]);
+  const laneIdx = colorLanes(spans);
 
   // 스텁 신호명은 도착 핀의 규격 신호를 쓴다(없으면 출발 핀).
   const signalAt = (e: Endpoint): string | undefined => {
@@ -183,7 +221,7 @@ export function docToEdges(
         opacity: dim && !on ? 0.16 : 1,
       },
       data: {
-        lane: lanes[i],
+        lane: laneOffset(laneIdx[i]),
         abbr: colorAbbr(w.color.base, w.color.stripe),
         signal: signalAt(w.to) ?? signalAt(w.from),
         on,
@@ -197,5 +235,5 @@ export function docToEdges(
 
 /** 하위호환 합본 (테스트/기존 호출부) */
 export function docToFlow(doc: HarnessDocument, view: ViewMode): { nodes: Node[]; edges: Edge[] } {
-  return { nodes: docToNodes(doc, view), edges: docToEdges(doc) };
+  return { nodes: docToNodes(doc, view), edges: docToEdges(doc, new Set(), null, view) };
 }
