@@ -10,10 +10,16 @@ import { HarnessCanvas } from './canvas/HarnessCanvas';
 import { strokeColor } from './canvas/docToFlow';
 import { LibraryPanel } from './library/LibraryPanel';
 import { PropertyPanel } from './panels/PropertyPanel';
+import { PartsPanel, type PartsScope } from './panels/PartsPanel';
+import { SetOverview } from './set/SetOverview';
+import { ExportDialog, type ExportPlan } from './export/ExportDialog';
+import { letterAt, orderText } from './store/kit';
 import { buildPartList, toCsv, buildRunList, runListToCsv } from './export/exporters';
 import './App.css';
 
 type Tab = 'prop' | 'runs' | 'parts';
+/** 상단 하네스 탭: 세트 개요 또는 하네스 id */
+type HarnessTab = 'set' | string;
 
 function saveBlob(name: string, text: string, mime: string) {
   const url = URL.createObjectURL(new Blob([text], { type: mime }));
@@ -49,11 +55,22 @@ export default function App() {
   const replaceDoc = useHarnessStore((s) => s.replaceDoc);
   const exportJson = useHarnessStore((s) => s.exportJson);
   const importJson = useHarnessStore((s) => s.importJson);
+  const kit = useHarnessStore((s) => s.kit);
+  const activeHarnessId = useHarnessStore((s) => s.activeHarnessId);
+  const setActiveHarness = useHarnessStore((s) => s.setActiveHarness);
+  const updateSet = useHarnessStore((s) => s.updateSet);
+  const setPerSet = useHarnessStore((s) => s.setPerSet);
+  const addHarness = useHarnessStore((s) => s.addHarness);
+  const removeHarness = useHarnessStore((s) => s.removeHarness);
+
   const fileRef = useRef<HTMLInputElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const [tab, setTab] = useState<Tab>('prop');
   const [menuOpen, setMenuOpen] = useState(false);
   const [runQ, setRunQ] = useState('');
+  const [hTab, setHTab] = useState<HarnessTab>(activeHarnessId);
+  const [partsScope, setPartsScope] = useState<PartsScope>({ kind: 'harness', harnessId: activeHarnessId });
+  const [exportOpen, setExportOpen] = useState(false);
   // 캔버스 ↔ 접속표 동기 강조
   const hoverWire = useHoverStore((s) => s.wireId);
   const setHover = useHoverStore((s) => s.setHover);
@@ -122,6 +139,47 @@ export default function App() {
     fn();
   };
 
+  /** 하네스 탭 전환 — 세트 개요는 편집 대상이 아니므로 활성 하네스는 유지한다 */
+  const goHarness = (id: string) => {
+    setHTab(id);
+    if (id !== 'set') {
+      setActiveHarness(id);
+      setPartsScope({ kind: 'harness', harnessId: id });
+    }
+  };
+  /** 발주 전 확인 항목 클릭 → 그 하네스로 이동 + 대상 선택 */
+  const goToBlocker = (harnessId: string, targetId?: string) => {
+    goHarness(harnessId);
+    setTab('prop');
+    if (targetId) select(targetId);
+  };
+  const copyOrderText = () => {
+    void navigator.clipboard?.writeText(orderText(kit));
+  };
+  /**
+   * 내보내기 실행. ExportDialog 는 계획만 세우고 저장은 여기서 한다.
+   * PDF 는 현재 열린 도면만 낼 수 있어 활성 하네스 기준이다.
+   */
+  const runExport = async (plan: ExportPlan) => {
+    setExportOpen(false);
+    const scope = plan.scope;
+    const targets = scope.kind === 'set'
+      ? kit.harnesses
+      : kit.harnesses.filter((h) => h.id === scope.harnessId);
+    const tag = kit.set.pn || 'SET';
+    for (const h of targets) {
+      const L = h.letter ?? letterAt(kit.harnesses.indexOf(h));
+      if (plan.items.runsCsv) {
+        saveBlob(`${tag}_${L}_접속표.csv`, runListToCsv(buildRunList(h)), 'text/csv;charset=utf-8;');
+      }
+      if (plan.items.partsCsv) {
+        saveBlob(`${tag}_${L}_파트리스트.csv`, toCsv(buildPartList(h)), 'text/csv;charset=utf-8;');
+      }
+    }
+    if (plan.items.json) saveBlob(`${tag}.json`, exportJson(), 'application/json');
+    if (plan.items.pdf) await exportPdf();
+  };
+
   const parts = buildPartList(doc);
   const runs = buildRunList(doc);
 
@@ -165,8 +223,10 @@ export default function App() {
           </button>
           {menuOpen && (
             <div className="menu-pop" role="menu">
+              <button onClick={runMenu(() => setExportOpen(true))}>내보내기 설정…</button>
+              <hr />
               <button onClick={runMenu(() => saveBlob(`${doc.name || 'harness'}.json`, exportJson(), 'application/json'))}>
-                JSON 저장
+                JSON 저장 (세트 전체)
               </button>
               <button onClick={runMenu(() => fileRef.current?.click())}>JSON 불러오기</button>
               <hr />
@@ -183,6 +243,50 @@ export default function App() {
         <input ref={fileRef} type="file" accept="application/json" hidden onChange={onFile} />
       </header>
 
+      {/* 하네스 탭 스트립 — 세트 개요 + 하네스 여러 종.
+          캔버스·접속표·파트·속성은 선택된 하네스 하나만 다룬다.
+          전체를 합산해 보여주는 곳은 '세트 개요' 하나뿐이다. */}
+      <nav className="htabs" aria-label="하네스">
+        <button
+          className={hTab === 'set' ? 'on' : ''}
+          onClick={() => setHTab('set')}
+        >
+          세트 개요 <b className="num">{kit.harnesses.length}종</b>
+        </button>
+        {kit.harnesses.map((h, i) => (
+          <button
+            key={h.id}
+            className={hTab === h.id ? 'on' : ''}
+            onClick={() => goHarness(h.id)}
+          >
+            <i className="htab-letter num">{h.letter ?? letterAt(i)}</i>
+            {h.name}
+            <b className="num">×{kit.set.items.find((x) => x.harnessId === h.id)?.perSet ?? 1}</b>
+          </button>
+        ))}
+        <button className="htab-add" onClick={() => addHarness('blank')} title="빈 하네스 추가">
+          + 하네스
+        </button>
+      </nav>
+
+      {hTab === 'set' ? (
+        <SetOverview
+          kit={kit}
+          activeHarnessId={activeHarnessId}
+          onSelectHarness={goHarness}
+          onChangePerSet={setPerSet}
+          onChangeOrderQty={(q) => updateSet({ orderQty: Math.max(1, q) })}
+          onChangeSet={updateSet}
+          onAddHarness={(mode) => {
+            if (mode === 'import') fileRef.current?.click();
+            else addHarness(mode);
+          }}
+          onRemoveHarness={removeHarness}
+          onGoToBlocker={goToBlocker}
+          onCopyOrderText={copyOrderText}
+          onExportSetPdf={() => setExportOpen(true)}
+        />
+      ) : (
       <div className="body">
         <LibraryPanel />
         <main className="canvas-area">
@@ -271,37 +375,29 @@ export default function App() {
           )}
 
           {tab === 'parts' && (
-            <>
-              <div className="side-filter">
-                <span className="muted" style={{ flex: 1, alignSelf: 'center' }}>부품 {parts.length}종</span>
-                <button
-                  disabled={!parts.length}
-                  onClick={() => saveBlob(`${doc.name}-파트리스트.csv`, toCsv(parts), 'text/csv;charset=utf-8;')}
-                >
-                  CSV
-                </button>
-              </div>
-              <div className="tab-body">
-                <table className="parts">
-                  <thead>
-                    <tr><th>분류</th><th>품목</th><th>수량</th></tr>
-                  </thead>
-                  <tbody>
-                    {parts.map((p, i) => (
-                      <tr key={i}>
-                        <td className="cat">{p.category}</td>
-                        <td>{p.part}{p.detail ? <span className="muted"> · {p.detail}</span> : null}</td>
-                        <td className="qty">{p.qty}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                {parts.length === 0 && <p className="muted" style={{ padding: 8 }}>부품이 없습니다</p>}
-              </div>
-            </>
+            <PartsPanel
+              kit={kit}
+              activeHarnessId={activeHarnessId}
+              scope={partsScope}
+              onChangeScope={setPartsScope}
+              onGoToBlocker={goToBlocker}
+              onChangeOrderQty={(q) => updateSet({ orderQty: Math.max(1, q) })}
+              onChangePerSet={setPerSet}
+              onOpenHarness={goHarness}
+            />
           )}
         </div>
       </div>
+      )}
+
+      {exportOpen && (
+        <ExportDialog
+          kit={kit}
+          activeHarnessId={activeHarnessId}
+          onCancel={() => setExportOpen(false)}
+          onExport={runExport}
+        />
+      )}
     </div>
   );
 }

@@ -1,0 +1,495 @@
+/**
+ * 세트 개요 스타일 — Claude Design 2차 §4.
+ *
+ * - 색은 tokens.css 변수만 쓴다. 전선 색만 인라인 style 로 들어온다(도면 규칙의 예외).
+ * - UI 강조는 스틸(--accent) 하나. 빨강은 쓰지 않는다 — 경고·미완성도 스틸이다.
+ * - 컨트롤 26px(스테퍼 24px), radius var(--radius). 도면 요소(하우징·패드·썸네일)는 0.
+ */
+
+/* ============================================================
+   골격 — 본문 1fr / 440px
+   ============================================================ */
+.so {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr var(--w-side);
+  font-size: var(--fs-body);
+  color: var(--text);
+  background: var(--bg-panel);
+}
+
+.so-main {
+  min-width: 0;
+  min-height: 0;
+  padding: 16px;
+  overflow-y: auto;
+  background: var(--bg-panel);
+}
+
+.so-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 12px; }
+.so-title {
+  margin: 0;
+  font-family: var(--font-title);
+  font-weight: 600;
+  font-size: 18px;
+  color: var(--text);
+}
+.so-head-sub { font-size: var(--fs-table); color: var(--text-3); }
+
+.so-grow { flex: 1; }
+
+/* ============================================================
+   하네스 카드 3열 그리드
+   ============================================================ */
+.so-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.so-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--bg-canvas);
+  border: 1px solid var(--line);
+  cursor: pointer;
+}
+.so-card:hover { border-color: var(--line-mid); }
+/* 선택된 하네스만 스틸 테두리 */
+.so-card.on { border-color: var(--accent); }
+
+.so-card-head {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--bg-tabbar);
+}
+.so-letter {
+  flex-shrink: 0;
+  padding: 1px 5px;
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  color: var(--bg-canvas);
+  background: var(--text-3);
+}
+.so-card-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+.so-more {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  font: inherit;
+  line-height: 1;
+  color: var(--muted);
+  background: none;
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.so-more:hover { background: var(--accent-tint); color: var(--accent-deep); }
+
+/* ⋯ 메뉴 — 삭제 하나 */
+.so-scrim { position: fixed; inset: 0; z-index: 8; }
+.so-menu {
+  position: absolute;
+  right: 6px;
+  top: 28px;
+  z-index: 9;
+  min-width: 150px;
+  padding: 4px;
+  background: var(--bg-canvas);
+  border: 1px solid var(--text);
+  box-shadow: var(--shadow-pop);
+}
+.so-menu button {
+  width: 100%;
+  height: 24px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: var(--fs-table);
+  text-align: left;
+  color: var(--text-2);
+  background: var(--bg-canvas);
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.so-menu button:hover:not(:disabled) { background: var(--accent-tint); color: var(--accent-dark); }
+.so-menu button:disabled { color: var(--muted-2); cursor: not-allowed; }
+.so-menu-hint {
+  margin: 3px 0 1px;
+  padding: 0 8px;
+  font-size: var(--fs-micro);
+  color: var(--muted);
+}
+
+/* ============================================================
+   썸네일 112px — 미니 스케마틱 (radius 0)
+   ============================================================ */
+.so-thumb {
+  position: relative;
+  height: 112px;
+  background: var(--bg-canvas);
+  border-bottom: 1px solid var(--bg-tabbar);
+}
+.so-thumb-svg { position: absolute; inset: 0; width: 100%; height: 112px; display: block; }
+
+.so-thumb-svg .so-box { fill: var(--bg-canvas); stroke: var(--line-strong); stroke-width: 1.3; }
+.so-thumb-svg .so-box.dash { stroke: var(--muted); stroke-dasharray: 3 2; }
+.so-thumb-svg .so-pad { fill: var(--bg-subtle); stroke: var(--text-3); stroke-width: .8; }
+
+.so-thumb-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-cap);
+  color: var(--muted-2);
+}
+.so-thumb-pn {
+  position: absolute;
+  right: 8px;
+  bottom: 6px;
+  font-size: var(--fs-micro);
+  color: var(--muted);
+}
+
+/* ============================================================
+   스펙 3줄 · 푸터
+   ============================================================ */
+.so-spec {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  font-size: var(--fs-sub);
+}
+.so-spec-row { display: flex; gap: 8px; min-width: 0; }
+.so-spec-k { width: 40px; flex-shrink: 0; color: var(--muted); }
+.so-spec-v {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.so-card-foot {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--bg-tabbar);
+}
+.so-foot-k { font-size: var(--fs-sub); color: var(--text-2); }
+
+/* 미완성 배지 — 빨강 대신 스틸(--accent-dark) */
+.so-issue { font-size: var(--fs-sub); color: var(--accent-dark); font-weight: 600; }
+.so-issue.done { color: var(--muted); font-weight: 400; }
+
+/* ============================================================
+   스테퍼 — 카드 24px / 세트 26px
+   ============================================================ */
+.so-stepper {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  background: var(--bg-canvas);
+  border: 1px solid var(--line-mid);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.so-stepper button {
+  width: 22px;
+  height: 24px;
+  padding: 0;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--text-2);
+  background: var(--bg-canvas);
+  border: none;
+  cursor: pointer;
+}
+.so-stepper button:hover { background: var(--accent-tint); }
+.so-stepper span {
+  width: 30px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-body);
+  font-weight: 700;
+  border-left: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+}
+.so-stepper.big button { width: 24px; height: var(--h-control); font-size: 14px; }
+.so-stepper.big span { width: 44px; height: var(--h-control); }
+
+/* ============================================================
+   추가 카드 (점선)
+   ============================================================ */
+.so-add {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 300px;
+  border: 1px dashed var(--line-mid);
+  background: transparent;
+}
+.so-add-title { font-size: var(--fs-body); color: var(--text-3); }
+.so-add-btns { display: flex; flex-direction: column; gap: 6px; width: 180px; }
+.so-add-btn {
+  height: 28px;
+  font: inherit;
+  font-size: var(--fs-table);
+  color: var(--text-2);
+  background: var(--bg-canvas);
+  border: 1px solid var(--line-mid);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.so-add-btn:hover { background: var(--accent-tint); }
+.so-add-btn.primary { font-weight: 600; color: var(--accent-dark); border-color: var(--accent); }
+
+/* ============================================================
+   우측 세트 패널 (440px)
+   ============================================================ */
+.so-side {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--line);
+}
+
+.so-tabs { display: flex; height: 28px; flex-shrink: 0; background: var(--bg-tabbar); }
+.so-tabs button {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  font: inherit;
+  font-size: var(--fs-table);
+  color: var(--text-3);
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+}
+.so-tabs button.on {
+  font-weight: 600;
+  color: var(--text);
+  background: var(--bg-panel);
+  border-bottom: 2px solid var(--accent);
+}
+.so-tabs button.off { color: var(--muted-2); cursor: not-allowed; }
+.so-tag {
+  padding: 0 3px;
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  color: var(--bg-canvas);
+  background: var(--text-3);
+}
+.so-tabs button.off .so-tag { background: var(--muted-2); }
+
+.so-side-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  padding: 10px;
+  overflow-y: auto;
+}
+
+/* 세트 카드 */
+.so-set-card {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 9px;
+  background: var(--bg-canvas);
+  border: 1px solid var(--line);
+}
+.so-set-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.so-badge {
+  padding: 1px 5px;
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  letter-spacing: .07em;
+  color: var(--bg-canvas);
+  background: var(--text);
+}
+.so-pn {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  padding: 0 5px;
+  font: inherit;
+  font-family: var(--font-num);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  background: var(--bg-canvas);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+}
+.so-pn:hover, .so-pn:focus { border-color: var(--line-mid); }
+.so-rev { font-size: var(--fs-cap); color: var(--muted); flex-shrink: 0; }
+
+.so-set-k { width: 40px; flex-shrink: 0; font-size: var(--fs-body); color: var(--text-2); }
+.so-set-unit { font-size: var(--fs-table); color: var(--text-3); }
+.so-set-total { font-size: var(--fs-sub); color: var(--text-3); white-space: nowrap; }
+.so-set-total b { color: var(--text); }
+
+.so-name {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  padding: 0 6px;
+  font: inherit;
+  font-size: var(--fs-table);
+  color: var(--text);
+  background: var(--bg-canvas);
+  border: 1px solid var(--line-mid);
+  border-radius: var(--radius);
+}
+
+/* 섹션 헤더 */
+.so-sec { display: flex; flex-direction: column; gap: 6px; }
+.so-sec-head { display: flex; align-items: center; gap: 7px; }
+.so-sec-label {
+  font-family: var(--font-num);
+  font-size: var(--fs-cap);
+  font-weight: 600;
+  letter-spacing: .06em;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.so-rule { flex: 1; height: 1px; background: var(--line); }
+
+.so-rows { display: flex; flex-direction: column; gap: 3px; }
+
+/* 세트 구성 행 */
+.so-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 8px;
+  background: var(--bg-canvas);
+  border: 1px solid var(--line-row);
+}
+.so-row-letter {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  color: var(--bg-canvas);
+  background: var(--text-3);
+}
+.so-row-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-table);
+}
+.so-row-per { font-size: var(--fs-sub); color: var(--text-3); }
+.so-row-total { width: 44px; text-align: right; font-size: var(--fs-table); font-weight: 700; }
+
+/* 발주 전 확인 — 좌측 스틸 바 + 클릭하면 해당 하네스로 */
+.so-blocker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  font: inherit;
+  text-align: left;
+  background: var(--bg-canvas);
+  border: none;
+  border-left: 3px solid var(--accent);
+  cursor: pointer;
+}
+.so-blocker:hover { background: var(--accent-tint); }
+.so-blocker-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-table);
+  color: var(--text);
+}
+.so-blocker-where { font-size: var(--fs-sub); font-weight: 700; color: var(--accent-dark); }
+.so-chev { color: var(--muted); }
+
+.so-clean {
+  margin: 0;
+  padding: 6px 8px;
+  font-size: var(--fs-table);
+  color: var(--muted);
+  background: var(--bg-canvas);
+  border: 1px solid var(--line-row);
+}
+
+/* 하단 버튼 */
+.so-side-foot { display: flex; gap: 6px; flex-shrink: 0; }
+.so-foot-btn {
+  flex: 1;
+  height: 28px;
+  font: inherit;
+  font-size: var(--fs-table);
+  color: var(--text-2);
+  background: var(--bg-canvas);
+  border: 1px solid var(--line-mid);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.so-foot-btn:hover { background: var(--accent-tint); }
+.so-foot-btn.primary {
+  font-weight: 600;
+  color: var(--bg-canvas);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.so-foot-btn.primary:hover { background: var(--accent-deep); border-color: var(--accent-deep); }
+
+/* 상태바 */
+.so-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 26px;
+  flex-shrink: 0;
+  padding: 0 8px;
+  font-size: var(--fs-cap);
+  color: var(--text-3);
+  background: var(--bg-panel);
+  border-top: 1px solid var(--line);
+}
+.so-status-hint { font-family: var(--font-ui); color: var(--muted); }

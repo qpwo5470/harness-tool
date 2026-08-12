@@ -84,6 +84,35 @@ body {
 .doc-name-input:focus { border-color: var(--accent); background: #fff; outline: none; }
 
 /* ============================================================
+   하네스 탭 스트립 (세트)
+   ============================================================ */
+.htabs {
+  display: flex; align-items: flex-end; gap: 2px; height: 32px; flex-shrink: 0;
+  padding: 0 8px; background: var(--bg-tabbar); border-bottom: 1px solid var(--line);
+}
+.htabs button {
+  display: flex; align-items: center; gap: 5px; height: 26px; padding: 0 10px;
+  font: inherit; font-size: var(--fs-table); color: var(--text-3);
+  background: transparent; border: 1px solid transparent; border-bottom: none;
+  border-radius: var(--radius) var(--radius) 0 0; cursor: pointer; white-space: nowrap;
+}
+.htabs button:hover { color: var(--text); }
+.htabs button.on {
+  background: var(--bg-panel); border-color: var(--line);
+  box-shadow: inset 0 2px 0 var(--accent); color: var(--text); font-weight: 600;
+}
+.htabs button b { font-weight: 700; color: var(--muted); }
+.htabs button.on b { color: var(--text-3); }
+.htab-letter {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 15px; height: 15px; font-size: 10px; font-weight: 700; font-style: normal;
+  background: var(--text-3); color: #fff;
+}
+.htabs button.on .htab-letter { background: var(--accent); }
+.htabs .htab-add { border: 1px dashed var(--line-mid); color: var(--muted); }
+.htabs .htab-add:hover { border-color: var(--accent); color: var(--accent-dark); }
+
+/* ============================================================
    레이아웃
    ============================================================ */
 .body {

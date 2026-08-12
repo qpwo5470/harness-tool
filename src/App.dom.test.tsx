@@ -186,7 +186,31 @@ describe('상단바 — 내보내기 메뉴', () => {
     fireEvent.click(screen.getByText('내보내기 ▾'));
     expect(screen.getByText('접속표 CSV')).toBeTruthy();
     expect(screen.getByText('파트리스트 CSV')).toBeTruthy();
-    expect(screen.getByText('JSON 저장')).toBeTruthy();
+    expect(screen.getByText('JSON 저장 (세트 전체)')).toBeTruthy();
+    // 세트 도입 후: 범위·항목을 고르는 대화상자로 들어가는 입구
+    expect(screen.getByText('내보내기 설정…')).toBeTruthy();
+  });
+});
+
+describe('하네스 탭 — 세트', () => {
+  it('세트 개요 탭과 하네스 탭이 있다', () => {
+    render(<App />);
+    expect(screen.getByText(/세트 개요/)).toBeTruthy();
+    expect(screen.getByText('+ 하네스')).toBeTruthy();
+  });
+
+  it('세트 개요로 넘어가면 캔버스 대신 하네스 카드가 보인다', () => {
+    render(<App />);
+    fireEvent.click(screen.getByText(/세트 개요/));
+    // 세트 패널의 발주 액션이 나타난다
+    expect(screen.getAllByText(/발주 문구 복사/).length).toBeGreaterThan(0);
+  });
+
+  it('하네스를 추가하면 탭이 늘어난다', () => {
+    render(<App />);
+    const before = document.querySelectorAll('.htabs button').length;
+    fireEvent.click(screen.getByText('+ 하네스'));
+    expect(document.querySelectorAll('.htabs button').length).toBe(before + 1);
   });
 });
 

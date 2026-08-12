@@ -1,0 +1,331 @@
+/**
+ * 내보내기 대화상자 스타일 — Claude Design 2차 리디자인 §6.
+ *
+ * 이 파일에만 내보내기 대화상자 스타일이 산다(ExportDialog.tsx 가 import).
+ * - 색은 tokens.css 변수만 쓴다. 새 색을 만들지 않는다.
+ * - UI 강조는 스틸(--accent) 하나. 빨강은 전선 색이라 UI 에 쓰지 않는다.
+ * - 컨트롤 26px(보조 22~24px) · radius var(--radius).
+ * - 클래스 접두사는 .ex- 다.
+ */
+
+/* ============================================================
+   모달 골격 — 860px
+   ============================================================ */
+.ex-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(29, 31, 32, .55);
+}
+
+.ex {
+  width: min(860px, 96vw);
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-panel);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-modal);
+  font-family: var(--font-ui);
+  font-size: var(--fs-body);
+  color: var(--text);
+}
+
+/* 헤더 40px */
+.ex-head {
+  flex-shrink: 0;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  background: var(--bg-canvas);
+  border-bottom: 1px solid var(--line);
+}
+.ex-title {
+  font-family: var(--font-title);
+  font-weight: 600;
+  font-size: 16px;
+}
+.ex-head-sub { font-size: var(--fs-cap); color: var(--muted); }
+
+/* 본문 1fr / 320px */
+.ex-body {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  min-height: 0;
+  overflow: hidden;
+}
+.ex-left {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  border-right: 1px solid var(--line);
+}
+
+/* ============================================================
+   섹션 머리 — 라벨 + 1px 라인
+   ============================================================ */
+.ex-sec { display: flex; flex-direction: column; gap: 7px; }
+.ex-sec-head { display: flex; align-items: center; gap: 7px; }
+.ex-rule { flex: 1; height: 1px; background: var(--line); }
+.ex-spacer { flex: 1; }
+
+/* ============================================================
+   1. 범위
+   ============================================================ */
+.ex-scopes { display: flex; flex-wrap: wrap; gap: 4px; }
+.ex-scope {
+  height: var(--h-control);
+  padding: 0 10px;
+  font: inherit;
+  font-size: var(--fs-table);
+  white-space: nowrap;
+  color: var(--text-2);
+  background: var(--bg-canvas);
+  border: 1px solid var(--line-mid);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.ex-scope:hover { background: var(--accent-tint); }
+.ex-scope.on {
+  font-weight: 600;
+  color: var(--bg-canvas);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+/* ============================================================
+   2. 무엇을 — 체크 목록 5행
+   행 사이 1px 헤어라인은 컨테이너 배경이 비쳐 만들어진다.
+   ============================================================ */
+.ex-items {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--bg-tabbar);
+  border: 1px solid var(--bg-tabbar);
+}
+.ex-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 8px 10px;
+  background: var(--bg-canvas);
+  cursor: pointer;
+}
+.ex-item:hover { background: var(--bg-subtle); }
+.ex-box {
+  flex-shrink: 0;
+  width: 15px;
+  height: 15px;
+  margin-top: 1px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  color: var(--bg-canvas);
+  background: var(--bg-canvas);
+  border: 1px solid var(--line-mid);
+}
+.ex-item.on .ex-box { background: var(--accent); border-color: var(--accent); }
+.ex-item-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.45;
+}
+.ex-item.on .ex-item-name { font-weight: 600; }
+.ex-ext { font-size: var(--fs-cap); color: var(--muted); }
+.ex-item-desc { font-size: var(--fs-sub); color: var(--text-3); }
+.ex-item-count {
+  flex-shrink: 0;
+  margin-top: 1px;
+  font-size: var(--fs-cap);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* ============================================================
+   3. 옵션 — 여유율 · 단위 · 용지 · CSV 열
+   ============================================================ */
+.ex-row { display: flex; align-items: center; gap: 8px; }
+.ex-row-top { align-items: flex-start; }
+.ex-row-label { flex-shrink: 0; width: 78px; color: var(--text-2); }
+.ex-row-label-2 { width: 66px; margin-left: 8px; }
+.ex-row-label-pad { padding-top: 4px; }
+
+.ex-seg {
+  display: flex;
+  border: 1px solid var(--line-mid);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.ex-seg-btn {
+  width: 52px;
+  height: var(--h-control);
+  font: inherit;
+  font-size: var(--fs-table);
+  color: var(--text-2);
+  background: var(--bg-canvas);
+  border: none;
+  cursor: pointer;
+}
+.ex-seg-btn + .ex-seg-btn { border-left: 1px solid var(--line-mid); }
+.ex-seg-btn:hover { background: var(--accent-tint); }
+.ex-seg-btn.on {
+  font-weight: 600;
+  color: var(--bg-canvas);
+  background: var(--accent);
+}
+.ex-seg-sm { width: 44px; }
+
+.ex-custom { display: flex; align-items: center; gap: 4px; }
+.ex-num {
+  width: 52px;
+  height: var(--h-control-sm);
+  padding: 0 6px;
+  font: inherit;
+  font-size: var(--fs-table);
+  color: var(--text);
+  background: var(--bg-canvas);
+  border: 1px solid var(--line-mid);
+  border-radius: var(--radius);
+}
+.ex-unit { font-size: var(--fs-sub); color: var(--text-3); }
+.ex-note { font-size: var(--fs-sub); color: var(--text-3); }
+
+/* 원칙 — 여유율은 여기서 한 번만 정한다 */
+.ex-principle {
+  margin: -2px 0 0 86px;
+  font-size: var(--fs-cap);
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.ex-chips { flex: 1; display: flex; flex-wrap: wrap; gap: 4px; }
+.ex-chip {
+  height: 24px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: var(--fs-sub);
+  white-space: nowrap;
+  color: var(--muted);
+  background: var(--bg-canvas);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.ex-chip.on {
+  font-weight: 600;
+  color: var(--accent-dark);
+  background: var(--accent-tint);
+  border-color: var(--accent);
+}
+
+/* ============================================================
+   우측 320px — 나올 파일
+   ============================================================ */
+.ex-right {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  background: var(--bg-panel);
+}
+.ex-files-head { align-items: baseline; }
+.ex-file-count { font-size: var(--fs-table); font-weight: 700; }
+
+.ex-files {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-canvas);
+  border: 1px solid var(--line);
+}
+.ex-file {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 28px;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--line-row);
+}
+.ex-file:last-child { border-bottom: none; }
+.ex-file-kind {
+  flex-shrink: 0;
+  padding: 0 3px;
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  letter-spacing: .06em;
+  color: var(--text-3);
+  border: 1px solid var(--line);
+}
+.ex-file-name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-sub);
+  line-height: 1.35;
+  word-break: break-all;
+}
+.ex-files-empty {
+  padding: 10px;
+  font-size: var(--fs-sub);
+  color: var(--muted);
+}
+.ex-zip { font-size: var(--fs-sub); line-height: 1.5; color: var(--text-3); }
+.ex-rule-note { font-size: var(--fs-cap); line-height: 1.5; color: var(--muted); }
+
+/* ============================================================
+   푸터
+   ============================================================ */
+.ex-foot {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--bg-canvas);
+  border-top: 1px solid var(--line);
+}
+.ex-summary { font-size: var(--fs-sub); color: var(--text-3); }
+.ex-btn {
+  height: var(--h-control);
+  padding: 0 12px;
+  font: inherit;
+  font-size: var(--fs-table);
+  color: var(--text-2);
+  background: var(--bg-canvas);
+  border: 1px solid var(--line-mid);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.ex-btn:hover { background: var(--accent-tint); }
+.ex-btn.primary {
+  padding: 0 16px;
+  font-weight: 600;
+  color: var(--bg-canvas);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.ex-btn.primary:hover { background: var(--accent-deep); border-color: var(--accent-deep); }
+.ex-btn.primary:disabled {
+  color: var(--bg-canvas);
+  background: var(--muted-2);
+  border-color: var(--muted-2);
+  cursor: not-allowed;
+}

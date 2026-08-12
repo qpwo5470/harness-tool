@@ -195,6 +195,12 @@ export type HarnessDocument = {
   drawingNo?: string;
   rev?: string;
 
+  /**
+   * 세트 안에서의 식별 문자 (A, B, C …). 세트에 속할 때만 쓴다.
+   * optional 이라 단일 하네스 문서와 호환된다.
+   */
+  letter?: string;
+
   connectors: Connector[];
   devices: Device[];
   wires: Wire[];
@@ -209,6 +215,54 @@ export type HarnessDocument = {
 };
 
 // ================================================================
+// 6-2. 세트 (발주 단위)
+//
+// 자판기 1대분처럼 **여러 종의 하네스를 묶어** 발주하는 경우를 담는다.
+// (예: A 1개 + B 2개 + C 1개 = 세트 1개)
+//
+// 설계 원칙: HarnessDocument 는 **하네스 한 종**을 뜻하며 그대로 둔다.
+// 캔버스·접속표·파트·속성은 전부 하네스 하나만 다루므로 기존 코드가
+// 손대지 않고 그대로 동작한다. 세트는 그 위를 감싸는 컨테이너다.
+// ================================================================
+
+/** 세트 구성 한 줄 — 어떤 하네스가 세트당 몇 개 들어가는가 */
+export type SetItem = {
+  harnessId: Id;
+  /** 세트 1개당 수량 */
+  perSet: number;
+};
+
+export type HarnessSet = {
+  id: Id;
+  /** 세트 품번 (KIT-2408) */
+  pn: string;
+  name: string;
+  rev?: string;
+  items: SetItem[];
+  /** 주문할 세트 수 */
+  orderQty: number;
+};
+
+/**
+ * 최상위 저장 단위. 하네스 여러 종 + 세트 하나.
+ *
+ * 총수량은 언제나 `perSet × orderQty` 로 **파생**한다 — 저장하지 않는다.
+ * 수동 입력 총수량을 두면 화면 숫자와 발주 숫자가 갈라진다.
+ */
+export type KitDocument = {
+  schemaVersion: 2;
+  id: Id;
+  name: string;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+  harnesses: HarnessDocument[];
+  set: HarnessSet;
+};
+
+/** 저장 파일은 v1(하네스 하나) 또는 v2(세트) 둘 다 올 수 있다 */
+export type AnyDocument = HarnessDocument | KitDocument;
+
+// ================================================================
 // 7. 스토어 계약 (앱 상태 인터페이스)
 //    - 구현체(Zustand 등)는 이 시그니처를 따른다.
 // ================================================================
@@ -216,13 +270,32 @@ export type HarnessDocument = {
 export type ViewMode = 'logical' | 'physical';
 
 export interface HarnessStore {
+  /**
+   * **현재 편집 중인 하네스 하나.**
+   * 캔버스·접속표·속성·파트는 전부 이 문서만 다룬다.
+   * 세트 전체를 합산해 보는 화면은 세트 개요 하나뿐이다.
+   */
   doc: HarnessDocument;
+  /** 하네스 여러 종을 담는 상위 컨테이너 */
+  kit: KitDocument;
+  activeHarnessId: Id;
   selection: Id | null;
   activeView: ViewMode;
 
   // 조회/선택
   select(id: Id | null): void;
   setView(view: ViewMode): void;
+
+  // 세트
+  /** 편집 대상 하네스를 바꾼다 (현재 하네스는 세트에 먼저 반영된다) */
+  setActiveHarness(id: Id): void;
+  updateSet(patch: Partial<HarnessSet>): void;
+  /** 세트당 수량 변경 */
+  setPerSet(harnessId: Id, perSet: number): void;
+  /** 하네스 추가 — blank(빈) / duplicate(활성 하네스 복제) */
+  addHarness(mode: 'blank' | 'duplicate', doc?: HarnessDocument): void;
+  removeHarness(id: Id): void;
+  replaceKit(kit: KitDocument): void;
 
   // 커넥터
   addConnector(c: Connector): void;

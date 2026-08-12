@@ -1,0 +1,482 @@
+/**
+ * 파트 탭 스타일 — Claude Design 2차 §9.
+ *
+ * 이 파일에만 파트 탭 스타일이 산다(PartsPanel.tsx 가 import).
+ * - 색은 tokens.css 변수만. 전선 색은 인라인 style 로 들어온다(데이터).
+ * - UI 강조는 스틸(--accent) 하나. 경고에도 빨강을 쓰지 않는다 — 빨강은 전선 색이다.
+ * - 컨트롤 26px(보조 22px), radius var(--radius), 도면·배지 요소는 0.
+ */
+
+/* ============================================================
+   골격 — 440px 패널. 목록만 스크롤하고 머리·상태바는 고정
+   ============================================================ */
+.pt {
+  height: 100%;
+  width: 100%;
+  max-width: var(--w-side);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  font-family: var(--font-ui);
+  font-size: var(--fs-body);
+  color: var(--text);
+  background: var(--bg-panel);
+}
+
+.pt-grow { flex: 1; }
+.pt .num { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+
+/* ============================================================
+   상단 — 발주 단위 세그먼트 · 집계 범위 · 내보내기
+   ============================================================ */
+.pt-head {
+  flex-shrink: 0;
+  padding: var(--pad-panel);
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  border-bottom: 1px solid var(--line);
+}
+
+.pt-seg {
+  display: flex;
+  border: 1px solid var(--line-mid);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.pt-seg > button {
+  flex: 1;
+  height: var(--h-control);
+  padding: 0 10px;
+  font: inherit;
+  font-size: var(--fs-table);
+  color: var(--text-2);
+  background: var(--bg-canvas);
+  border: none;
+  border-left: 1px solid var(--line-mid);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.pt-seg > button:first-child { border-left: none; }
+.pt-seg > button:hover { background: var(--accent-tint); }
+.pt-seg > button.on {
+  font-weight: 600;
+  color: var(--bg-canvas);
+  background: var(--accent);
+  border-left-color: var(--accent);
+}
+.pt-seg.sm { flex: 0 0 auto; }
+.pt-seg.sm > button { flex: 0 0 auto; }
+
+.pt-field { display: flex; align-items: center; gap: 6px; }
+.pt-flabel {
+  flex-shrink: 0;
+  font-size: var(--fs-sub);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.pt-flabel.wide { flex: 1; min-width: 0; }
+
+/* 집계 범위 — 스틸 테두리 + 틴트. 어떤 숫자든 이 값과 함께 읽힌다. */
+.pt-scope {
+  flex: 1;
+  min-width: 0;
+  height: var(--h-control);
+  padding: 0 4px;
+  font: inherit;
+  font-size: var(--fs-table);
+  font-weight: 600;
+  color: var(--accent-dark);
+  background: var(--accent-tint);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+}
+
+.pt-mini {
+  height: var(--h-control);
+  padding: 0 8px;
+  font: inherit;
+  font-size: var(--fs-cap);
+  color: var(--text-2);
+  background: var(--bg-canvas);
+  border: 1px solid var(--line-mid);
+  border-radius: var(--radius);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.pt-mini:hover { background: var(--accent-tint); }
+
+.pt-primary {
+  margin-top: 7px;
+  width: 100%;
+  height: var(--h-control);
+  font: inherit;
+  font-size: var(--fs-table);
+  font-weight: 600;
+  color: var(--bg-canvas);
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.pt-primary:hover { background: var(--accent-deep); border-color: var(--accent-deep); }
+
+.pt-linkbtn {
+  font: inherit;
+  font-size: var(--fs-cap);
+  color: var(--accent-dark);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.pt-note {
+  margin: 0;
+  font-size: var(--fs-cap);
+  color: var(--text-3);
+  line-height: 1.45;
+}
+
+/* ============================================================
+   발주를 막는 항목 — 맨 위. 경고도 스틸(--accent)로 쓴다.
+   ============================================================ */
+.pt-blockers {
+  flex-shrink: 0;
+  padding: var(--pad-panel);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--bg-tabbar);
+  border-bottom: 1px solid var(--line);
+}
+.pt-blocker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: var(--fs-table);
+  color: var(--text);
+  text-align: left;
+  background: var(--bg-canvas);
+  border: none;
+  border-left: 3px solid var(--accent);
+  border-radius: 0;              /* 경고 바는 도면 요소에 가깝다 — 각지게 */
+  cursor: pointer;
+}
+.pt-blocker:hover { background: var(--accent-tint); }
+.pt-blocker-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pt-blocker-where {
+  font-size: var(--fs-sub);
+  font-weight: 700;
+  color: var(--accent-dark);
+  white-space: nowrap;
+}
+.pt-chev { color: var(--muted); }
+
+/* ============================================================
+   목록 — 그룹 헤더 + 행
+   ============================================================ */
+.pt-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--bg-canvas);
+}
+
+.pt-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 8px;
+  background: var(--bg-subtle);
+  border-bottom: 1px solid var(--line);
+}
+.pt-group-label {
+  font-family: var(--font-num);
+  font-size: var(--fs-cap);
+  font-weight: 600;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+/* 집계 규칙 — 수량의 출처를 한 줄로 적는다 */
+.pt-group-rule {
+  font-family: var(--font-num);
+  font-size: var(--fs-cap);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.pt-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 5px 8px;
+  background: var(--bg-canvas);
+  border-bottom: 1px solid var(--line-row);
+}
+.pt-row.dim, .pt-row.empty { background: var(--bg-subtle); }
+.pt-row.dim .pt-qty, .pt-row.empty .pt-row-name { color: var(--muted); }
+
+/* 색 스와치 — 전선만 실제 색, 나머지는 중립 상자 */
+.pt-sw {
+  width: 14px;
+  height: 9px;
+  flex-shrink: 0;
+  margin-top: 4px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--line);
+}
+.pt-sw.wire { border-color: var(--muted); }
+
+.pt-row-main { flex: 1; min-width: 0; line-height: 1.35; }
+.pt-row-name {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pt-row-sub {
+  display: block;
+  font-family: var(--font-num);
+  font-size: var(--fs-cap);
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pt-row-qty { flex-shrink: 0; text-align: right; }
+.pt-qty {
+  display: block;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.pt-unit {
+  display: block;
+  font-size: var(--fs-micro);
+  color: var(--muted);
+}
+
+/* ============================================================
+   상태바 — 범위를 밝힌다. 숫자만 있는 상태바는 두지 않는다.
+   ============================================================ */
+.pt-status {
+  flex-shrink: 0;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  font-size: var(--fs-cap);
+  color: var(--text-3);
+  background: var(--bg-panel);
+  border-top: 1px solid var(--line);
+}
+.pt-basis { font-family: var(--font-ui); }
+
+/* ============================================================
+   하네스 단위 — 세트 카드
+   ============================================================ */
+.pt-setcard {
+  flex-shrink: 0;
+  padding: 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  background: var(--bg-canvas);
+  border-bottom: 1px solid var(--line);
+}
+.pt-setcard-head, .pt-setcard-row { display: flex; align-items: center; gap: 8px; }
+.pt-badge {
+  font-family: var(--font-num);
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  letter-spacing: .07em;
+  color: var(--bg-canvas);
+  background: var(--text);
+  padding: 1px 5px;
+  border-radius: 0;
+}
+.pt-set-name { font-size: var(--fs-body); font-weight: 600; }
+.pt-pn { font-size: var(--fs-cap); color: var(--muted); }
+.pt-pn.strong { font-size: 13px; font-weight: 700; color: var(--text); }
+.pt-set-k { font-size: var(--fs-body); color: var(--text-2); }
+.pt-set-total { font-size: var(--fs-sub); color: var(--text-3); }
+
+.pt-step {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--line-mid);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--bg-canvas);
+}
+.pt-step > button {
+  width: 24px;
+  height: var(--h-control);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--text-2);
+  background: var(--bg-canvas);
+  border: none;
+  cursor: pointer;
+}
+.pt-step > button:hover { background: var(--accent-tint); }
+.pt-step > input {
+  width: 44px;
+  height: var(--h-control);
+  padding: 0;
+  font: inherit;
+  font-size: var(--fs-body);
+  font-weight: 700;
+  text-align: center;
+  color: var(--text);
+  background: var(--bg-canvas);
+  border: none;
+  border-left: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+}
+.pt-step.sm > button { width: 20px; height: var(--h-control-sm); }
+.pt-step-val {
+  width: 28px;
+  height: var(--h-control-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-table);
+  font-weight: 700;
+  border-left: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+}
+
+/* ============================================================
+   세트 구성 — 행을 누르면 펼쳐진다
+   ============================================================ */
+.pt-item { border-bottom: 1px solid var(--line-row); background: var(--bg-canvas); }
+.pt-item.open { background: var(--bg-subtle); }
+.pt-item-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 8px;
+  cursor: pointer;
+}
+.pt-item-head:hover { background: var(--accent-tint); }
+.pt-item-head.cur { box-shadow: inset 3px 0 0 var(--accent); }
+.pt-letter {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  margin-top: 1px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  color: var(--bg-canvas);
+  background: var(--text-3);
+}
+.pt-item-main { flex: 1; min-width: 0; line-height: 1.4; }
+.pt-item-name {
+  display: block;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pt-item-sub {
+  display: block;
+  font-size: var(--fs-cap);
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pt-item-qty { flex-shrink: 0; text-align: right; }
+.pt-per { display: block; font-size: var(--fs-micro); color: var(--muted); }
+.pt-caret {
+  width: 10px;
+  flex-shrink: 0;
+  margin-top: 2px;
+  font-size: var(--fs-cap);
+  color: var(--muted);
+}
+
+.pt-item-detail {
+  padding: 0 8px 8px 31px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.pt-kv { display: flex; gap: 8px; font-size: var(--fs-sub); line-height: 1.4; }
+.pt-k { width: 52px; flex-shrink: 0; color: var(--muted); }
+.pt-v { flex: 1; min-width: 0; display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.pt-item-btns { display: flex; gap: 5px; margin-top: 4px; }
+.pt-item-btns .pt-mini { height: var(--h-control-sm); }
+
+/* ============================================================
+   발주 문구 — 그대로 복사해 보낼 수 있는 블록
+   ============================================================ */
+.pt-ordertext-wrap { padding: 9px; background: var(--bg-canvas); }
+.pt-ordertext {
+  padding: 9px 10px;
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-sub);
+  line-height: 1.75;
+  color: var(--text);
+  background: var(--bg-subtle);
+  border: 1px solid var(--line);
+  white-space: pre-wrap;
+}
+
+/* ============================================================
+   제작 사양서 — 위탁 시 첨부. 하네스 1종당 1장.
+   ============================================================ */
+.pt-spec { background: var(--bg-canvas); border-bottom: 1px solid var(--line); }
+.pt-spec-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px;
+  border-bottom: 1px solid var(--line);
+}
+.pt-spec-name { font-size: var(--fs-table); color: var(--text-3); }
+.pt-spec-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-height: var(--h-row);
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--line-row);
+}
+.pt-spec-row.dim .pt-spec-qty { color: var(--muted); }
+.pt-spec-ref {
+  width: 26px;
+  flex-shrink: 0;
+  font-size: var(--fs-cap);
+  font-weight: 700;
+  color: var(--text-3);
+}
+.pt-spec-text { flex: 1; min-width: 0; line-height: 1.4; }
+.pt-spec-qty {
+  flex-shrink: 0;
+  font-size: var(--fs-table);
+  font-weight: 600;
+  white-space: nowrap;
+}
