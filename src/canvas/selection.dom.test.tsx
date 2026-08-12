@@ -103,7 +103,25 @@ beforeEach(() => {
     setItem: (k: string, v: string) => void mem.set(k, v),
     removeItem: (k: string) => void mem.delete(k),
   });
-  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+  /**
+   * 크기를 재자마자 알려주는 관찰자.
+   * React Flow 는 노드 크기를 ResizeObserver 로 받아야 비로소 엣지를 그린다.
+   * 아무것도 하지 않는 껍데기를 물리면 배선이 영영 그려지지 않는다.
+   */
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      constructor(
+        private cb: (entries: { target: Element; contentRect: { width: number; height: number } }[]) => void,
+      ) {}
+      observe(el: Element) {
+        // React Flow 는 어떤 곳은 target 의 offset 을, 어떤 곳은 contentRect 를 읽는다.
+        this.cb([{ target: el, contentRect: { width: 1200, height: 800 } }]);
+      }
+      unobserve() {}
+      disconnect() {}
+    },
+  );
   if (!window.matchMedia) {
     vi.stubGlobal('matchMedia', () => ({
       matches: false, addListener() {}, removeListener() {},
@@ -111,6 +129,19 @@ beforeEach(() => {
     }));
   }
   (globalThis as unknown as { DOMMatrixReadOnly: unknown }).DOMMatrixReadOnly = class { m22 = 1; };
+
+  /**
+   * React Flow 는 컨테이너 크기를 재서 0 이면 노드·엣지를 아예 그리지 않는다.
+   * jsdom 에는 레이아웃이 없어 언제나 0 이므로, 크기를 읽는 구멍 셋을 막아 준다.
+   * (React Flow 공식 테스트 안내와 같은 방식이다)
+   */
+  Object.defineProperties(HTMLElement.prototype, {
+    offsetWidth: { get: () => 1200, configurable: true },
+    offsetHeight: { get: () => 800, configurable: true },
+  });
+  Object.defineProperties(SVGElement.prototype, {
+    getBBox: { value: () => ({ x: 0, y: 0, width: 0, height: 0 }), configurable: true },
+  });
 
   useSelectionStore.setState({ ids: [] });
   useHoverStore.setState({ wireId: null, source: null, x: 0, y: 0 });
@@ -292,6 +323,73 @@ describe('§11 캔버스 — 호버는 임시, 선택은 고정', () => {
     sel().setIds(['w1']);
     const pinned = render(<HarnessCanvas />);
     expect(pinned.container.querySelector('.hz-card')).toBeNull();
+  });
+
+  /**
+   * 수정키 클릭이 배선까지 도달하는가 — 회귀 시험.
+   *
+   * 왜 이 시험이 있나: React Flow 는 selectionKeyCode · multiSelectionKeyCode ·
+   * zoomActivationKeyCode 중 하나라도 눌리면 pane 을 활성 모드로 올려
+   * **그 클릭을 가져간다**. 그래서 ⌘+클릭이 배선에 닿지 못하고 선택이 통째로 풀렸다.
+   * 세 키를 모두 떼어내고 판정을 OrthogonalEdge 의 히트 선으로 옮겨 고쳤다.
+   * 다시 React Flow 에 수정키를 물리면 이 시험이 먼저 깨진다.
+   */
+  it('배선 히트 선 클릭 — 그냥 클릭은 단일, ⌘·Shift 를 누르면 집합에 더한다', () => {
+    const { container } = render(<HarnessCanvas />);
+    const hits = container.querySelectorAll('.hz-edge-hit');
+    expect(hits.length).toBe(4);           // 배선 4본 모두 집을 수 있어야 한다
+
+    const hitOf = (wireId: string) => {
+      const g = container.querySelector(`.react-flow__edge[data-id="${wireId}"]`);
+      const hit = g?.querySelector('.hz-edge-hit');
+      if (!hit) throw new Error(`${wireId} 히트 선을 찾지 못했다`);
+      return hit;
+    };
+
+    fireEvent.click(hitOf('w1'));
+    expect(store().selection).toBe('w1');
+    expect(ids()).toEqual([]);
+
+    fireEvent.click(hitOf('w3'), { metaKey: true });
+    expect(ids()).toEqual(['w1', 'w3']);
+
+    fireEvent.click(hitOf('w4'), { shiftKey: true });
+    expect(ids()).toEqual(['w1', 'w3', 'w4']);
+
+    // 이미 든 것을 다시 집으면 빠진다
+    fireEvent.click(hitOf('w3'), { metaKey: true });
+    expect(ids()).toEqual(['w1', 'w4']);
+
+    // 수정키 없이 집으면 다중이 접힌다
+    fireEvent.click(hitOf('w2'));
+    expect(ids()).toEqual([]);
+    expect(store().selection).toBe('w2');
+  });
+
+  /**
+   * 호버도 히트 선이 직접 받는다 — 회귀 시험.
+   *
+   * React Flow 의 onEdgeMouseLeave 에 맡겼더니 선을 벗어나도 해제가 오지 않아
+   * 상세 카드가 커서를 따라다녔다(실제 화면에서 확인). 들어오고 나가는 판정을
+   * 히트 선 자신이 하도록 옮겼다.
+   */
+  it('배선 히트 선을 벗어나면 강조가 풀린다', () => {
+    const { container } = render(<HarnessCanvas />);
+    const hitOf = () => {
+      const el = container.querySelector('.react-flow__edge[data-id="w1"] .hz-edge-hit');
+      if (!el) throw new Error('w1 히트 선을 찾지 못했다');
+      return el;
+    };
+
+    fireEvent.mouseOver(hitOf());
+    expect(useHoverStore.getState().wireId).toBe('w1');
+    expect(container.querySelector('.hz-card')).toBeTruthy();
+
+    // 강조가 켜지면 엣지가 다시 그려진다. 그때 DOM 노드가 갈릴 수 있으므로
+    // 나가는 이벤트는 **다시 찾은** 노드에 쏜다.
+    fireEvent.mouseOut(hitOf());
+    expect(useHoverStore.getState().wireId).toBeNull();
+    expect(container.querySelector('.hz-card')).toBeNull();
   });
 
   it('다중 선택이면 도면 위에 본수 배지가 서고, ESC 로 단일까지 한 단계 내려간다', () => {

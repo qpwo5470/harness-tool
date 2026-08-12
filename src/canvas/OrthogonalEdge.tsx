@@ -15,6 +15,8 @@
  *   [스텁 라벨] 도착 패드 옆에 색 약호 + 신호명
  */
 import { BaseEdge, EdgeLabelRenderer, getSmoothStepPath, type EdgeProps } from '@xyflow/react';
+import { useSelectionStore } from '../store/selectionStore';
+import { useHoverStore } from '../store/hoverStore';
 
 export type OrthoEdgeData = {
   /** 레인 오프셋(px). 수평 구간이 겹치지 않게 배선마다 다르게 준다. */
@@ -37,6 +39,8 @@ export function OrthogonalEdge(props: EdgeProps) {
     sourcePosition, targetPosition, style, data, markerEnd, selected,
   } = props;
   const d = (data ?? {}) as OrthoEdgeData;
+  const clickSelect = useSelectionStore((s) => s.click);
+  const setHover = useHoverStore((s) => s.setHover);
 
   const [path, labelX, labelY] = getSmoothStepPath({
     sourceX, sourceY, targetX, targetY,
@@ -62,7 +66,16 @@ export function OrthogonalEdge(props: EdgeProps) {
         />
       )}
       <BaseEdge id={id} path={path} style={style} markerEnd={markerEnd} />
-      {/* 투명 히트 선 — 1.6px 선을 정확히 집기는 어렵다 */}
+      {/*
+        투명 히트 선 — 1.6px 선을 정확히 집기는 어렵다.
+
+        포인터 이벤트를 **전부 여기서 직접 받는다**. React Flow 의
+        onEdgeClick · onEdgeMouseEnter · onEdgeMouseLeave 에 맡겼더니 둘 다 샜다:
+          · 수정키를 누른 클릭이 엣지가 아니라 pane 으로 가 선택이 통째로 풀렸고
+          · 선을 벗어나도 onEdgeMouseLeave 가 오지 않아 상세 카드가 커서를 따라다녔다.
+        둘 다 실제 화면에서 확인했다. 이 path 는 우리 것이고 호버 영역과 정확히
+        같은 모양이라, 여기서 받으면 라이브러리의 사정에 휘둘리지 않는다.
+      */}
       <path
         d={path}
         className="hz-edge-hit"
@@ -70,6 +83,18 @@ export function OrthogonalEdge(props: EdgeProps) {
         stroke="transparent"
         strokeWidth={12}
         pointerEvents="stroke"
+        onClick={(e) => {
+          e.stopPropagation();
+          clickSelect(id, e.shiftKey || e.metaKey || e.ctrlKey);
+        }}
+        /*
+          enter/leave 가 아니라 over/out 을 쓴다.
+          이 path 는 자식이 없어 둘의 뜻이 같은데, over/out 은 root 로 위임되는
+          이벤트라 항상 오고 enter/leave 는 그렇지 않다. 실제로 leave 가 오지 않아
+          카드가 커서를 따라다녔다.
+        */
+        onMouseOver={() => setHover(id, 'canvas')}
+        onMouseOut={() => setHover(null)}
       />
       {d.abbr && (
         <EdgeLabelRenderer>

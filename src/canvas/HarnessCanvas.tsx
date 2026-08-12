@@ -23,7 +23,6 @@ import {
   type Node,
   type Edge,
   type NodeMouseHandler,
-  type EdgeMouseHandler,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { useHarnessStore } from '../store/harnessStore';
@@ -107,7 +106,6 @@ function Flow() {
 
   // §11 선택 모델 — 다중은 selectionStore, 단일은 기존 harnessStore.selection
   const ids = useSelectionStore((s) => s.ids);
-  const clickSelect = useSelectionStore((s) => s.click);
   const setIds = useSelectionStore((s) => s.setIds);
   const escape = useSelectionStore((s) => s.escape);
   const multi = ids.length > 1;
@@ -118,34 +116,6 @@ function Flow() {
 
   // 라이브러리에서 부품을 끌고 들어온 동안만 드롭 표시를 켠다
   const [dropping, setDropping] = useState(false);
-  /**
-   * 스페이스를 누르고 있는 동안은 화면 이동 모드.
-   * 박스 선택이 좌클릭을 가져갔기 때문에, 트랙패드에서도 쓸 수 있는
-   * 팬 수단이 하나는 있어야 한다(그림 도구의 오랜 관례).
-   */
-  const [spaceHeld, setSpaceHeld] = useState(false);
-  useEffect(() => {
-    const down = (e: KeyboardEvent) => {
-      if (e.code !== 'Space') return;
-      const el = e.target as HTMLElement | null;
-      if (el && /INPUT|TEXTAREA|SELECT/.test(el.tagName)) return; // 입력 중 공백은 글자다
-      e.preventDefault();
-      setSpaceHeld(true);
-    };
-    const up = (e: KeyboardEvent) => {
-      if (e.code === 'Space') setSpaceHeld(false);
-    };
-    // 창을 벗어난 사이 키를 떼면 눌린 채로 남는다
-    const blur = () => setSpaceHeld(false);
-    window.addEventListener('keydown', down);
-    window.addEventListener('keyup', up);
-    window.addEventListener('blur', blur);
-    return () => {
-      window.removeEventListener('keydown', down);
-      window.removeEventListener('keyup', up);
-      window.removeEventListener('blur', blur);
-    };
-  }, []);
   // 화면 좌표 → flow 좌표 (줌·팬을 반영). ReactFlowProvider 안에서만 쓸 수 있다.
   const { screenToFlowPosition } = useReactFlow();
 
@@ -277,9 +247,7 @@ function Flow() {
 
   // 노드는 단일 선택만 다룬다 — 다중 선택 속성 탭은 배선 공통 속성용이다.
   const onNodeClick: NodeMouseHandler = (_e, n) => setIds([n.id]);
-  const onEdgeClick: EdgeMouseHandler = (e, ed) => clickSelect(ed.id, e.shiftKey || e.metaKey);
-  const onEdgeEnter: EdgeMouseHandler = (_e, ed) => setHover(ed.id, 'canvas');
-  const onEdgeLeave: EdgeMouseHandler = () => setHover(null);
+  // 배선의 클릭·호버는 OrthogonalEdge 의 히트 선이 직접 받는다(그쪽 주석 참고).
 
   /**
    * 박스 드래그(selectionOnDrag) 결과.
@@ -340,6 +308,9 @@ function Flow() {
       className={`hz-canvas-wrap${dropping ? ' hz-dropping' : ''}`}
       ref={wrapRef}
       onMouseMove={onMouseMove}
+      // 도면 밖으로 커서가 나가면 강조를 끈다 — 배선 위에서 곧장 캔버스 밖으로
+      // 빠져나가면 선의 mouseleave 가 오지 않을 수 있어 카드가 남는다.
+      onMouseLeave={() => setHover(null)}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
@@ -353,22 +324,41 @@ function Flow() {
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
         onNodeClick={onNodeClick}
-        onEdgeClick={onEdgeClick}
-        onEdgeMouseEnter={onEdgeEnter}
-        onEdgeMouseLeave={onEdgeLeave}
         onNodeDragStop={onNodeDragStop}
         onSelectionChange={onSelectionChange}
-        onPaneClick={() => setIds([])}
+        // 빈 곳 클릭은 해제. 단 modifier 를 누른 채면 "더하려던 손짓"이므로 놔둔다 —
+        // 엣지를 살짝 빗맞혔다고 고르던 걸 통째로 잃으면 안 된다.
+        onPaneClick={(e) => {
+          if (e.shiftKey || e.metaKey || e.ctrlKey) return;
+          setIds([]);
+        }}
         connectionMode={ConnectionMode.Loose}
-        // 박스 선택을 켜면 좌클릭 드래그를 선택이 가져가므로 화면 이동 수단을
-        // 따로 남겨야 한다. CAD 관례대로 가운데/오른쪽 버튼 드래그를 두되,
-        // 트랙패드에서 그 둘은 사실상 불가능하므로 두 손가락 스크롤(panOnScroll)과
-        // 스페이스+드래그를 함께 연다. 확대·축소는 ⌘/Ctrl + 스크롤.
-        selectionOnDrag={!spaceHeld}
-        panOnDrag={spaceHeld ? [0, 1, 2] : [1, 2]}
+        /**
+         * 조작 규칙 — 라이브러리 제약 위에서 고른 조합이다.
+         *
+         * ── 왜 수정키를 React Flow 에서 전부 떼어냈나
+         * React Flow 는 selectionKeyCode · multiSelectionKeyCode · zoomActivationKeyCode
+         * 중 **어느 하나라도** 눌리면 pane 을 활성 모드로 올려 그 클릭을 가져간다.
+         * 실측했다: ⌘+클릭의 이벤트 대상이 배선이 아니라 `react-flow__pane` 이었고,
+         * 엣지 클릭이 아예 오지 않아 고르던 배선이 통째로 풀렸다.
+         * 세 키를 차례로 떼며 확인했으므로 셋 다 null 로 못박는다.
+         * 수정키 판정은 OrthogonalEdge 의 히트 선이 직접 한다.
+         *
+         * ── 그래서 잃은 것과 대체 수단
+         * 박스 드래그 선택: Alt(Option)+드래그로 옮겼다. Alt 는 클릭에 쓰지 않으므로
+         *   위 충돌이 나지 않는다.
+         * ⌘+스크롤 확대: 트랙패드 핀치(zoomOnPinch, 기본 켜짐)와 좌하단 ± 버튼으로 대체.
+         *
+         *   좌클릭 드래그 = 화면 이동
+         *   Alt + 드래그 = 박스 선택
+         *   Shift · ⌘/Ctrl + 클릭 = 집합에 더하기·빼기
+         *   두 손가락 스크롤 = 이동, 핀치 = 확대·축소
+         */
+        selectionKeyCode="Alt"
+        multiSelectionKeyCode={null}
+        zoomActivationKeyCode={null}
         panOnScroll
         zoomOnScroll={false}
-        zoomActivationKeyCode="Meta"
         // 배선을 노드 아래층에 그린다.
         // 기본값이면 검은 선이 커넥터 블록 위를 가로질러 "까만 줄"처럼 보인다.
         elevateNodesOnSelect
