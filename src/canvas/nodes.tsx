@@ -162,20 +162,38 @@ export function ConnectorNode({ data, selected }: NodeProps) {
 
   /**
    * 핸들 위치 — 노드 **가장자리**에 절대 위치.
-   * 핀 패드의 행/열 중심에 맞춰 배선이 해당 패드에서 나가는 것처럼 보이게 한다.
+   *
+   * 원칙은 "핀 패드의 행/열 중심에 맞춰 배선이 그 패드에서 나가는 것처럼" 이다.
+   * 그런데 배선이 나가는 변과 **평행한 축**에 핀이 몰려 있으면(예: 4핀 1행 커넥터가
+   * 왼쪽으로 나가는 경우) 패드 좌표를 그대로 쓰면 핸들 4개가 **한 점에 겹친다.**
+   * 그러면 원하는 핀을 골라 결선할 수 없고, 어느 핀으로 가는 선인지도 안 보인다.
+   * 실제로 그랬다 — 왼쪽 끝에서 끌었는데 4번 핀이 잡혔다.
+   *
+   * 겹치는 경우에는 핀 순서로 변을 따라 고르게 편다.
+   * (실물에서도 1행 커넥터의 전선은 같은 변에서 부채꼴로 나온다)
    */
+  // 변과 평행한 축에 실제로 놓인 칸 수 — 좌우로 나가면 행 수, 위아래로 나가면 열 수
+  const spanCount = (o === 0 || o === 180) ? rows : cols;
+  const spreadByIndex = spanCount < orderedPins.length;
+  const edgeLength = (o === 0 || o === 180) ? boxH : boxW;
+
   const handleStyle = (index: number): CSSProperties => {
     const cell = cellOf(index);
-    const cx = INSET + cell.x * PITCH + PAD / 2;
-    const cy = INSET + cell.y * PITCH + PAD / 2;
+    const i = orderedPins.findIndex((p) => p.index === index);
+    /** 변을 따라간 위치(px) */
+    const along = spreadByIndex
+      ? ((Math.max(0, i) + 0.5) / orderedPins.length) * edgeLength
+      : (o === 0 || o === 180)
+        ? INSET + cell.y * PITCH + PAD / 2
+        : INSET + cell.x * PITCH + PAD / 2;
     const common: CSSProperties = {
       width: 6, height: 6, background: 'var(--accent)',
       border: '1px solid #fff', borderRadius: 0, zIndex: 3,
     };
-    if (o === 90) return { ...common, top: 0, left: cx, transform: 'translate(-50%, -50%)' };
-    if (o === 270) return { ...common, bottom: 0, left: cx, transform: 'translate(-50%, 50%)' };
-    if (o === 0) return { ...common, left: 0, top: cy, transform: 'translate(-50%, -50%)' };
-    return { ...common, right: 0, top: cy, transform: 'translate(50%, -50%)' };
+    if (o === 90) return { ...common, top: 0, left: along, transform: 'translate(-50%, -50%)' };
+    if (o === 270) return { ...common, bottom: 0, left: along, transform: 'translate(-50%, 50%)' };
+    if (o === 0) return { ...common, left: 0, top: along, transform: 'translate(-50%, -50%)' };
+    return { ...common, right: 0, top: along, transform: 'translate(50%, -50%)' };
   };
 
   // 배선이 위(90°)로 나가면 라벨을 아래에 둔다 — 선이 글자를 뚫지 않게.

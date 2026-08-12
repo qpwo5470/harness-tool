@@ -250,16 +250,20 @@ describe('배선 시작점 — 도형 변에서 시작하는가', () => {
     expect(handles.every((h) => h.style.bottom === '0px' || h.style.bottom === '0')).toBe(true);
   });
 
-  it('왼쪽(0°) 핸들은 노드 좌측 변(left:0)에 붙는다', () => {
+  it('왼쪽(0°) 핸들은 노드 좌측 변(left:0)에 붙고, 핀마다 다른 높이에 있다', () => {
     const { container } = renderNode(0, 'logical');
     const handles = [...container.querySelectorAll('.react-flow__handle')] as HTMLElement[];
     expect(handles.every((h) => h.style.left === '0px' || h.style.left === '0')).toBe(true);
-    // 이 픽스처는 4P 1행이라 모든 핀의 세로 중심이 같다 → top 은 한 값
+    /**
+     * 4P 1행 커넥터가 왼쪽으로 나가는 경우 — 패드 좌표를 그대로 쓰면 핸들이
+     * 한 점에 겹쳐 원하는 핀을 고를 수 없다. 실제로 라이브에서 왼쪽 끝을
+     * 끌었더니 4번 핀이 잡혔다. 겹치면 핀 순서로 변을 따라 편다.
+     */
     const tops = new Set(handles.map((h) => h.style.top));
-    expect(tops.size).toBe(1);
+    expect(tops.size).toBe(4);
   });
 
-  it('여러 행이면 핸들이 행마다 다른 높이에 붙는다', () => {
+  it('격자가 몇 행이든 핀마다 핸들이 따로 있다 (겹치면 고를 수 없다)', () => {
     // 2행 2열 하우징 — 0°(왼쪽)이면 핸들 top 이 두 종류여야 한다
     const h2: PartLibraryItem = {
       id: 'h2', category: 'housing', name: '2x2', pinCount: 4,
@@ -285,7 +289,12 @@ describe('배선 시작점 — 도형 변에서 시작하는가', () => {
       </ReactFlowProvider>,
     );
     const handles = [...container.querySelectorAll('.react-flow__handle')] as HTMLElement[];
-    expect(new Set(handles.map((h) => h.style.top)).size).toBe(2);
+    /**
+     * 2행 2열이 왼쪽으로 나가면 같은 행의 두 핀이 같은 높이가 된다.
+     * 행에 맞춰 놓으면 도면상 정직하지만 두 핀이 한 점에 겹쳐 고를 수가 없다.
+     * 고를 수 있는 쪽이 우선이므로 4핀 모두 다른 높이에 편다.
+     */
+    expect(new Set(handles.map((h) => h.style.top)).size).toBe(4);
   });
 });
 

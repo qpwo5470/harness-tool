@@ -22,7 +22,7 @@ import type { HarnessDocument, KitDocument } from '../types';
 import { buildPartList, buildRunList, type PartRow, type RunRow } from './exporters';
 import { colorAbbr, strokeColor } from '../canvas/docToFlow';
 import {
-  C, PAPER_PT, SHEET_MARGIN, chunk, drawSheet, needsRaster,
+  C, PAPER_PT, SHEET_MARGIN, chunk, drawSheet, estimateTextWidth, needsRaster,
   truncateToWidth, type DrawText, type Paper, type PdfLike, type TextStyle,
 } from './pdfDraw';
 
@@ -79,7 +79,7 @@ export function createTextDrawer(pdf: PdfLike): DrawText {
     const size = s.size ?? 9;
     const color = s.color ?? C.text;
     const t = s.maxWidth != null ? truncateToWidth(String(raw), size, s.maxWidth) : String(raw);
-    if (!t) return;
+    if (!t) return 0;
 
     if (needsRaster(t)) {
       const r = rasterText(t, size, color, s.bold ?? false);
@@ -87,7 +87,7 @@ export function createTextDrawer(pdf: PdfLike): DrawText {
         const x0 = s.align === 'center' ? x - r.w / 2 : s.align === 'right' ? x - r.w : x;
         // y 는 베이스라인이고 래스터는 상단 기준이라 ascent(≈size) 만큼 올린다
         pdf.addImage(r.url, 'PNG', x0, y - size, r.w, r.h);
-        return;
+        return r.w;
       }
     }
     pdf.setFontSize(size);
@@ -95,6 +95,9 @@ export function createTextDrawer(pdf: PdfLike): DrawText {
     pdf.setTextColor(color);
     if (s.align && s.align !== 'left') pdf.text(t, x, y, { align: s.align });
     else pdf.text(t, x, y);
+    // **실제로 그린 폭**을 돌려준다. 조각을 이어 붙일 때 추정치를 쓰면
+    // ASCII 는 짧게·한글은 길게 어긋나 글자가 겹치거나 벌어진다(실제로 그랬다).
+    return pdf.getTextWidth?.(t) ?? estimateTextWidth(t, size);
   };
 }
 
