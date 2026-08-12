@@ -1,0 +1,75 @@
+/**
+ * 토스트 — Claude Design 2차 §11.
+ *
+ * 화면에서 검은 면(--text)을 배경으로 쓰는 유일한 요소다.
+ * 도면(흰 바탕) 위에 떠서 "방금 무언가 사라졌다"를 즉시 구분시키기 위한 예외이며,
+ * 강조색은 여기서도 스틸(--accent) 하나만 쓴다. 빨강은 전선 색이라 쓰지 않는다.
+ */
+
+.tz-host {
+  position: fixed;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  z-index: 60;
+  pointer-events: none;
+}
+
+.tz {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 520px;
+  padding: 8px 8px 8px 14px;
+  background: var(--text);
+  color: var(--bg-canvas);
+  border: 1px solid var(--text);
+  box-shadow: var(--shadow-pop);
+  font-family: var(--font-ui);
+  font-size: var(--fs-body);
+  line-height: 1.4;
+}
+
+.tz-msg {
+  flex: 1;
+  min-width: 0;
+}
+
+.tz-undo {
+  flex-shrink: 0;
+  height: var(--h-control-sm);
+  padding: 0 9px;
+  font: inherit;
+  font-size: var(--fs-table);
+  color: var(--bg-canvas);
+  background: transparent;
+  border: 1px solid var(--muted);
+  border-radius: var(--radius);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tz-undo:hover {
+  border-color: var(--bg-canvas);
+}
+.tz-undo b {
+  font-weight: 600;
+  color: var(--muted-2);
+}
+
+.tz-close {
+  flex-shrink: 0;
+  width: var(--h-control-sm);
+  height: var(--h-control-sm);
+  padding: 0;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--muted-2);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+.tz-close:hover {
+  color: var(--bg-canvas);
+}

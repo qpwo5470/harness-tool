@@ -7,6 +7,7 @@
  *  (B-2) 스플라이스 — 터미널 영역을 "압착단자가 필요 없습니다" 안내로 대체
  *  (C) 장치     — 이름 / 단자 행 목록(배선된 단자는 삭제 불가)
  *  (D) 미선택   — 도면 드로잉 + 문서 요약
+ *  (E) 다중 선택 — §11. 공통 속성만 편집. 단일 전용 항목은 감춘다.
  *
  * 규칙:
  *  - 색은 tokens.css 의 CSS 변수만 쓴다. 하드코딩 hex 는 "전선 색" 팔레트뿐이다.
@@ -16,6 +17,8 @@
 import { useMemo, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { useHarnessStore } from '../store/harnessStore';
+import { useSelectionStore } from '../store/selectionStore';
+import { showToast, undoSteps } from '../ui/Toast';
 import type {
   Cable,
   Connector,
@@ -122,6 +125,27 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
+/**
+ * 규격 색 칩. 단일 편집(A)과 다중 편집(E)이 같은 칩을 쓴다 —
+ * 두 화면에서 색을 고르는 손동작이 달라지면 안 된다.
+ */
+function colorChip(c: ColorSpec, on: boolean, onPick: () => void, kind: string) {
+  return (
+    <button
+      key={`${kind}-${c.key}`}
+      type="button"
+      className={`pp-chip${on ? ' on' : ''}${c.light ? ' light' : ''}`}
+      style={{ background: c.css }}
+      aria-pressed={on}
+      aria-label={`${kind} ${c.ko}(${c.key})`}
+      title={`${c.ko} · ${c.key}`}
+      onClick={onPick}
+    >
+      <span className="num">{c.code}</span>
+    </button>
+  );
+}
+
 /** 끝점 한 줄 표기 — `J1 MDB VMC #1` */
 function endpointParts(
   doc: HarnessDocument,
@@ -212,20 +236,7 @@ function WireEditor({ doc, wire }: { doc: HarnessDocument; wire: Wire }) {
 
   const cores = doc.wires.filter((w) => cable && w.cableId === cable.id);
 
-  const chip = (c: ColorSpec, on: boolean, onPick: () => void, kind: string) => (
-    <button
-      key={`${kind}-${c.key}`}
-      type="button"
-      className={`pp-chip${on ? ' on' : ''}${c.light ? ' light' : ''}`}
-      style={{ background: c.css }}
-      aria-pressed={on}
-      aria-label={`${kind} ${c.ko}(${c.key})`}
-      title={`${c.ko} · ${c.key}`}
-      onClick={onPick}
-    >
-      <span className="num">{c.code}</span>
-    </button>
-  );
+  const chip = colorChip;
 
   return (
     <>
@@ -926,12 +937,243 @@ function EmptyState({ doc }: { doc: HarnessDocument }) {
 }
 
 // ============================================================
+// (E) 다중 선택 — §11 "선택 모델"
+// ============================================================
+
+/** 고른 배선들이 같은 값을 갖는가 */
+function allSame<T>(list: Wire[], get: (w: Wire) => T): { same: boolean; value: T } {
+  const first = get(list[0]);
+  return { same: list.every((w) => Object.is(get(w), first)), value: first };
+}
+
+/**
+ * 값이 같은 항목은 그대로 편집(`3본 동일`),
+ * 다른 항목은 이탤릭 `여러 값`으로 둔다 — 덮어쓸 값을 모른 채 지우지 않게.
+ */
+function MixTag({ same, n }: { same: boolean; n: number }) {
+  return same
+    ? <span className="pp-mix same num">{n}본 동일</span>
+    : <span className="pp-mix">여러 값</span>;
+}
+
+function MultiWireEditor({ doc, wires }: { doc: HarnessDocument; wires: Wire[] }) {
+  const updateWire = useHarnessStore((s) => s.updateWire);
+  const remove = useHarnessStore((s) => s.remove);
+  const setIds = useSelectionStore((s) => s.setIds);
+  const escape = useSelectionStore((s) => s.escape);
+
+  const codes = useMemo(() => wireCodes(doc), [doc]);
+  const n = wires.length;
+
+  // 자유 입력은 타이핑마다 전체에 쓰면 실행취소 스택이 글자 수만큼 쌓인다.
+  // 초안을 들고 있다가 blur · Enter 에서 한 번만 반영한다.
+  const [gaugeDraft, setGaugeDraft] = useState<string | null>(null);
+  const [lenDraft, setLenDraft] = useState<string | null>(null);
+
+  const baseC = allSame(wires, (w) => w.color.base.trim().toLowerCase());
+  const stripeC = allSame(wires, (w) => (w.color.stripe ?? '').trim().toLowerCase());
+  const sysC = allSame(wires, (w) => w.gauge.system);
+  const valC = allSame(wires, (w) => w.gauge.value);
+  const lenC = allSame(wires, (w) => w.lengthMm);
+  const sumLen = wires.reduce((a, w) => a + (w.lengthMm ?? 0), 0);
+
+  /** 일괄 지정 — 파괴적 동작이므로 되돌릴 길을 토스트로 남긴다 */
+  const applyAll = (patch: (w: Wire) => Partial<Wire>) => {
+    for (const w of wires) updateWire(w.id, patch(w));
+    showToast(`배선 ${n}본을 일괄 지정했습니다`, undoSteps(n));
+  };
+
+  const commitGauge = () => {
+    if (gaugeDraft == null) return;
+    const v = Number(gaugeDraft);
+    setGaugeDraft(null);
+    if (!gaugeDraft.trim() || Number.isNaN(v)) return;
+    applyAll((w) => ({ gauge: { ...w.gauge, value: v } }));
+  };
+
+  const commitLen = () => {
+    if (lenDraft == null) return;
+    const raw = lenDraft.trim();
+    setLenDraft(null);
+    if (!raw) return;
+    const v = Number(raw);
+    if (Number.isNaN(v)) return;
+    applyAll(() => ({ lengthMm: v }));
+  };
+
+  /** 고른 배선이 속한 네트를 통째로 고른다 — 한 네트를 한꺼번에 손보는 흐름 */
+  const selectSameNet = () => {
+    const nets = computeNets(doc);
+    const out = new Set<string>();
+    for (const w of wires) {
+      const net = nets.find((x) => x.wireIds.includes(w.id));
+      for (const id of net?.wireIds ?? [w.id]) out.add(id);
+    }
+    setIds([...out]);
+  };
+
+  /** 확인 대화상자를 두지 않는다(§11). 대신 6초짜리 검은 토스트로 되돌린다. */
+  const removeAll = () => {
+    const ids = wires.map((w) => w.id);
+    for (const id of ids) remove(id);
+    setIds([]);
+    showToast(`배선 ${n}본을 삭제했습니다`, undoSteps(ids.length));
+  };
+
+  return (
+    <aside className="pp">
+      <div className="pp-body">
+        <div className="pp-card pp-multi">
+          <div className="pp-card-top">
+            <span className="pp-badge num">MULTI</span>
+            <span className="pp-multi-count">{`배선 ${n}본 선택`}</span>
+            <span className="pp-spacer" />
+            <button type="button" className="pp-mini-btn" onClick={() => escape()}>
+              해제 ESC
+            </button>
+          </div>
+          <div className="pp-multi-chips">
+            {wires.map((w) => (
+              <span key={w.id} className="pp-wchip num">{codes.get(w.id) ?? 'W?'}</span>
+            ))}
+          </div>
+        </div>
+
+        <Section label="색">
+          <Field label="기본">
+            {/* 12칩은 폭을 다 쓰므로 표식을 앞에 둔다 — 뒤에 두면 칩이 한 줄 더 접힌다 */}
+            <MixTag same={baseC.same} n={n} />
+            <div className={`pp-chips${baseC.same ? '' : ' mixed'}`}>
+              {STD_COLORS.map((c) =>
+                colorChip(
+                  c,
+                  baseC.same && c.key === baseC.value,
+                  () => applyAll((w) => ({ color: { base: c.key, stripe: w.color.stripe } })),
+                  '기본색',
+                ),
+              )}
+            </div>
+          </Field>
+          <Field label="줄무늬">
+            <MixTag same={stripeC.same} n={n} />
+            <div className={`pp-chips${stripeC.same ? '' : ' mixed'}`}>
+              <button
+                type="button"
+                className={`pp-chip none${stripeC.same && !stripeC.value ? ' on' : ''}`}
+                aria-pressed={stripeC.same && !stripeC.value}
+                onClick={() => applyAll((w) => ({ color: { base: w.color.base, stripe: undefined } }))}
+              >
+                없음
+              </button>
+              {STD_COLORS.map((c) =>
+                colorChip(
+                  c,
+                  stripeC.same && c.key === stripeC.value,
+                  () => applyAll((w) => ({ color: { base: w.color.base, stripe: c.key } })),
+                  '줄무늬색',
+                ),
+              )}
+            </div>
+          </Field>
+          <p className="pp-hint indent">칩을 고르면 선택한 {n}본 전체에 적용됩니다.</p>
+        </Section>
+
+        <Section label="규격">
+          <Field label="게이지">
+            <div className="pp-seg">
+              {(['awg', 'mm2'] as const).map((sys) => (
+                <button
+                  key={sys}
+                  type="button"
+                  className={sysC.same && sysC.value === sys ? 'on' : ''}
+                  aria-pressed={sysC.same && sysC.value === sys}
+                  onClick={() =>
+                    applyAll((w) => ({
+                      gauge: {
+                        system: sys,
+                        value:
+                          w.gauge.system === sys
+                            ? w.gauge.value
+                            : sys === 'mm2'
+                              ? (awgToMm2(w.gauge.value) ?? 0.34)
+                              : mm2ToAwg(w.gauge.value),
+                      },
+                    }))
+                  }
+                >
+                  {sys === 'awg' ? 'AWG' : 'mm²'}
+                </button>
+              ))}
+            </div>
+            <input
+              className={`pp-input num w-gauge${valC.same ? '' : ' mixed'}`}
+              aria-label="게이지 값 일괄"
+              placeholder={valC.same ? '' : '여러 값'}
+              value={gaugeDraft ?? (valC.same ? String(valC.value) : '')}
+              onChange={(e) => setGaugeDraft(e.target.value)}
+              onBlur={commitGauge}
+              onKeyDown={(e) => { if (e.key === 'Enter') commitGauge(); }}
+            />
+            <MixTag same={valC.same} n={n} />
+          </Field>
+          <Field label="길이">
+            <input
+              className={`pp-input num w-len${lenC.same ? '' : ' mixed'}`}
+              aria-label="길이 일괄"
+              placeholder={lenC.same ? '' : '여러 값'}
+              value={lenDraft ?? (lenC.same ? (lenC.value ?? '') : '')}
+              onChange={(e) => setLenDraft(e.target.value)}
+              onBlur={commitLen}
+              onKeyDown={(e) => { if (e.key === 'Enter') commitLen(); }}
+            />
+            <span className="pp-unit num">mm</span>
+            <span className="pp-multi-sum num">합 {sumLen}mm</span>
+            <span className="pp-spacer" />
+            <MixTag same={lenC.same} n={n} />
+          </Field>
+          <p className="pp-hint indent">
+            값을 넣고 <b className="num">Enter</b> 를 누르면 {n}본 전체에 들어갑니다.
+            케이블 소속과 FROM · TO 는 배선마다 달라 다중에서는 다루지 않습니다.
+          </p>
+        </Section>
+      </div>
+
+      <div className="pp-foot">
+        <button type="button" className="pp-mini-btn" onClick={selectSameNet}>
+          같은 네트 선택
+        </button>
+        <span className="pp-spacer" />
+        <button type="button" className="pp-danger" onClick={removeAll}>
+          {n}본 삭제
+        </button>
+      </div>
+    </aside>
+  );
+}
+
+// ============================================================
 // 패널 본체
 // ============================================================
 export function PropertyPanel() {
   const selection = useHarnessStore((s) => s.selection);
   const doc = useHarnessStore((s) => s.doc);
   const remove = useHarnessStore((s) => s.remove);
+  const ids = useSelectionStore((s) => s.ids);
+
+  /**
+   * 다중 모드는 **배선 2본 이상**일 때만이다.
+   * 커넥터·장치가 섞여 있으면 공통 속성이 성립하지 않으므로 배선만 걸러낸다.
+   */
+  const multiWires = useMemo(() => {
+    if (ids.length < 2) return [];
+    return ids
+      .map((id) => doc.wires.find((w) => w.id === id))
+      .filter((w): w is Wire => !!w);
+  }, [ids, doc.wires]);
+
+  if (multiWires.length > 1) {
+    return <MultiWireEditor doc={doc} wires={multiWires} />;
+  }
 
   const wire = doc.wires.find((w) => w.id === selection);
   const conn = doc.connectors.find((c) => c.id === selection);

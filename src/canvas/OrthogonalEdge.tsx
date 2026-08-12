@@ -34,7 +34,7 @@ export type OrthoEdgeData = {
 export function OrthogonalEdge(props: EdgeProps) {
   const {
     id, sourceX, sourceY, targetX, targetY,
-    sourcePosition, targetPosition, style, data, markerEnd,
+    sourcePosition, targetPosition, style, data, markerEnd, selected,
   } = props;
   const d = (data ?? {}) as OrthoEdgeData;
 
@@ -50,6 +50,17 @@ export function OrthogonalEdge(props: EdgeProps) {
 
   return (
     <>
+      {/* 고정 선택 표식 — 호버(임시)와 눈으로 구분되게 선 뒤에 얇은 스틸 실선을 깐다.
+          정밀 도면이라 트랜지션은 넣지 않는다(§11: 전환은 즉시). */}
+      {selected && (
+        <path
+          d={path}
+          className="hz-edge-sel"
+          fill="none"
+          strokeWidth={7}
+          pointerEvents="none"
+        />
+      )}
       <BaseEdge id={id} path={path} style={style} markerEnd={markerEnd} />
       {/* 투명 히트 선 — 1.6px 선을 정확히 집기는 어렵다 */}
       <path
@@ -63,12 +74,12 @@ export function OrthogonalEdge(props: EdgeProps) {
       {d.abbr && (
         <EdgeLabelRenderer>
           <div
-            className={`hz-stub${d.on ? ' on' : ''}${d.dim ? ' dim' : ''}`}
+            className={`hz-stub${d.on ? ' on' : ''}${d.dim ? ' dim' : ''}${selected ? ' sel' : ''}`}
             style={{
               // 스텁은 도착 패드 쪽에 둔다. 출발 기준으로 놓으면
               // 한 커넥터에서 여러 가닥이 나갈 때 라벨끼리 겹친다.
               transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
-              borderColor: d.on ? 'var(--text)' : 'var(--line)',
+              borderColor: selected ? 'var(--accent)' : d.on ? 'var(--text)' : 'var(--line)',
             }}
           >
             <b className="num" style={{ color: stroke === '#fff' ? 'var(--text)' : stroke }}>{d.abbr}</b>

@@ -1,0 +1,45 @@
+/* 빈 캔버스 온보딩 — 도면 프레임은 점선(아직 도면이 아니다) */
+.ec-wrap {
+  position: relative; width: 100%; height: 100%;
+  background: var(--bg-canvas); overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+}
+.ec-frame {
+  position: absolute; inset: 14px;
+  border: 1px dashed var(--line);
+  pointer-events: none;
+}
+.ec-block {
+  position: relative; width: 420px; text-align: center;
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+}
+.ec-ghost { width: 260px; height: 72px; }
+
+.ec-block h2 {
+  margin: 0; font-family: var(--font-title); font-weight: 600; font-size: 22px;
+  color: var(--text);
+}
+.ec-block p {
+  margin: 0; font-size: var(--fs-sub); color: var(--text-3); line-height: 1.6;
+}
+.ec-actions { display: flex; flex-direction: column; gap: 6px; align-items: center; margin-top: 4px; }
+.ec-primary {
+  height: 32px; padding: 0 16px; font: inherit; font-size: var(--fs-body); font-weight: 600;
+  background: var(--accent); color: #fff; border: 1px solid var(--accent);
+  border-radius: var(--radius); cursor: pointer;
+}
+.ec-primary:hover { background: var(--accent-deep); border-color: var(--accent-deep); }
+.ec-sub { display: flex; gap: 6px; }
+.ec-sub button {
+  height: 28px; padding: 0 12px; font: inherit; font-size: var(--fs-table);
+  background: #fff; color: var(--text-2); border: 1px solid var(--line-mid);
+  border-radius: var(--radius); cursor: pointer;
+}
+.ec-sub button:hover { background: var(--accent-tint); }
+.ec-hint { font-size: var(--fs-cap); color: var(--muted); margin-top: 2px; }
+
+/* 라이브러리 하단 안내 — 부품을 끌어다 놓으라는 지시 */
+.lib-empty-hint {
+  margin-top: 8px; padding: 8px; border: 1px dashed var(--line-mid);
+  font-size: var(--fs-cap); color: var(--muted); line-height: 1.5; text-align: center;
+}

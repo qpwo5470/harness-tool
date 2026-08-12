@@ -12,7 +12,10 @@ import { LibraryPanel } from './library/LibraryPanel';
 import { PropertyPanel } from './panels/PropertyPanel';
 import { PartsPanel, type PartsScope } from './panels/PartsPanel';
 import { SetOverview } from './set/SetOverview';
+import { PhysicalView } from './physical/PhysicalView';
 import { ExportDialog, type ExportPlan } from './export/ExportDialog';
+import { ToastHost } from './ui/Toast';
+import { EmptyCanvas } from './ui/EmptyCanvas';
 import { letterAt, orderText } from './store/kit';
 import { buildPartList, toCsv, buildRunList, runListToCsv } from './export/exporters';
 import './App.css';
@@ -183,6 +186,14 @@ export default function App() {
   const parts = buildPartList(doc);
   const runs = buildRunList(doc);
 
+  /**
+   * 빈 문서 — 커넥터도 장치도 없으면 캔버스 대신 온보딩을 띄운다.
+   * 좌우 패널은 자리를 지킨다(§5): 사라지면 이 앱이 무엇을 하는 앱인지도 같이 사라진다.
+   */
+  const isEmpty = doc.connectors.length === 0 && doc.devices.length === 0;
+  /** 배선이 없으면 내보낼 것이 없다 */
+  const nothingToExport = runs.length === 0;
+
   // 와이어 원본을 wireId 로 찾아 색 스와치에 쓴다(RunRow.color 는 표시용 문자열).
   const wireById = useMemo(
     () => new Map(doc.wires.map((w) => [w.id, w])),
@@ -209,7 +220,15 @@ export default function App() {
         <input className="doc-name-input" value={doc.name} onChange={(e) => rename(e.target.value)} />
         <div className="view-toggle">
           <button className={view === 'logical' ? 'on' : ''} onClick={() => setView('logical')}>논리 뷰</button>
-          <button className={view === 'physical' ? 'on' : ''} onClick={() => setView('physical')}>물리 뷰</button>
+          {/* 배선이 없으면 제조 도면에 그릴 것이 없다 */}
+          <button
+            className={view === 'physical' ? 'on' : ''}
+            disabled={nothingToExport}
+            title={nothingToExport ? '배선이 있어야 제조 도면이 나옵니다' : undefined}
+            onClick={() => setView('physical')}
+          >
+            물리 뷰
+          </button>
         </div>
         <div className="undo-group">
           <button onClick={undo} title="실행취소 (Ctrl+Z)">↶</button>
@@ -239,7 +258,7 @@ export default function App() {
             </div>
           )}
         </div>
-        <button className="primary" onClick={exportPdf}>PDF 도면</button>
+        <button className="primary" disabled={nothingToExport} onClick={exportPdf}>PDF 도면</button>
         <input ref={fileRef} type="file" accept="application/json" hidden onChange={onFile} />
       </header>
 
@@ -286,11 +305,29 @@ export default function App() {
           onCopyOrderText={copyOrderText}
           onExportSetPdf={() => setExportOpen(true)}
         />
+      ) : view === 'physical' ? (
+      /* 물리 뷰 = 제조 도면. 구간·치수·자재를 다루므로 우측 패널을 자체적으로 갖는다. */
+      <div className="body body-phys">
+        <LibraryPanel />
+        <PhysicalView doc={doc} selection={selection} onSelect={select} />
+      </div>
       ) : (
       <div className="body">
         <LibraryPanel />
         <main className="canvas-area">
-          <HarnessCanvas />
+          {isEmpty ? (
+            <EmptyCanvas
+              onFocusLibrary={() => {
+                (document.querySelector('.lib-search') as HTMLInputElement | null)?.focus();
+              }}
+              onNewPart={() => {
+                (document.querySelector('.lib-new') as HTMLButtonElement | null)?.click();
+              }}
+              onImport={() => fileRef.current?.click()}
+            />
+          ) : (
+            <HarnessCanvas />
+          )}
         </main>
         <div className="right">
           <div className="tabs">
@@ -398,6 +435,8 @@ export default function App() {
           onExport={runExport}
         />
       )}
+      {/* 파괴적 동작(삭제·일괄 지정)의 실행취소 안내. 확인 대화상자를 대신한다. */}
+      <ToastHost />
     </div>
   );
 }

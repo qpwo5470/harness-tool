@@ -1,0 +1,369 @@
+/**
+ * 물리 뷰(제조 도면) 스타일 — Claude Design 2차 §3.
+ *
+ * - 색은 tokens.css 변수만 쓴다. 하드코딩 hex 없음.
+ * - UI 강조는 스틸(--accent) 하나. **빨강은 쓰지 않는다** — 빨강은 전선 색이다.
+ * - 도면 요소는 radius 0(각진 모서리). 컨트롤만 var(--radius).
+ * - 강조 전환에 트랜지션을 두지 않는다 — 정밀 도면에서 페이드는 방해다.
+ */
+
+/* ============================================================
+   골격 — 캔버스 1fr / 우측 440px
+   ============================================================ */
+.pv {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr var(--w-side);
+  font-size: var(--fs-body);
+  color: var(--text);
+  background: var(--bg-panel);
+}
+
+/* ============================================================
+   캔버스
+   ============================================================ */
+.pv-canvas {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  background: var(--bg-canvas);
+}
+
+.pv-sheet {
+  position: relative;
+  min-width: 100%;
+  min-height: 100%;
+  background: var(--bg-canvas);
+}
+
+/* 도면 프레임 */
+.pv-frame {
+  position: absolute;
+  inset: 14px;
+  border: 1px solid var(--line-mid);
+  pointer-events: none;
+}
+
+.pv-svg,
+.pv-hit {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+.pv-svg { pointer-events: none; }
+
+/* 다발 — 굵기 = 본수 (strokeWidth 는 인라인) */
+.pv-bundle {
+  fill: none;
+  stroke: var(--line-strong);
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.pv-bundle.is-hot { stroke: var(--line-strong); }
+.pv-bundle.is-dim { opacity: .16; }
+
+/* 분기점 마커 — 13×13 정사각형 45° 회전. 채움 = 스플라이스 분기 */
+.pv-branch {
+  fill: var(--bg-canvas);
+  stroke: var(--text);
+  stroke-width: 1.5;
+}
+.pv-branch.is-filled { fill: var(--text); }
+
+/* 치수선 — 0.75px, 양 끝 10px 티크 */
+.pv-dim path {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: .75;
+}
+
+/* 치수 값 라벨 — 흰 배경 + padding 0 4px */
+.pv-dimval {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  padding: 0 4px;
+  background: var(--bg-canvas);
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  font-size: var(--fs-cap);
+  color: var(--text-3);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.pv-dimval.is-empty {
+  font-family: var(--font-ui);
+  font-weight: 400;
+  color: var(--muted);
+}
+
+/* 히트 선 — 두께 14px 투명 */
+.pv-hit path {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 14;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  pointer-events: stroke;
+  cursor: default;
+}
+
+/* 분기점 라벨 */
+.pv-brlabel {
+  position: absolute;
+  transform: translateX(-50%);
+  display: inline-flex;
+  gap: 3px;
+  align-items: baseline;
+  padding: 0 3px;
+  background: var(--bg-canvas);
+  border: 1px solid var(--line);
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.pv-brlabel b {
+  font-weight: 700;
+  font-size: 10.5px;
+  color: var(--text);
+}
+
+/* 끝단 커넥터 카드 — 폭 118px, 테두리 1.5px */
+.pv-card {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  background: var(--bg-canvas);
+  border: 1.5px solid var(--line-strong);
+  border-radius: 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.pv-card.is-sel { border-color: var(--accent); }
+.pv-card.is-dev { border: 1.5px dashed var(--muted); }
+
+.pv-card-h {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 5px;
+  border-bottom: 1px solid var(--line);
+}
+.pv-card-h b {
+  font-family: var(--font-num);
+  font-weight: 700;
+  font-size: var(--fs-cap);
+  color: var(--text);
+}
+.pv-pins {
+  margin-left: auto;
+  padding: 0 3px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--line);
+  font-style: normal;
+  font-weight: 600;
+  font-size: var(--fs-cap);
+  color: var(--text-3);
+}
+.pv-card.is-sel .pv-pins { background: var(--accent-tint); border-color: var(--accent); }
+
+.pv-card-b {
+  display: block;
+  padding: 3px 5px 4px;
+  min-width: 0;
+}
+.pv-card-name {
+  display: block;
+  font-size: var(--fs-sub);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pv-card-mpn {
+  display: block;
+  font-size: var(--fs-micro);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 제목블록 — 프레임 우하단 */
+.pv-title {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  width: 300px;
+  background: var(--bg-canvas);
+  border-top: 1px solid var(--line-mid);
+  border-left: 1px solid var(--line-mid);
+  font-family: var(--font-num);
+  font-size: 10.5px;
+  color: var(--text);
+}
+.pv-title-row {
+  display: flex;
+  border-bottom: 1px solid var(--line);
+}
+.pv-title-row:last-child { border-bottom: 0; }
+.pv-title-row > span:first-child { flex: 1; padding: 3px 6px; }
+.pv-title-row > span:last-child {
+  width: 78px;
+  padding: 3px 6px;
+  border-left: 1px solid var(--line);
+}
+.pv-title-row.is-sub { color: var(--muted); }
+
+.pv-empty {
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  transform: translate(-50%, -50%);
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-sub);
+}
+
+/* ============================================================
+   구간 호버 카드 — 폭 250px
+   ============================================================ */
+.pv-hover {
+  position: absolute;
+  z-index: 9;
+  width: 250px;
+  background: var(--bg-canvas);
+  border: 1px solid var(--text);
+  box-shadow: var(--shadow-pop);
+  pointer-events: none;
+}
+.pv-hover-h {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 5px 8px;
+  background: var(--text);
+  color: var(--bg-canvas);
+}
+.pv-hover-h b { font-weight: 700; font-size: var(--fs-table); }
+.pv-hover-h span { font-size: var(--fs-cap); color: var(--muted-2); }
+
+.pv-hover-b { padding: 7px 8px; display: flex; flex-direction: column; gap: 6px; }
+
+.pv-grid3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 1px;
+  background: var(--line-row);
+}
+.pv-grid3 > div { background: var(--bg-canvas); padding: 2px 4px; }
+.pv-grid3 i {
+  display: block;
+  font-family: var(--font-num);
+  font-style: normal;
+  font-size: 9.5px;
+  color: var(--muted);
+}
+.pv-grid3 b { font-weight: 600; font-size: var(--fs-sub); }
+
+.pv-wires { margin: 0; font-size: var(--fs-cap); color: var(--text-3); }
+.pv-wires i { font-style: normal; color: var(--muted); }
+.pv-note { margin: 0; font-size: var(--fs-micro); color: var(--muted); }
+
+/* ============================================================
+   우측 패널 — 구간표 · 자재 요약
+   ============================================================ */
+.pv-side {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid var(--line);
+  background: var(--bg-panel);
+}
+
+.pv-tabs { display: grid; grid-template-columns: 1fr 1fr; height: 28px; background: var(--bg-tabbar); }
+.pv-tabs button {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: var(--fs-table);
+  color: var(--text-3);
+  cursor: pointer;
+}
+.pv-tabs button.is-on {
+  background: var(--bg-panel);
+  border-bottom: 2px solid var(--accent);
+  font-weight: 600;
+  color: var(--text);
+}
+.pv-tabs b { font-family: var(--font-num); font-weight: 700; }
+
+.pv-scroll { flex: 1; min-height: 0; overflow-y: auto; background: var(--bg-canvas); }
+
+.pv-table { width: 100%; border-collapse: collapse; font-size: var(--fs-table); }
+.pv-table th {
+  padding: 3px 6px;
+  background: var(--bg-subtle);
+  border-bottom: 1px solid var(--line-strong);
+  font-family: var(--font-num);
+  font-weight: 600;
+  font-size: 10.5px;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  text-align: left;
+}
+.pv-table td { padding: 4px 6px; border-bottom: 1px solid var(--line-row); vertical-align: top; }
+.pv-table tbody tr:nth-child(odd) { background: var(--bg-subtle); }
+.pv-table tbody tr:nth-child(even) { background: var(--bg-canvas); }
+
+.pv-table .c-seg { width: 44px; border-left: 3px solid transparent; font-weight: 700; }
+.pv-table .c-len { width: 70px; text-align: right; font-weight: 600; }
+.pv-table .c-cnt { width: 56px; text-align: right; }
+.pv-table th.c-len, .pv-table th.c-cnt { text-align: right; }
+
+/* 강조 — 폭이 변하지 않게 평소에도 3px 자리를 잡아둔다 */
+.pv-table tbody tr.is-hot { background: var(--accent-tint); }
+.pv-table tbody tr.is-hot .c-seg { border-left-color: var(--accent); }
+
+.pv-path { color: var(--text); }
+.pv-prot { font-size: var(--fs-sub); color: var(--muted); }
+.pv-none { padding: 10px 8px; color: var(--muted); font-size: var(--fs-sub); }
+
+/* 자재 요약 — 행 높이 23px */
+.pv-mat { padding: 8px; border-top: 1px solid var(--line); }
+.pv-mat.is-full { border-top: 0; }
+.pv-mat h3 { margin: 0 0 2px; }
+.pv-mat-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 23px;
+  border-bottom: 1px solid var(--line-row);
+  font-size: var(--fs-table);
+}
+.pv-mat-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pv-mat-spec { color: var(--muted); font-size: var(--fs-cap); }
+.pv-mat-qty { width: 70px; text-align: right; font-weight: 600; }
+.pv-mat .pv-note { margin-top: 6px; }
+
+/* 상태바 26px */
+.pv-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 26px;
+  padding: 0 8px;
+  border-top: 1px solid var(--line);
+  background: var(--bg-panel);
+  font-family: var(--font-num);
+  font-size: var(--fs-cap);
+  color: var(--text-3);
+}
+.pv-status .pv-hint { margin-left: auto; color: var(--muted); }
+.pv-warn { color: var(--muted); }

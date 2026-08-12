@@ -123,6 +123,9 @@ body {
   min-width: 0; background: var(--bg-canvas);
   border-left: 1px solid var(--line); border-right: 1px solid var(--line);
 }
+/* 물리 뷰는 우측 패널(구간표·자재)을 자체적으로 갖는다 */
+.body-phys { grid-template-columns: var(--w-library) 1fr; }
+.body-phys > :last-child { min-width: 0; border-left: 1px solid var(--line); }
 .right {
   display: flex; flex-direction: column; min-height: 0;
   background: var(--bg-panel);

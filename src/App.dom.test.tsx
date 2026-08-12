@@ -192,6 +192,33 @@ describe('상단바 — 내보내기 메뉴', () => {
   });
 });
 
+describe('빈 상태 (§5)', () => {
+  it('커넥터가 없으면 캔버스 대신 온보딩이 나온다', () => {
+    render(<App />);
+    // 샘플 문서에는 커넥터가 있으므로 온보딩이 없다
+    expect(screen.queryByText('아직 커넥터가 없습니다')).toBeNull();
+    // 하네스를 새로 추가하면 그 하네스는 비어 있다
+    fireEvent.click(screen.getByText('+ 하네스'));
+    expect(screen.getByText('아직 커넥터가 없습니다')).toBeTruthy();
+    expect(screen.getByText('라이브러리에서 커넥터 놓기')).toBeTruthy();
+  });
+
+  it('배선이 없으면 물리 뷰·PDF 가 비활성이다', () => {
+    render(<App />);
+    fireEvent.click(screen.getByText('+ 하네스'));
+    expect((screen.getByText('물리 뷰') as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByText('PDF 도면') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('빈 상태에서도 좌우 패널은 자리를 지킨다', () => {
+    render(<App />);
+    fireEvent.click(screen.getByText('+ 하네스'));
+    // 라이브러리에 부품이 실제로 보이고, 우측 탭도 남아 있다
+    expect(screen.getByPlaceholderText('이름·MPN·신호 검색')).toBeTruthy();
+    expect(screen.getAllByText(/^접속표 \d+$/).length).toBeGreaterThan(0);
+  });
+});
+
 describe('하네스 탭 — 세트', () => {
   it('세트 개요 탭과 하네스 탭이 있다', () => {
     render(<App />);
