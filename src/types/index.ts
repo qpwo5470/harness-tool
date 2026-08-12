@@ -187,6 +187,14 @@ export type HarnessDocument = {
   createdAt: IsoDateTime;
   updatedAt: IsoDateTime;
 
+  /**
+   * 도면 제목블록 정보 (선택).
+   * 둘 다 optional 이라 기존 저장 파일과 호환된다 — schemaVersion 은 그대로 1.
+   * 없으면 제목블록에 "—" 로 표시된다.
+   */
+  drawingNo?: string;
+  rev?: string;
+
   connectors: Connector[];
   devices: Device[];
   wires: Wire[];

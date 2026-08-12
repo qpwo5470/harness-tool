@@ -1,108 +1,135 @@
 /**
  * Agent A 소유 — 커스텀 노드 (핀 레벨 핸들).
- * - ConnectorNode: 논리 뷰=핀 세로 목록 / 물리 뷰=하우징 pinLayout 좌표 + 방향 회전
- * - DeviceNode: 장치 블록 + 단자별 핸들
+ *
+ * 도면형 리디자인(Claude Design):
+ * 커넥터를 추상 블록이 아니라 **하우징 심볼**로 그린다.
+ *   [레퍼런스 라벨] / [핀 패드 격자 + 래치 돌기] / [MPN 캡션]
+ *
+ * 기존 구현에서 반드시 지켜야 하는 불변식(인수인계 8장 — 실제로 겪은 버그):
+ *  (1) 핸들은 핀 셀이 아니라 **노드 가장자리**에 절대 위치로 둔다.
+ *      셀에 붙이면 배선이 도형 중간에서 시작하는 것처럼 보인다.
+ *  (2) 각 핀에 source/target 핸들이 **모두** 있어야 한다.
+ *      source 만 있으면 엣지가 노드 중심으로 폴백해 선이 엉뚱한 데서 나온다.
+ *  (3) 핀 배치 축과 핸들 방향은 **함께** 바뀌어야 한다.
+ *  (4) 배선이 나가는 변에는 글자를 두지 않는다. 선이 글자를 뚫고 지나간다.
  */
 import type { CSSProperties } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
-import type { Connector, Device, PartLibraryItem, ViewMode } from '../types';
+import type { Connector, Device, PartLibraryItem, ViewMode, Orientation } from '../types';
 
 export type ConnectorNodeData = {
   connector: Connector;
   housing?: PartLibraryItem;
   view: ViewMode;
+  /** 도면 레퍼런스 (J1, SP1, D1 …) */
+  ref?: string;
+  /** 이 노드에 물린, 현재 강조 중인 핀 id 들 */
+  hotPins?: string[];
 };
-export type DeviceNodeData = { device: Device };
+export type DeviceNodeData = { device: Device; ref?: string; hotPins?: string[] };
 
-const PIN = 12; // 핀 간격/크기 기준(px)
+/** 패드 26px + 간격 4px = 30px 피치 (Claude Design 스펙) */
+export const PAD = 26;
+export const PITCH = 30;
+const INSET = 6; // 하우징 박스 안쪽 여백
 
-export function ConnectorNode({ data }: NodeProps) {
-  const { connector, housing, view } = data as unknown as ConnectorNodeData;
+const PIN_PHYS = 12; // 물리 뷰 핀 크기
+
+/** 배선이 나가는 변 → React Flow Position */
+export function handleSideOf(o: Orientation): Position {
+  return o === 0 ? Position.Left
+    : o === 90 ? Position.Top
+    : o === 180 ? Position.Right
+    : Position.Bottom;
+}
+
+/** 하우징 pinLayout 에서 격자 크기를 역산. 없으면 1행으로 편다. */
+function gridOf(connector: Connector, housing?: PartLibraryItem) {
+  const layout = housing?.pinLayout;
+  if (layout?.length) {
+    const cols = Math.max(...layout.map((s) => s.offset.x)) + 1;
+    const rows = Math.max(...layout.map((s) => s.offset.y)) + 1;
+    return { cols, rows, layout };
+  }
+  return { cols: connector.pins.length || 1, rows: 1, layout: undefined };
+}
+
+/**
+ * 래치 돌기 — 하우징 바깥으로 튀어나온 사각형.
+ * 위치가 결합 방향을 나타낸다. 글이 아니라 그림으로 방향을 읽게 하는 장치.
+ */
+function Latch({ o, color }: { o: Orientation; color: string }) {
+  const T = 4;   // 두께
+  const L = 18;  // 길이
+  const base: CSSProperties = { position: 'absolute', background: color };
+  const style: CSSProperties =
+    o === 0 ? { ...base, width: T, height: L, left: -(T + 1), top: '50%', transform: 'translateY(-50%)' }
+    : o === 90 ? { ...base, width: L, height: T, top: -(T + 1), left: '50%', transform: 'translateX(-50%)' }
+    : o === 180 ? { ...base, width: T, height: L, right: -(T + 1), top: '50%', transform: 'translateY(-50%)' }
+    : { ...base, width: L, height: T, bottom: -(T + 1), left: '50%', transform: 'translateX(-50%)' };
+  return <div className="hz-latch" style={style} title="래치(결합) 방향" />;
+}
+
+export function ConnectorNode({ data, selected }: NodeProps) {
+  const { connector, housing, view, ref: refLabel, hotPins } = data as unknown as ConnectorNodeData;
   const isSplice = connector.kind === 'splice';
-  const border = isSplice ? '#d97706' : '#3b82f6';
-  const bg = isSplice ? '#fef3c7' : '#eff6ff';
+  const o = connector.orientation;
+  const hot = new Set(hotPins ?? []);
 
+  // ── 물리 뷰: 기존 회전 렌더 유지 (제조 도면 뷰는 별도 과제) ──────────────
   if (view === 'physical' && housing?.pinLayout?.length) {
-    // 물리 뷰: 하우징 좌표대로 핀 배치 + orientation 회전.
-    // 하우징 박스가 CSS로 회전하므로 핸들 방향도 같이 돌려야
-    // 배선이 실제 핀이 향한 쪽에서 나온다.
-    const ori = connector.orientation;
     const handlePos =
-      ori === 0 ? Position.Top
-      : ori === 90 ? Position.Right
-      : ori === 180 ? Position.Bottom
+      o === 0 ? Position.Top
+      : o === 90 ? Position.Right
+      : o === 180 ? Position.Bottom
       : Position.Left;
     const xs = housing.pinLayout.map((s) => s.offset.x);
     const ys = housing.pinLayout.map((s) => s.offset.y);
-    const w = (Math.max(...xs) + 1) * (PIN + 8);
-    const h = (Math.max(...ys) + 1) * (PIN + 8);
+    const w = (Math.max(...xs) + 1) * (PIN_PHYS + 8);
+    const h = (Math.max(...ys) + 1) * (PIN_PHYS + 8);
+    const border = isSplice ? 'var(--wire-splice, #a16207)' : 'var(--line-strong)';
     return (
       <div
+        className="hz-node hz-node-phys"
         style={{
-          position: 'relative',
-          width: w,
-          height: h,
-          border: `1.5px solid ${border}`,
-          borderRadius: 6,
-          background: bg,
-          transform: `rotate(${connector.orientation}deg)`,
-          transformOrigin: 'center center',
-          // 회전해도 레이아웃이 밀리지 않도록 자기 박스 안에서만 회전
+          position: 'relative', width: w, height: h,
+          border: `1.5px solid ${border}`, background: '#fff',
+          transform: `rotate(${o}deg)`, transformOrigin: 'center center',
           boxSizing: 'border-box',
         }}
-        title={`${connector.kind} · ${housing.name} · ${connector.orientation}°`}
+        title={`${connector.kind} · ${housing.name} · ${o}°`}
       >
-        {/* 1번 핀 쪽 표식 — 커넥터가 어느 방향을 보는지 알려줌 */}
         <div
+          className="hz-regmark"
           style={{
-            position: 'absolute', left: 0, top: 0, width: 0, height: 0,
-            borderTop: `8px solid ${border}`,
-            borderRight: '8px solid transparent',
-            borderTopLeftRadius: 4,
+            position: 'absolute', left: -1.5, top: -1.5, width: 8, height: 8,
+            borderTop: `2px solid ${border}`, borderLeft: `2px solid ${border}`,
           }}
           title="1번 핀 위치"
         />
         {connector.pins.map((pin) => {
           const slot = housing.pinLayout!.find((s) => s.index === pin.index);
-          const left = (slot?.offset.x ?? 0) * (PIN + 8) + 4;
-          const top = (slot?.offset.y ?? 0) * (PIN + 8) + 4;
+          const left = (slot?.offset.x ?? 0) * (PIN_PHYS + 8) + 4;
+          const top = (slot?.offset.y ?? 0) * (PIN_PHYS + 8) + 4;
           return (
             <div key={pin.id} style={{ position: 'absolute', left, top }}>
-              {/* 한 핀은 배선의 출발점이자 도착점이 될 수 있어야 한다.
-                  source/target 을 같은 자리에 겹쳐 둬야 엣지가
-                  실제 핀 위치에서 그려진다(없으면 노드 중심으로 폴백). */}
               <Handle
-                id={pin.id}
-                type="target"
-                position={handlePos}
+                id={pin.id} type="target" position={handlePos}
                 style={{
-                  position: 'absolute',
-                  left: 0, top: 0,
-                  width: PIN, height: PIN,
-                  background: 'transparent',
-                  border: 'none',
-                  transform: 'none',
-                  zIndex: 1,
+                  position: 'absolute', left: 0, top: 0,
+                  width: PIN_PHYS, height: PIN_PHYS,
+                  background: 'transparent', border: 'none', transform: 'none', zIndex: 1,
                 }}
               />
               <Handle
-                id={pin.id}
-                type="source"
-                position={handlePos}
+                id={pin.id} type="source" position={handlePos}
                 style={{
-                  position: 'relative',
-                  width: PIN,
-                  height: PIN,
-                  background: '#fff',
-                  border: `1.5px solid ${border}`,
-                  transform: 'none',
-                  zIndex: 2,
+                  position: 'relative', width: PIN_PHYS, height: PIN_PHYS,
+                  background: '#fff', border: `1.5px solid ${border}`,
+                  transform: 'none', zIndex: 2,
                 }}
               />
-              <div
-                style={{ fontSize: 8, textAlign: 'center', lineHeight: 1 }}
-                title={slot?.signal ?? ''}
-              >
+              <div style={{ fontSize: 8, textAlign: 'center', lineHeight: 1 }} title={slot?.signal ?? ''}>
                 {pin.label ?? slot?.label ?? pin.index}
               </div>
             </div>
@@ -112,196 +139,130 @@ export function ConnectorNode({ data }: NodeProps) {
     );
   }
 
-  // 논리 뷰
-  // 방향(orientation) = 배선이 나가는 쪽.
-  //  0°/180°  → 핀을 세로로 쌓고 배선은 좌/우로 (가로형)
-  //  90°/270° → 핀을 가로로 늘어놓고 배선은 위/아래로 (세로형)
-  //
-  // 두 가지가 핵심:
-  //  (1) 핸들은 각 핀 셀이 아니라 "노드 가장자리"에 절대 위치로 둔다.
-  //      셀에 붙이면 배선이 도형 중간에서 시작하는 것처럼 보인다.
-  //  (2) 배선이 나가는 변에는 헤더를 두지 않는다.
-  //      위로 나가는데 헤더가 위에 있으면 선이 글자를 뚫고 나온다.
-  const o = connector.orientation;
-  const isVertical = o === 90 || o === 270;
-  const handleSide =
-    o === 0 ? Position.Left
-    : o === 90 ? Position.Top
-    : o === 180 ? Position.Right
-    : Position.Bottom;
-  const orderedPins = o === 180 || o === 270
-    ? [...connector.pins].reverse()
-    : connector.pins;
+  // ── 논리 뷰: 하우징 심볼 (핀 패드 격자) ──────────────────────────────────
+  const { cols, rows, layout } = gridOf(connector, housing);
+  const boxW = cols * PITCH + INSET * 2 - (PITCH - PAD);
+  const boxH = rows * PITCH + INSET * 2 - (PITCH - PAD);
+  const side = handleSideOf(o);
+
+  // 핀 → 격자 좌표. pinLayout 이 없으면 순서대로 1행에 편다.
+  const cellOf = (index: number) => {
+    const slot = layout?.find((s) => s.index === index);
+    if (slot) return slot.offset;
+    const i = index - 1;
+    return { x: i % cols, y: Math.floor(i / cols) };
+  };
+
+  // 180°/270° 는 핀 순서가 뒤집혀 보여야 한다(도면을 반대에서 읽는 경우).
+  const flipped = o === 180 || o === 270;
+  const orderedPins = flipped ? [...connector.pins].reverse() : connector.pins;
 
   const arrow = o === 0 ? '←' : o === 90 ? '↑' : o === 180 ? '→' : '↓';
   const dirWord = o === 0 ? '왼쪽' : o === 90 ? '위쪽' : o === 180 ? '오른쪽' : '아래쪽';
 
-  const PIN_CELL = 30;   // 세로형에서 핀 한 칸 폭
-  const PIN_ROW = 20;    // 가로형에서 핀 한 줄 높이
-  const EDGE = 14;       // 배선이 나가는 변에 확보할 여백
-
-  // 헤더(부품명 + 방향). 배선이 나가는 반대쪽에 배치한다.
-  const header = (
-    <div
-      style={{
-        padding: '4px 8px',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 1,
-        // 배선이 나가는 변 쪽에 테두리를 그리지 않음
-        // 헤더가 아래로 가는 90°에서는 위쪽에 구분선을 그린다
-        [o === 90 ? 'borderTop' : 'borderBottom']: `1px solid ${border}`,
-      }}
-      title={`${housing?.name ?? connector.kind} · 방향 ${o}° (배선 ${dirWord})`}
-    >
-      <div style={{ fontWeight: 600, whiteSpace: 'nowrap', fontSize: 11 }}>
-        {isSplice ? '⑂ ' : ''}
-        {housing?.name ?? connector.kind}
-      </div>
-      <div style={{ fontSize: 9, color: border, fontWeight: 700 }}>
-        {arrow} {o}° {dirWord}
-      </div>
-    </div>
-  );
-
-  // 핀 영역. 핸들은 여기 셀이 아니라 노드 가장자리에 따로 깐다.
-  const pinArea = (
-    <div
-      style={{
-        display: 'flex',
-        flexDirection: isVertical ? 'row' : 'column',
-        // 배선이 나가는 변에 핸들 자리를 비워둔다
-        paddingTop: o === 90 ? EDGE : 0,
-        paddingBottom: o === 270 ? EDGE : 0,
-        paddingLeft: o === 0 ? EDGE : 0,
-        paddingRight: o === 180 ? EDGE : 0,
-      }}
-    >
-      {orderedPins.map((pin) => {
-        const sig = housing?.pinLayout?.find((sl) => sl.index === pin.index)?.signal;
-        return (
-          <div
-            key={pin.id}
-            style={{
-              display: 'flex',
-              flexDirection: isVertical ? 'column' : 'row',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 2,
-              width: isVertical ? PIN_CELL : undefined,
-              height: isVertical ? undefined : PIN_ROW,
-              padding: isVertical ? '2px 0' : '0 8px',
-              fontSize: 10,
-            }}
-            title={sig ? `${pin.label ?? pin.index} · ${sig}` : `핀 ${pin.label ?? pin.index}`}
-          >
-            <span style={{ fontWeight: 600 }}>{pin.label ?? pin.index}</span>
-            {sig && (
-              <span
-                style={{
-                  color: '#6b7280',
-                  fontSize: 8,
-                  maxWidth: isVertical ? PIN_CELL - 4 : 90,
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {sig}
-              </span>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-
-  /** 핀 i 의 핸들을 노드 가장자리 정확한 위치에 배치 */
-  const handleStyle = (i: number): CSSProperties => {
-    const n = orderedPins.length;
-    // 핀 셀 중앙에 오도록 비율 계산
-    const ratio = `${((i + 0.5) / n) * 100}%`;
+  /**
+   * 핸들 위치 — 노드 **가장자리**에 절대 위치.
+   * 핀 패드의 행/열 중심에 맞춰 배선이 해당 패드에서 나가는 것처럼 보이게 한다.
+   */
+  const handleStyle = (index: number): CSSProperties => {
+    const cell = cellOf(index);
+    const cx = INSET + cell.x * PITCH + PAD / 2;
+    const cy = INSET + cell.y * PITCH + PAD / 2;
     const common: CSSProperties = {
-      background: border,
-      width: 7,
-      height: 7,
-      border: '1.5px solid #fff',
+      width: 6, height: 6, background: 'var(--accent)',
+      border: '1px solid #fff', borderRadius: 0, zIndex: 3,
     };
-    if (o === 90) return { ...common, top: 0, left: ratio, transform: 'translate(-50%, -50%)' };
-    if (o === 270) return { ...common, bottom: 0, left: ratio, transform: 'translate(-50%, 50%)' };
-    if (o === 0) return { ...common, left: 0, top: ratio, transform: 'translate(-50%, -50%)' };
-    return { ...common, right: 0, top: ratio, transform: 'translate(50%, -50%)' };
+    if (o === 90) return { ...common, top: 0, left: cx, transform: 'translate(-50%, -50%)' };
+    if (o === 270) return { ...common, bottom: 0, left: cx, transform: 'translate(-50%, 50%)' };
+    if (o === 0) return { ...common, left: 0, top: cy, transform: 'translate(-50%, -50%)' };
+    return { ...common, right: 0, top: cy, transform: 'translate(50%, -50%)' };
   };
 
-  return (
-    <div
-      style={{
-        position: 'relative',
-        border: `1.5px solid ${border}`,
-        borderRadius: 6,
-        background: bg,
-        minWidth: isVertical ? orderedPins.length * PIN_CELL : 110,
-      }}
-    >
-      {/* 배선이 위(90°)로 나가면 헤더를 아래에 둬야 선이 글자를 지나지 않는다.
-          반대로 아래(270°)로 나가면 헤더가 위에 있어야 한다. */}
-      {o === 90 ? (
-        <>
-          {pinArea}
-          {header}
-        </>
-      ) : (
-        <>
-          {header}
-          {pinArea}
-        </>
-      )}
+  // 배선이 위(90°)로 나가면 라벨을 아래에 둔다 — 선이 글자를 뚫지 않게.
+  const labelFirst = o !== 90;
 
-      {/* 핸들: 노드 가장자리에 고정 — 배선이 도형 변에서 시작한다 */}
-      {orderedPins.map((pin, i) => (
-        <div key={`h-${pin.id}`}>
-          <Handle
-            id={pin.id}
-            type="target"
-            position={handleSide}
-            style={{ ...handleStyle(i), opacity: 0 }}
-          />
-          <Handle
-            id={pin.id}
-            type="source"
-            position={handleSide}
-            style={handleStyle(i)}
-          />
-        </div>
-      ))}
+  const nodeColor = isSplice ? 'var(--wire-splice, #a16207)' : 'var(--line-strong)';
+  const boxColor = selected ? 'var(--accent)' : nodeColor;
+
+  const refBlock = (
+    <div className="hz-ref" title={`${housing?.name ?? connector.kind} · 방향 ${o}° (배선 ${dirWord})`}>
+      <b className="num">{refLabel ?? (isSplice ? 'SP' : 'J')}</b>
+      <span className="hz-ref-name">{isSplice ? '⑂ ' : ''}{housing?.name ?? connector.kind}</span>
+      <span className="hz-ref-dir num">{arrow} {o}° {dirWord}</span>
+    </div>
+  );
+
+  return (
+    <div className={`hz-node hz-node-logical${selected ? ' on' : ''}`}>
+      {labelFirst && refBlock}
+
+      <div
+        className="hz-housing"
+        style={{ width: boxW, height: boxH, borderColor: boxColor }}
+      >
+        <Latch o={o} color={boxColor} />
+        {/* 좌상단 등록 마크 = 1번 핀 기준점 */}
+        <div
+          className="hz-regmark"
+          style={{ borderTopColor: boxColor, borderLeftColor: boxColor }}
+          title="1번 핀 위치"
+        />
+
+        {orderedPins.map((pin) => {
+          const cell = cellOf(pin.index);
+          const slot = layout?.find((s) => s.index === pin.index);
+          const assigned = Boolean(slot?.signal);
+          return (
+            <div
+              key={pin.id}
+              className={`hz-pad${assigned ? ' assigned' : ''}${hot.has(pin.id) ? ' hot' : ''}`}
+              style={{ left: INSET + cell.x * PITCH, top: INSET + cell.y * PITCH }}
+              title={slot?.signal ? `${pin.label ?? pin.index} · ${slot.signal}` : `핀 ${pin.label ?? pin.index}`}
+            >
+              <span className="num">{pin.label ?? slot?.label ?? pin.index}</span>
+            </div>
+          );
+        })}
+
+        {/* 핸들: 노드 가장자리 고정 — 배선이 도형 변에서 시작한다 */}
+        {orderedPins.map((pin) => (
+          <div key={`h-${pin.id}`}>
+            <Handle id={pin.id} type="target" position={side} style={{ ...handleStyle(pin.index), opacity: 0 }} />
+            <Handle id={pin.id} type="source" position={side} style={handleStyle(pin.index)} />
+          </div>
+        ))}
+      </div>
+
+      {housing?.mpn && <div className="hz-mpn num">{housing.mpn}</div>}
+      {!labelFirst && refBlock}
     </div>
   );
 }
 
-export function DeviceNode({ data }: NodeProps) {
-  const { device } = data as unknown as DeviceNodeData;
+export function DeviceNode({ data, selected }: NodeProps) {
+  const { device, ref: refLabel } = data as unknown as DeviceNodeData;
   const terminals = device.terminals ?? [];
   return (
-    <div
-      style={{
-        minWidth: 110,
-        border: '1.5px dashed #6b7280',
-        borderRadius: 6,
-        background: '#f9fafb',
-        fontSize: 11,
-      }}
-    >
-      <div style={{ padding: '4px 8px', fontWeight: 600 }}>📦 {device.name}</div>
-      {/* 단자 없을 때도 연결 가능한 기본 핸들 */}
-      <Handle id="__node" type="target" position={Position.Left} style={{ background: '#6b7280', opacity: 0 }} />
-      <Handle id="__node" type="source" position={Position.Left} style={{ background: '#6b7280' }} />
-      {terminals.map((t) => (
-        <div key={t} style={{ position: 'relative', padding: '2px 10px' }}>
-          <Handle id={t} type="target" position={Position.Right} style={{ background: '#6b7280', opacity: 0 }} />
-          <Handle id={t} type="source" position={Position.Right} style={{ background: '#6b7280' }} />
-          {t}
+    <div className={`hz-node hz-node-device${selected ? ' on' : ''}`}>
+      <div className="hz-ref">
+        <b className="num">{refLabel ?? 'D'}</b>
+        <span className="hz-ref-name">{device.name}</span>
+      </div>
+      <div className="hz-housing hz-housing-dev" style={{ padding: 6 }}>
+        {/* 단자 없을 때도 연결 가능한 기본 핸들 */}
+        <Handle id="__node" type="target" position={Position.Left} style={{ opacity: 0 }} />
+        <Handle id="__node" type="source" position={Position.Left} style={{ opacity: 0 }} />
+        <div className="hz-dev-terms">
+          {terminals.map((t) => (
+            <div key={t} className="hz-dev-term">
+              <Handle id={t} type="target" position={Position.Right} style={{ opacity: 0 }} />
+              <Handle id={t} type="source" position={Position.Right} className="hz-dev-handle" />
+              <span className="num">{t}</span>
+            </div>
+          ))}
         </div>
-      ))}
+      </div>
+      <div className="hz-mpn">장치 · 단자 {terminals.length}</div>
     </div>
   );
 }

@@ -30,6 +30,23 @@ export function strokeColor(base: string): string {
   return '#6b7280';                            // 알 수 없는 값
 }
 
+/**
+ * 전선 색 약호. 도면에서는 색 이름을 다 쓸 자리가 없어 약호를 쓴다.
+ * (현장 관행 · Claude Design 스펙과 동일)
+ */
+const ABBR: Record<string, string> = {
+  red: 'R', black: 'B', white: 'W', green: 'G', blue: 'L',
+  yellow: 'Y', orange: 'O', brown: 'Br', purple: 'V', violet: 'V',
+  gray: 'Gy', grey: 'Gy', pink: 'P', cyan: 'C', magenta: 'M',
+};
+
+export function colorAbbr(base: string, stripe?: string): string {
+  const a = ABBR[base.trim().toLowerCase()] ?? base.trim().slice(0, 2).toUpperCase();
+  if (!stripe) return a;
+  const b = ABBR[stripe.trim().toLowerCase()] ?? stripe.trim().slice(0, 2).toUpperCase();
+  return `${a}/${b}`;
+}
+
 function pos(
   p: { logical?: { x: number; y: number }; physical?: { x: number; y: number } },
   view: ViewMode,
@@ -38,8 +55,27 @@ function pos(
   return p[view] ?? p.logical ?? p.physical ?? fallback;
 }
 
-export function docToNodes(doc: HarnessDocument, view: ViewMode): Node[] {
+/**
+ * 도면 레퍼런스 부여 — 커넥터 J1..Jn, 스플라이스 SP1.., 장치 D1..
+ * 문서 내 등장 순서로 고정한다(다시 계산해도 같은 번호가 나와야 한다).
+ */
+export function refLabels(doc: HarnessDocument): Map<string, string> {
+  const out = new Map<string, string>();
+  let j = 0, sp = 0, d = 0;
+  for (const c of doc.connectors) {
+    out.set(c.id, c.kind === 'splice' ? `SP${++sp}` : `J${++j}`);
+  }
+  for (const dev of doc.devices) out.set(dev.id, `D${++d}`);
+  return out;
+}
+
+export function docToNodes(
+  doc: HarnessDocument,
+  view: ViewMode,
+  hotPinsByNode: Map<string, string[]> = new Map(),
+): Node[] {
   const nodes: Node[] = [];
+  const refs = refLabels(doc);
   let i = 0;
   for (const c of doc.connectors) {
     nodes.push({
@@ -51,6 +87,8 @@ export function docToNodes(doc: HarnessDocument, view: ViewMode): Node[] {
         connector: c,
         housing: doc.usedParts.find((p) => p.id === c.housingId),
         view,
+        ref: refs.get(c.id),
+        hotPins: hotPinsByNode.get(c.id) ?? [],
       },
     });
     i++;
@@ -61,7 +99,7 @@ export function docToNodes(doc: HarnessDocument, view: ViewMode): Node[] {
       type: 'device',
       zIndex: 1,
       position: pos(d.positions, view, { x: 80 + i * 160, y: 320 }),
-      data: { device: d },
+      data: { device: d, ref: refs.get(d.id), hotPins: hotPinsByNode.get(d.id) ?? [] },
     });
     i++;
   }
@@ -86,8 +124,25 @@ export function highlightedWires(doc: HarnessDocument, selection: string | null)
 }
 
 /**
+ * 레인 자동 배정.
+ *
+ * Claude Design 목업은 레인 y값을 손으로 넣어뒀다(README 도 "제품에서는
+ * 자동 라우팅으로 계산하되 사용자가 조정할 수 있어야 한다"고 적어뒀다).
+ * 여기서는 배선 순서로 중앙 기준 대칭 오프셋을 준다:
+ *   0, +12, -12, +24, -24 …
+ * 수평 구간이 서로 겹치지 않으면서 도면 중앙에서 크게 벗어나지 않는다.
+ */
+export function assignLanes(count: number, step = 12): number[] {
+  return Array.from({ length: count }, (_, i) => {
+    const k = Math.ceil(i / 2);
+    if (k === 0) return 0;            // -0 이 나오지 않게 먼저 처리
+    return (i % 2 === 1 ? 1 : -1) * k * step;
+  });
+}
+
+/**
  * @param highlight 같은 네트에 속해 강조할 와이어들 (굵게/선명하게)
- * @param labelFor  라벨을 띄울 와이어 id — 딱 하나만.
+ * @param labelFor  상세 라벨을 띄울 와이어 id — 딱 하나만.
  *                  네트 전체에 라벨을 달면 스플라이스 근처에서 서로 겹쳐 못 읽는다.
  */
 export function docToEdges(
@@ -96,44 +151,47 @@ export function docToEdges(
   labelFor: string | null = null,
 ): Edge[] {
   const dim = highlight.size > 0;
-  return doc.wires.map((w) => {
+  const lanes = assignLanes(doc.wires.length);
+
+  // 스텁 신호명은 도착 핀의 규격 신호를 쓴다(없으면 출발 핀).
+  const signalAt = (e: Endpoint): string | undefined => {
+    if (e.type !== 'pin') return undefined;
+    const c = doc.connectors.find((x) => x.id === e.connectorId);
+    const pin = c?.pins.find((p) => p.id === e.pinId);
+    const housing = doc.usedParts.find((p) => p.id === c?.housingId);
+    return housing?.pinLayout?.find((s) => s.index === pin?.index)?.signal;
+  };
+
+  return doc.wires.map((w, i) => {
     const stripe = w.color.stripe ? `/${w.color.stripe}` : '';
     const on = highlight.has(w.id);
     const len = w.lengthMm != null ? ` · ${w.lengthMm}mm` : '';
     const spec = `${w.color.base}${stripe} · ${w.gauge.system.toUpperCase()}${w.gauge.value}${len}`;
+    const color = strokeColor(w.color.base);
     return {
       id: w.id,
+      type: 'ortho',
       source: endpointNodeId(w.from),
       sourceHandle: endpointHandle(w.from),
       target: endpointNodeId(w.to),
       targetHandle: endpointHandle(w.to),
-      // 라벨은 선택(하이라이트)했을 때만 표시.
-      // 항상 띄우면 선이 짧거나 여러 가닥이 모일 때 서로 겹쳐 잘린다.
-      // 색은 선 자체로, 나머지 스펙은 접속표/속성 패널에서 확인한다.
-      label: w.id === labelFor ? spec : undefined,
-      // 라벨 가독성: 불투명 흰 배경 + 선 색 테두리로 선 위에서도 또렷하게
-      labelShowBg: true,
-      labelBgPadding: [8, 5] as [number, number],
-      labelBgBorderRadius: 5,
-      labelBgStyle: {
-        fill: '#ffffff',
-        fillOpacity: 1,
-        stroke: strokeColor(w.color.base),
-        strokeWidth: 1.5,
-      },
-      animated: on,
       // 노드보다 아래에 그려 커넥터 블록을 가로지르지 않게 한다
       zIndex: 0,
       style: {
-        stroke: strokeColor(w.color.base),
-        strokeWidth: on ? 4 : 2,
-        opacity: dim && !on ? 0.25 : 1,
+        stroke: color,
+        strokeWidth: on ? 3.2 : 1.6,
+        opacity: dim && !on ? 0.16 : 1,
       },
-      // 글자는 항상 진한 회색 — 선 색이 노랑/흰색이어도 읽힌다
-      labelStyle: { fontSize: 11, fontWeight: 700, fill: '#111827' },
-      // 선택하지 않아도 확인할 수 있도록 스펙을 data 로 실어 보낸다(툴팁용)
-      data: { spec },
-    };
+      data: {
+        lane: lanes[i],
+        abbr: colorAbbr(w.color.base, w.color.stripe),
+        signal: signalAt(w.to) ?? signalAt(w.from),
+        on,
+        dim: dim && !on,
+        spec,
+        detail: w.id === labelFor ? spec : undefined,
+      },
+    } satisfies Edge;
   });
 }
 

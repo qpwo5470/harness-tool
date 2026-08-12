@@ -4,6 +4,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useHarnessStore } from './store/harnessStore';
+import { useHoverStore } from './store/hoverStore';
 import { emptyDoc, clearSaved } from './store/persistence';
 import { HarnessCanvas } from './canvas/HarnessCanvas';
 import { strokeColor } from './canvas/docToFlow';
@@ -53,6 +54,9 @@ export default function App() {
   const [tab, setTab] = useState<Tab>('prop');
   const [menuOpen, setMenuOpen] = useState(false);
   const [runQ, setRunQ] = useState('');
+  // 캔버스 ↔ 접속표 동기 강조
+  const hoverWire = useHoverStore((s) => s.wireId);
+  const setHover = useHoverStore((s) => s.setHover);
 
   // Delete/Backspace 로 선택 요소 삭제 (입력 중에는 무시)
   useEffect(() => {
@@ -223,8 +227,13 @@ export default function App() {
                       return (
                         <tr
                           key={r.wireId}
-                          className={r.wireId === selection ? 'sel' : ''}
+                          className={[
+                            r.wireId === selection ? 'sel' : '',
+                            r.wireId === hoverWire ? 'hot' : '',
+                          ].filter(Boolean).join(' ')}
                           onClick={() => select(r.wireId)}
+                          onMouseEnter={() => setHover(r.wireId, 'table')}
+                          onMouseLeave={() => setHover(null)}
                           title="클릭하면 캔버스에서 해당 배선이 강조됩니다"
                         >
                           <td className="net" title={r.net}>{r.netCode}</td>
@@ -254,7 +263,9 @@ export default function App() {
               <div className="side-status">
                 <span>{runs.length}본 · {netCount}네트</span>
                 <div className="spacer" />
-                <span className="hint">행을 클릭하면 캔버스에서 강조</span>
+                <span className="hint">
+                  {hoverWire ? '강조 중 — 도면과 동기' : '행에 올리면 도면에서 강조'}
+                </span>
               </div>
             </>
           )}

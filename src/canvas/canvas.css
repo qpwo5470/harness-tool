@@ -1,0 +1,164 @@
+/**
+ * 도면형 캔버스 — 노드·배선·프레임·카드.
+ * 색과 치수는 tokens.css 를 따른다.
+ */
+
+:root {
+  --wire-splice: #a16207;   /* 스플라이스 테두리 (전선 색과 겹치지 않는 갈색 계열) */
+}
+
+.hz-canvas-wrap { position: relative; width: 100%; height: 100%; overflow: hidden; }
+
+/* ============================================================
+   도면 프레임 + 제목블록 — 화면 좌표계(줌·팬과 무관한 시트 테두리)
+   ============================================================ */
+.hz-frame {
+  position: absolute; inset: 14px; pointer-events: none; z-index: 5;
+  border: 1px solid var(--line-mid);
+}
+.hz-titleblock {
+  position: absolute; right: 0; bottom: 0; width: 300px; background: #fff;
+  border-top: 1px solid var(--line-mid); border-left: 1px solid var(--line-mid);
+  font-size: 10.5px;
+}
+.hz-tb-row { display: flex; border-bottom: 1px solid var(--line); }
+.hz-tb-row:last-child { border-bottom: none; }
+.hz-tb-main, .hz-tb-sub {
+  flex: 1; min-width: 0; padding: 3px 6px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.hz-tb-main { font-weight: 600; color: var(--text); }
+.hz-tb-sub { color: var(--muted); }
+.hz-tb-side {
+  width: 78px; flex-shrink: 0; padding: 3px 6px;
+  border-left: 1px solid var(--line); color: var(--text-3);
+}
+
+/* ============================================================
+   노드 — 하우징 심볼
+   ============================================================ */
+.hz-node { font-family: var(--font-ui); }
+
+/* 레퍼런스 라벨. 흰 배경 inline-block 이 필수 —
+   배선 레인이 글자를 관통하지 않게 한다. */
+.hz-ref {
+  display: inline-flex; align-items: baseline; gap: 4px;
+  background: #fff; padding: 0 2px; margin-bottom: 2px; white-space: nowrap;
+}
+.hz-ref b { font-size: 11px; color: var(--text); }
+.hz-ref-name { font-size: 11.5px; color: var(--text); }
+.hz-ref-dir { font-size: 10px; color: var(--muted); }
+
+.hz-housing {
+  position: relative; background: #fff;
+  border: 1.5px solid var(--line-strong);
+}
+.hz-housing-dev { border-style: dashed; border-color: var(--muted); }
+
+/* 좌상단 등록 마크 = 1번 핀 기준점 */
+.hz-regmark {
+  position: absolute; left: -1.5px; top: -1.5px; width: 8px; height: 8px;
+  border-top: 2px solid var(--line-strong);
+  border-left: 2px solid var(--line-strong);
+}
+
+/* 핀 패드 */
+.hz-pad {
+  position: absolute; width: 26px; height: 26px;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--line-strong); background: #fff;
+  font-family: var(--font-num); font-weight: 700; font-size: 11px;
+  color: var(--muted-2);
+}
+.hz-pad.assigned { background: var(--bg-subtle); color: var(--text); }
+.hz-pad.hot { background: var(--accent-pad); border-color: var(--accent); color: var(--accent-dark); }
+
+/* MPN 캡션 — 역시 흰 배경으로 선과 분리 */
+.hz-mpn {
+  display: inline-block; background: #fff; padding: 0 2px; margin-top: 2px;
+  font-size: 10px; color: var(--text-3); white-space: nowrap;
+}
+
+.hz-node-logical.on .hz-ref b,
+.hz-node-device.on .hz-ref b { color: var(--accent); }
+
+/* 장치 단자 */
+.hz-dev-terms { display: flex; flex-direction: column; gap: 2px; }
+.hz-dev-term {
+  position: relative; padding: 1px 4px; font-size: 11px; color: var(--text-2);
+}
+.hz-dev-handle {
+  width: 6px !important; height: 6px !important; border-radius: 0 !important;
+  background: var(--muted) !important; border: 1px solid #fff !important;
+}
+
+/* 물리 뷰 노드는 기존 렌더 유지 */
+.hz-node-phys { font-family: var(--font-num); }
+
+/* ============================================================
+   배선
+   ============================================================ */
+.hz-edge-hit { cursor: pointer; }
+
+/* 스텁 라벨 — 도착 패드 옆의 색 약호 + 신호명 */
+.hz-stub {
+  position: absolute; pointer-events: none;
+  display: inline-flex; align-items: baseline; gap: 3px;
+  background: #fff; border: 1px solid var(--line); padding: 0 3px;
+  font-size: 10px; line-height: 1.5; white-space: nowrap;
+}
+.hz-stub b { font-weight: 700; }
+.hz-stub span { color: var(--muted); }
+.hz-stub.dim { opacity: .2; }
+.hz-stub.on { border-color: var(--text); }
+
+/* 정밀 도면에서 페이드는 오히려 방해 — 전환은 즉시 */
+.react-flow__edge path { transition: none !important; }
+
+/* ============================================================
+   배선 상세 카드
+   ============================================================ */
+.hz-card {
+  position: absolute; z-index: 9; pointer-events: none;
+  background: #fff; border: 1px solid var(--text);
+  box-shadow: var(--shadow-pop); font-size: 11.5px;
+}
+.hz-card > header {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--text); color: #fff; padding: 5px 8px;
+}
+.hz-card > header b { font-size: 12px; }
+.hz-card .spacer { flex: 1; }
+.hz-card-wire { color: var(--muted-2); font-size: 11px; }
+.hz-card-swatch {
+  width: 18px; height: 9px; display: inline-block; border: 1px solid var(--muted-2);
+}
+.hz-card-body { padding: 7px 8px; display: flex; flex-direction: column; gap: 6px; }
+.hz-card-ep { display: flex; gap: 6px; }
+.hz-card-label {
+  font-size: 9.5px; font-weight: 700; color: var(--muted);
+  letter-spacing: .06em; flex-shrink: 0;
+}
+.hz-card-ep .hz-card-label { width: 34px; }
+.hz-card-pin { color: var(--accent-deep); }
+.hz-card-detail { color: var(--text-3); }
+.hz-card-grid {
+  display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1px;
+  background: var(--line-row); border-top: 1px solid var(--line-row); padding-top: 1px;
+}
+.hz-card-grid > div {
+  background: #fff; padding: 3px 5px; display: flex; flex-direction: column; gap: 1px;
+}
+
+/* ============================================================
+   React Flow 크롬
+   ============================================================ */
+.react-flow__controls-button {
+  border-radius: 0; border-color: var(--line); background: #fff;
+}
+.react-flow__minimap { border: 1px solid var(--line); }
+.react-flow__attribution { font-size: 9px; opacity: .5; }
+
+/* 접속표 hover 동기 강조 */
+.runs-table tbody tr.hot { background: var(--accent-tint); }
+.runs-table tbody tr.hot td.net { border-left-color: var(--accent); }

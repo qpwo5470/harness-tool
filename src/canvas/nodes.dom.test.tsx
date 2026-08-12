@@ -118,35 +118,26 @@ describe('물리 뷰 1번 핀 표식', () => {
   });
 });
 
-describe('세로 방향(90/270°) 레이아웃', () => {
-  /** 핀 라벨들을 담는 컨테이너 (핸들은 이제 노드 가장자리에 별도 배치됨) */
-  const pinArea = (o: 0 | 90 | 180 | 270) => {
-    const { container } = renderNode(o, 'logical');
-    // flex-direction 이 지정된 핀 영역을 찾는다 (헤더는 column 고정이라 제외)
-    const areas = [...container.querySelectorAll('div')].filter(
-      (d) => d.style.display === 'flex' && (d.style.paddingTop || d.style.paddingLeft
-        || d.style.paddingBottom || d.style.paddingRight),
-    );
-    return areas.find((a) => a.querySelector('span')) as HTMLElement;
-  };
+describe('논리 뷰 하우징 심볼 (핀 패드 격자)', () => {
+  const pads = (o: 0 | 90 | 180 | 270) =>
+    [...renderNode(o, 'logical').container.querySelectorAll('.hz-pad')] as HTMLElement[];
 
-  it('가로 방향(0/180°)은 핀이 세로로 쌓인다', () => {
-    expect(pinArea(0).style.flexDirection).toBe('column');
-    cleanup();
-    expect(pinArea(180).style.flexDirection).toBe('column');
+  it('핀이 하우징 pinLayout 격자 좌표대로 놓인다', () => {
+    // 4P 1행 → x 만 30px 피치로 벌어지고 y 는 모두 같다
+    const ps = pads(0);
+    expect(ps).toHaveLength(4);
+    expect(ps.map((p) => p.style.left)).toEqual(['6px', '36px', '66px', '96px']);
+    expect(new Set(ps.map((p) => p.style.top)).size).toBe(1);
   });
 
-  it('세로 방향(90/270°)은 핀이 가로로 늘어선다', () => {
-    expect(pinArea(90).style.flexDirection).toBe('row');
-    cleanup();
-    expect(pinArea(270).style.flexDirection).toBe('row');
+  it('신호가 배정된 핀과 미배정 핀이 구분된다', () => {
+    // 이 픽스처는 signal 이 없으므로 전부 미배정
+    expect(pads(0).every((p) => !p.classList.contains('assigned'))).toBe(true);
   });
 
   it('핀 배치 축과 핸들 방향이 일치한다 (배선이 옆구리로 안 나감)', () => {
-    // 90°: 핀은 가로(row) + 핸들은 위(top)
+    // 90° = 배선이 위로 → 핸들은 전부 top
     const { container } = renderNode(90, 'logical');
-    const area = container.querySelector('div[style*="flex-direction: row"]') as HTMLElement;
-    expect(area).toBeTruthy();
     expect(container.querySelectorAll('.react-flow__handle-top').length).toBe(8);
     // 세로 방향에서 좌/우 핸들이 섞여 있으면 안 됨
     expect(container.querySelectorAll('.react-flow__handle-left').length).toBe(0);
@@ -158,6 +149,18 @@ describe('세로 방향(90/270°) 레이아웃', () => {
     expect(container.querySelectorAll('.react-flow__handle-left').length).toBe(8);
     expect(container.querySelectorAll('.react-flow__handle-top').length).toBe(0);
     expect(container.querySelectorAll('.react-flow__handle-bottom').length).toBe(0);
+  });
+
+  it('래치 돌기가 방향을 그림으로 알려준다', () => {
+    const latch = (o: 0 | 90 | 180 | 270) => {
+      const el = renderNode(o, 'logical').container.querySelector('.hz-latch') as HTMLElement;
+      cleanup();
+      return el.style;
+    };
+    expect(latch(0).left).toBe('-5px');     // 왼쪽으로 결합
+    expect(latch(90).top).toBe('-5px');     // 위쪽
+    expect(latch(180).right).toBe('-5px');  // 오른쪽
+    expect(latch(270).bottom).toBe('-5px'); // 아래쪽
   });
 });
 
@@ -205,23 +208,28 @@ describe('핸들 source/target 쌍 (엣지가 핀에 정확히 붙는 조건)', 
 describe('부품명 표시 (잘림 방지)', () => {
   it('긴 부품명이 ellipsis 로 잘리지 않는다', () => {
     const { container } = renderNode(0, 'logical');
-    const nameEl = [...container.querySelectorAll('div')]
-      .find((d) => d.textContent === '테스트 4P')!;
-    expect(nameEl).toBeTruthy();
+    const nameEl = container.querySelector('.hz-ref-name') as HTMLElement;
+    expect(nameEl.textContent).toContain('테스트 4P');
     // overflow:hidden + ellipsis 조합이면 잘림 → 없어야 함
     expect(nameEl.style.textOverflow).not.toBe('ellipsis');
     expect(nameEl.style.overflow).not.toBe('hidden');
   });
 
-  it('부품명과 방향이 서로 다른 줄에 있다', () => {
+  it('부품명과 방향이 서로 다른 요소에 있다', () => {
     const { container } = renderNode(90, 'logical');
-    const nameEl = [...container.querySelectorAll('div')]
-      .find((d) => d.textContent === '테스트 4P')!;
-    const dirEl = [...container.querySelectorAll('div')]
-      .find((d) => d.textContent?.includes('90°') && d.textContent?.includes('위쪽'))!;
-    expect(nameEl).toBeTruthy();
-    expect(dirEl).toBeTruthy();
-    expect(nameEl).not.toBe(dirEl); // 같은 요소가 아님 = 줄 분리됨
+    const nameEl = container.querySelector('.hz-ref-name')!;
+    const dirEl = container.querySelector('.hz-ref-dir')!;
+    expect(nameEl.textContent).toContain('테스트 4P');
+    expect(dirEl.textContent).toContain('90°');
+    expect(nameEl).not.toBe(dirEl);
+  });
+
+  it('레퍼런스 라벨은 흰 배경을 깔아 배선이 글자를 관통하지 않게 한다', () => {
+    const { container } = renderNode(0, 'logical');
+    const ref = container.querySelector('.hz-ref') as HTMLElement;
+    expect(ref).toBeTruthy();
+    // 배경은 CSS 클래스로 준다 — 클래스가 붙어 있는지만 확인
+    expect(ref.className).toContain('hz-ref');
   });
 });
 
@@ -246,8 +254,38 @@ describe('배선 시작점 — 도형 변에서 시작하는가', () => {
     const { container } = renderNode(0, 'logical');
     const handles = [...container.querySelectorAll('.react-flow__handle')] as HTMLElement[];
     expect(handles.every((h) => h.style.left === '0px' || h.style.left === '0')).toBe(true);
+    // 이 픽스처는 4P 1행이라 모든 핀의 세로 중심이 같다 → top 은 한 값
     const tops = new Set(handles.map((h) => h.style.top));
-    expect(tops.size).toBe(4);
+    expect(tops.size).toBe(1);
+  });
+
+  it('여러 행이면 핸들이 행마다 다른 높이에 붙는다', () => {
+    // 2행 2열 하우징 — 0°(왼쪽)이면 핸들 top 이 두 종류여야 한다
+    const h2: PartLibraryItem = {
+      id: 'h2', category: 'housing', name: '2x2', pinCount: 4,
+      pinLayout: [
+        { index: 1, label: '1', offset: { x: 0, y: 0 } },
+        { index: 2, label: '2', offset: { x: 1, y: 0 } },
+        { index: 3, label: '3', offset: { x: 0, y: 1 } },
+        { index: 4, label: '4', offset: { x: 1, y: 1 } },
+      ],
+    };
+    const c2: Connector = {
+      id: 'c2', kind: 'connector', housingId: 'h2', orientation: 0,
+      positions: {}, pins: h2.pinLayout!.map((s) => ({ id: `q${s.index}`, index: s.index })),
+    };
+    const { container } = render(
+      <ReactFlowProvider>
+        <ConnectorNode
+          id="c2" type="connector" dragging={false} zIndex={1}
+          selectable selected={false} draggable deletable isConnectable
+          positionAbsoluteX={0} positionAbsoluteY={0}
+          data={{ connector: c2, housing: h2, view: 'logical' } as never}
+        />
+      </ReactFlowProvider>,
+    );
+    const handles = [...container.querySelectorAll('.react-flow__handle')] as HTMLElement[];
+    expect(new Set(handles.map((h) => h.style.top)).size).toBe(2);
   });
 });
 
@@ -266,12 +304,20 @@ describe('텍스트 가림 — 배선이 글자를 지나지 않는가', () => {
     expect(t.indexOf('테스트 4P')).toBeLessThan(t.indexOf('4'));
   });
 
-  it('90°(위로 나감)는 헤더가 핀 아래에 오지 않고, 상단에 핸들 여백이 확보된다', () => {
+  it('90°(위로 나감)는 레퍼런스 라벨이 하우징보다 뒤에 온다', () => {
     const { container } = renderNode(90, 'logical');
-    const area = [...container.querySelectorAll('div')].find(
-      (d) => d.style.paddingTop && d.style.paddingTop !== '0px',
-    );
-    expect(area).toBeTruthy(); // 배선 나가는 변에 여백 있음
+    const kids = [...container.querySelector('.hz-node-logical')!.children];
+    const housingIdx = kids.findIndex((k) => k.classList.contains('hz-housing'));
+    const refIdx = kids.findIndex((k) => k.classList.contains('hz-ref'));
+    expect(housingIdx).toBeLessThan(refIdx); // 하우징이 먼저 = 라벨이 아래
+  });
+
+  it('0°(옆으로 나감)는 레퍼런스 라벨이 하우징보다 앞에 온다', () => {
+    const { container } = renderNode(0, 'logical');
+    const kids = [...container.querySelector('.hz-node-logical')!.children];
+    const housingIdx = kids.findIndex((k) => k.classList.contains('hz-housing'));
+    const refIdx = kids.findIndex((k) => k.classList.contains('hz-ref'));
+    expect(refIdx).toBeLessThan(housingIdx);
   });
 
   it('부품명이 항상 완전히 렌더된다', () => {

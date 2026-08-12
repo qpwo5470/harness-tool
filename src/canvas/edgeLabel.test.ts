@@ -2,36 +2,50 @@ import { describe, it, expect } from 'vitest';
 import { docToEdges } from './docToFlow';
 import { sampleDoc } from '../fixtures/sampleDoc';
 
+type EdgeData = { spec: string; detail?: string; abbr: string; lane: number; on: boolean; dim: boolean };
+const dataOf = (e: { data?: unknown }) => e.data as EdgeData;
+
 describe('배선 라벨 표시 규칙', () => {
-  it('평소에는 라벨이 없다 (선끼리 겹쳐 잘리는 문제 방지)', () => {
+  it('평소에는 상세 라벨이 없다 (선끼리 겹쳐 잘리는 문제 방지)', () => {
     const edges = docToEdges(sampleDoc);
-    expect(edges.every((e) => e.label === undefined)).toBe(true);
+    expect(edges.every((e) => dataOf(e).detail === undefined)).toBe(true);
   });
 
-  it('클릭한 배선 하나에만 라벨이 나온다 (네트 전체 아님)', () => {
+  it('스텁(색 약호)은 항상 붙는다 — 클릭 없이도 어느 색인지 읽힌다', () => {
+    const edges = docToEdges(sampleDoc);
+    expect(edges.every((e) => Boolean(dataOf(e).abbr))).toBe(true);
+    // 2톤은 슬래시 약호로
+    expect(dataOf(edges.find((e) => e.id === 'w1')!).abbr).toBe('R/W');
+  });
+
+  it('클릭한 배선 하나에만 상세가 나온다 (네트 전체 아님)', () => {
     // w1 클릭 → 스플라이스로 이어진 w1,w2,w3 가 모두 강조되지만
-    // 라벨은 w1 에만 떠야 겹치지 않는다
+    // 상세는 w1 에만 떠야 겹치지 않는다
     const hl = new Set(['w1', 'w2', 'w3']);
     const edges = docToEdges(sampleDoc, hl, 'w1');
-    expect(edges.find((e) => e.id === 'w1')!.label).toBeTruthy();
-    expect(edges.find((e) => e.id === 'w2')!.label).toBeUndefined();
-    expect(edges.find((e) => e.id === 'w3')!.label).toBeUndefined();
+    expect(dataOf(edges.find((e) => e.id === 'w1')!).detail).toBeTruthy();
+    expect(dataOf(edges.find((e) => e.id === 'w2')!).detail).toBeUndefined();
+    expect(dataOf(edges.find((e) => e.id === 'w3')!).detail).toBeUndefined();
     // 강조는 셋 다 유지
-    expect(edges.filter((e) => e.style?.strokeWidth === 4)).toHaveLength(3);
+    expect(edges.filter((e) => e.style?.strokeWidth === 3.2)).toHaveLength(3);
   });
 
-  it('라벨에 색·게이지·길이가 들어간다', () => {
+  it('상세에 색·게이지·길이가 들어간다', () => {
     const edges = docToEdges(sampleDoc, new Set(['w1']), 'w1');
-    const label = String(edges.find((e) => e.id === 'w1')!.label);
-    expect(label).toContain('red/white'); // 2톤 색
-    expect(label).toContain('AWG22');     // 게이지 대문자
-    expect(label).toContain('120mm');     // 길이
+    const detail = String(dataOf(edges.find((e) => e.id === 'w1')!).detail);
+    expect(detail).toContain('red/white'); // 2톤 색
+    expect(detail).toContain('AWG22');     // 게이지 대문자
+    expect(detail).toContain('120mm');     // 길이
   });
 
-  it('라벨 배경이 있어 선 위에서도 읽힌다', () => {
-    const e = docToEdges(sampleDoc, new Set(['w1']), 'w1').find((x) => x.id === 'w1')!;
-    expect(e.labelShowBg).toBe(true);
-    expect(e.labelBgStyle).toBeTruthy();
+  it('배선마다 레인이 달라 수평 구간이 겹치지 않는다', () => {
+    const edges = docToEdges(sampleDoc);
+    const lanes = edges.map((e) => dataOf(e).lane);
+    expect(new Set(lanes).size).toBe(lanes.length);
+  });
+
+  it('직교 라우팅 엣지 타입을 쓴다 (베지어 아님)', () => {
+    expect(docToEdges(sampleDoc).every((e) => e.type === 'ortho')).toBe(true);
   });
 
   it('선택 안 해도 스펙을 data 로 들고 있다 (툴팁용)', () => {
