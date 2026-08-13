@@ -68,6 +68,32 @@ describe('실행취소 / 다시실행', () => {
     expect(S().doc.wires[0].color.base).toBe(orig);
   });
 
+  /**
+   * 구간 길이는 표 안에서 타이핑으로 들어온다. 한 번 확정할 때 한 단계만 쌓여야
+   * 실행취소가 쓸모 있다 — 글자마다 쌓이면 되돌리려다 다른 편집까지 밀려난다.
+   */
+  it('구간 길이 확정은 한 단계만 쌓이고, 지우면 다시 유도값으로 돌아간다', () => {
+    const key = 'con:con-a|con:con-b';
+    S().setSegmentLength?.(key, 300);
+    expect(S().doc.segmentLengths).toEqual({ [key]: 300 });
+
+    S().setSegmentLength?.(key, 420);
+    S().undo();
+    expect(S().doc.segmentLengths).toEqual({ [key]: 300 });
+    S().undo();
+    expect(S().doc.segmentLengths).toBeUndefined();
+  });
+
+  it('바뀌는 것이 없으면 히스토리를 쌓지 않는다', () => {
+    const key = 'con:con-a|con:con-b';
+    S().setSegmentLength?.(key, null);          // 지울 것이 없다
+    expect(S().canUndo()).toBe(false);
+    S().setSegmentLength?.(key, 300);
+    const after = S().doc;
+    S().setSegmentLength?.(key, 300);           // 같은 값 재확정
+    expect(S().doc).toBe(after);
+  });
+
   it('되돌릴 게 없을 때 undo 는 아무 일도 안 한다', () => {
     const before = S().doc;
     S().undo();

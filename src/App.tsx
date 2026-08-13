@@ -71,6 +71,8 @@ export default function App() {
   const setPerSet = useHarnessStore((s) => s.setPerSet);
   const addHarness = useHarnessStore((s) => s.addHarness);
   const removeHarness = useHarnessStore((s) => s.removeHarness);
+  // 선택 액션이라 계약상 없을 수 있다 — 없으면 물리 뷰 길이 칸은 읽기 전용이 된다
+  const setSegmentLength = useHarnessStore((s) => s.setSegmentLength);
 
   const fileRef = useRef<HTMLInputElement>(null);
   /**
@@ -416,7 +418,12 @@ export default function App() {
       /* 물리 뷰 = 제조 도면. 구간·치수·자재를 다루므로 우측 패널을 자체적으로 갖는다. */
       <div className="body body-phys">
         <LibraryPanel key={libRev} />
-        <PhysicalView doc={doc} selection={selection} onSelect={select} />
+        <PhysicalView
+          doc={doc}
+          selection={selection}
+          onSelect={select}
+          onSegmentLength={setSegmentLength}
+        />
       </div>
       ) : (
       <div className="body">

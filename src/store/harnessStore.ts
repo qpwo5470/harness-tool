@@ -226,6 +226,36 @@ export const useHarnessStore = create<HarnessStore>((set, get) => ({
       return { doc: touch({ ...s.doc, usedParts }) };
     }),
 
+  /**
+   * 구간 길이 입력 · 삭제.
+   *
+   * 구간은 저장되지 않고 배선에서 유도되므로(physical/segments.ts), 값은 구간
+   * **키**(양 끝 정점 id)로 붙는다. 키를 만드는 함수는 segments.ts 한 곳뿐이다.
+   *
+   * - 값이 없거나 0 이하면 **키를 지운다**. 0 을 남기면 도면에 0mm 치수가 오른다.
+   * - 마지막 키가 사라지면 필드 자체를 지운다 — 빈 객체를 남기면 이 기능을 쓴 적
+   *   없는 문서와 저장 파일이 달라져 형상관리에서 없는 변경이 보인다.
+   * - 바뀌는 것이 없으면 히스토리도 쌓지 않는다(같은 값 재확정·없는 값 삭제).
+   */
+  setSegmentLength: (key: string, mm: number | null) =>
+    set((s) => {
+      const cur = s.doc.segmentLengths ?? {};
+      const has = Object.prototype.hasOwnProperty.call(cur, key);
+      if (mm == null || !Number.isFinite(mm) || mm <= 0) {
+        if (!has) return s;
+        pushHistory(s.doc);
+        const next = { ...cur };
+        delete next[key];
+        const doc = { ...s.doc };
+        if (Object.keys(next).length) doc.segmentLengths = next;
+        else delete doc.segmentLengths;
+        return { doc: touch(doc) };
+      }
+      if (cur[key] === mm) return s;
+      pushHistory(s.doc);
+      return { doc: touch({ ...s.doc, segmentLengths: { ...cur, [key]: mm } }) };
+    }),
+
   remove: (id: Id) =>
     set((s) => {
       pushHistory(s.doc);

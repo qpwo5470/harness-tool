@@ -32,6 +32,9 @@ import { describeEndpoint } from '../export/exporters';
 // 도면 레퍼런스(J1 · SP1 · D1)는 캔버스와 같은 규칙을 써야 한다.
 // 여기서 따로 매기면 패널이 가리키는 J2 와 도면의 J2 가 달라진다.
 import { refLabels } from '../canvas/docToFlow';
+// 구간(다발)은 배선에서 유도된다. 입력한 구간 길이를 검사하려면 화면과 **같은**
+// 산출을 봐야 한다 — 여기서 따로 세면 도면의 S3 와 경고의 S3 가 달라진다.
+import { buildPhysicalModel } from '../physical/segments';
 
 export type IssueLevel = 'error' | 'warn' | 'info';
 
@@ -493,6 +496,54 @@ export function validateHarness(doc: HarnessDocument): Issue[] {
       targetId: net.wireIds[0],
       where: `${net.code} ${net.label}`,
     });
+  }
+
+  // ================================================================
+  // 15. 입력한 구간 길이가 배선에서 나온 값과 다르다
+  //     구간 길이는 근거가 없을 때 사람이 넣는 값이다(대부분의 분기 구간이 그렇다).
+  //     그런데 **근거가 있는데도** 다른 값이 들어와 있으면 둘 중 하나는 틀렸다:
+  //     도면 치수는 입력값을 따르고 전선은 배선 길이대로 재단되므로, 그대로 두면
+  //     자른 전선이 도면 치수에 맞지 않는다.
+  //     자동으로 고치지 않는다 — 실측이 맞는지 배선 입력이 맞는지는 사람만 안다.
+  //
+  // 16. 어느 구간에도 붙지 않는 입력 길이
+  //     배선을 고치면 구간이 갈라지거나 합쳐진다. 그때 옛 키에 남은 값은 화면
+  //     어디에도 나오지 않은 채 파일에만 남아, 다음에 여는 사람이 "분명히 넣었는데"
+  //     하고 헤매게 만든다. 지우는 것은 사람 몫이라 알리기만 한다.
+  // ================================================================
+  {
+    const entered = doc.segmentLengths;
+    // 쓴 적 없는 문서에서는 구간 산출 자체를 돌리지 않는다
+    if (entered && Object.keys(entered).length > 0) {
+      const model = buildPhysicalModel(doc);
+      const segByKey = new Map(model.segments.map((s) => [s.key, s]));
+      const orphans: string[] = [];
+
+      for (const [key, mm] of Object.entries(entered)) {
+        const seg = segByKey.get(key);
+        if (!seg) { orphans.push(key); continue; }
+        if (seg.derivedMm == null || seg.derivedMm === mm) continue;
+        const codes = seg.directWireIds.map((id) => wireNo.get(id) ?? 'W?').join(' ');
+        out.push({
+          id: 'segment-length-conflict',
+          level: 'warn',
+          title: `구간 길이 불일치 — 입력 ${mm}mm · 배선 ${seg.derivedMm}mm`,
+          detail: `${seg.code} 은 ${codes} 한 본이 통째로 지나는 구간이라 배선 길이가 곧 구간 길이다 — 입력값이 다르면 도면 치수와 실제로 잘리는 전선이 어긋나므로, 실측이 맞으면 배선 길이를, 배선이 맞으면 입력값을 고쳐야 한다.`,
+          targetId: seg.directWireIds[0],
+          where: `${seg.code} ${seg.fromRef} → ${seg.toRef}`,
+        });
+      }
+
+      if (orphans.length > 0) {
+        out.push({
+          id: 'segment-length-orphan',
+          level: 'info',
+          title: `쓰이지 않는 구간 길이 ${orphans.length}건`,
+          detail: '배선이 바뀌어 그 구간이 더는 없다 — 입력해 둔 길이가 도면에 나오지 않고 파일에만 남아 있으므로, 지금 구간표에서 다시 넣거나 그대로 두면 된다.',
+          where: `${doc.name} 구간 길이`,
+        });
+      }
+    }
   }
 
   return sortIssues(out);

@@ -12,8 +12,14 @@
  *
  * 숫자 원칙:
  * - **티크 달린 정식 치수선은 실치수에만 쓴다.** 구간 길이는 그 구간이 전 경로인
- *   배선에서만 나오고(segments.ts), 나오지 않으면 치수선을 그리지 않고 표에는
- *   `—` 와 그 이유를 적는다. 근거 없는 숫자를 치수선으로 그리면 그대로 잘린다.
+ *   배선에서 유도되거나(segments.ts), **사람이 직접 입력한** 값이다. 둘 다 없으면
+ *   치수선을 그리지 않고 표에는 `—` 와 그 이유를 적는다. 근거 없는 숫자를
+ *   치수선으로 그리면 그대로 잘린다.
+ * - 입력값도 실치수이므로 도면에는 유도값과 똑같이 그린다. 대신 **구간표와 호버
+ *   카드에서 `입력값` 이라고 밝힌다** — 어디서 온 숫자인지는 작업자가 아니라
+ *   도면을 고치는 사람이 알아야 하는 정보다.
+ * - 표에서 유도값에는 아무 표시도 붙이지 않는다. 모든 줄에 `배선 기준` 을 달면
+ *   정작 눈에 띄어야 할 `입력값` 이 묻힌다(도면 표는 조용해야 한다).
  * - 도면 전폭 치수선은 **전장이 확정될 때만** 그린다. 확정되지 않으면 최장 배선
  *   한 본을 "최장 배선"이라는 이름으로 적는다 — "전장" 이라 부르지 않는다.
  * - 길이가 없으면 `—`. 지어내지 않는다.
@@ -174,8 +180,15 @@ export function PhysicalView(props: {
   doc: HarnessDocument;
   selection: string | null;
   onSelect: (id: string | null) => void;
+  /**
+   * 구간 길이 입력 통로. `mm` 이 null 이면 그 구간의 입력값을 지운다(= 유도값으로 복귀).
+   *
+   * 이 콜백이 없으면 길이 칸은 **읽기만** 한다. 눌러도 아무 일이 없는 입력칸은
+   * 거짓말이므로, 스토어를 물리지 않은 화면(미리보기·시험)에서는 아예 그리지 않는다.
+   */
+  onSegmentLength?: (key: string, mm: number | null) => void;
 }): JSX.Element {
-  const { doc, selection, onSelect } = props;
+  const { doc, selection, onSelect, onSegmentLength } = props;
 
   const model = useMemo(() => buildPhysicalModel(doc), [doc]);
   const layout = useMemo(() => layoutTree(model), [model]);
@@ -321,7 +334,9 @@ export function PhysicalView(props: {
               {model.span && (
                 <span className="pv-dimval num" style={{ left: layout.width / 2, top: SPAN_Y }}>
                   {`전장 ${formatMm(model.span.lengthMm)}mm · ${model.span.fromRef} → ${model.span.toRef}`}
-                  {model.span.wireCodes.length > 1 && ` (${model.span.wireCodes.join(' + ')})`}
+                  {model.span.pathCodes.length > 1 && ` (${model.span.pathCodes.join(' + ')})`}
+                  {/* 무엇을 더한 값인지 밝힌다 — 구간 기준에는 사람이 넣은 값이 섞여 있다 */}
+                  {model.span.basis === 'segment' && ' · 구간 길이 기준'}
                 </span>
               )}
               {!model.span && model.longest && (
@@ -441,16 +456,12 @@ export function PhysicalView(props: {
                         <div className="pv-prot">보호재 미지정</div>
                       </td>
                       <td className="c-len num">
-                        {s.lengthMm != null ? (
-                          `${formatMm(s.lengthMm)}mm`
-                        ) : (
-                          <>
-                            —
-                            {/* 왜 — 인지 밝힌다. 빈 칸은 "아직 안 적었다"로 읽히지만
-                                여기 대부분은 "이 데이터로는 알 수 없다"이다 */}
-                            <i className="pv-lennote">{segmentLengthNoteText(s.lengthNote ?? 'none')}</i>
-                          </>
-                        )}
+                        <LengthCell
+                          seg={s}
+                          onCommit={
+                            onSegmentLength && ((mm) => onSegmentLength(s.key, mm))
+                          }
+                        />
                       </td>
                       <td className="c-cnt num">{s.count}본</td>
                     </tr>
@@ -468,6 +479,13 @@ export function PhysicalView(props: {
               <p className="pv-note">
                 구간 길이는 그 구간이 전 경로인 배선에서만 나옵니다 — 더 멀리 가는 배선의
                 전장은 이 구간의 길이가 아니므로 근거가 없으면 <b>—</b> 로 둡니다.
+                {onSegmentLength && (
+                  <>
+                    {' '}길이 칸에 직접 넣고 <b className="num">Enter</b> 를 누르면 그 값이
+                    치수가 되고 <b>입력값</b> 으로 표시됩니다. 지우면 다시 배선에서 나온 값으로
+                    돌아갑니다.
+                  </>
+                )}
               </p>
               <MaterialList rows={materials} />
             </>
@@ -541,6 +559,87 @@ function TerminalCard(props: {
   );
 }
 
+/**
+ * 구간표 길이 칸.
+ *
+ * `onCommit` 이 있으면 입력칸, 없으면 읽기 전용 표시다.
+ * 입력은 **Enter · 포커스 이탈에서 한 번만** 반영한다 — 타이핑마다 문서를 고치면
+ * 실행취소 스택이 글자 수만큼 쌓여 되돌릴 수 없다(속성 패널 길이 일괄 입력과 같은 방식).
+ * 비우고 확정하면 입력값을 지운다 → 다시 배선에서 나온 값(없으면 미상)이 된다.
+ */
+function LengthCell(props: {
+  seg: Segment;
+  onCommit?: (mm: number | null) => void;
+}): JSX.Element {
+  const { seg, onCommit } = props;
+  const [draft, setDraft] = useState<string | null>(null);
+  const entered = seg.lengthSource === 'entered' ? seg.lengthMm : null;
+
+  /** 입력값이 있는 줄에만 표를 남긴다 — 유도값에 매번 꼬리를 달면 이 표시가 묻힌다 */
+  const mark = entered != null && (
+    <i className="pv-lennote is-in">
+      입력값
+      {/* 유도값과 어긋나면 그 자리에서 알린다. 고치지는 않는다 — 검증도 같은 말을 한다 */}
+      {seg.derivedMm != null && seg.derivedMm !== entered && (
+        <b className="num"> · 배선 {formatMm(seg.derivedMm)}mm</b>
+      )}
+    </i>
+  );
+
+  if (!onCommit) {
+    return (
+      <>
+        {seg.lengthMm != null ? `${formatMm(seg.lengthMm)}mm` : '—'}
+        {/* 왜 — 인지 밝힌다. 빈 칸은 "아직 안 적었다"로 읽히지만
+            여기 대부분은 "이 데이터로는 알 수 없다"이다 */}
+        {seg.lengthMm == null && (
+          <i className="pv-lennote">{segmentLengthNoteText(seg.lengthNote ?? 'none')}</i>
+        )}
+        {mark}
+      </>
+    );
+  }
+
+  const commit = () => {
+    if (draft == null) return;
+    const raw = draft.trim();
+    setDraft(null);
+    if (!raw) {
+      onCommit(null);        // 지우면 유도값/미상으로 되돌린다
+      return;
+    }
+    const v = Number(raw);
+    // 못 읽는 값·0 이하는 받지 않는다. 0mm 구간은 만들 수 없고, 그 숫자가 도면에
+    // 오르면 "0mm 로 자르라"는 지시가 된다. 조용히 초안만 버려 원래 값이 남는다.
+    if (!Number.isFinite(v) || v <= 0) return;
+    onCommit(v);
+  };
+
+  return (
+    <>
+      <input
+        className={`pv-leninput num${entered != null ? ' is-in' : ''}`}
+        aria-label={`${seg.code} 구간 길이 (mm)`}
+        // 입력값이 없으면 유도값을 흐린 글씨로 비쳐 둔다 — 지금 도면에 그려진
+        // 숫자가 무엇인지 보이면서도, 그 자리가 비어 있다는 것도 같이 보인다.
+        placeholder={seg.derivedMm != null ? formatMm(seg.derivedMm) : '—'}
+        value={draft ?? (entered != null ? String(entered) : '')}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commit();
+          if (e.key === 'Escape') setDraft(null);   // 고치던 것을 되돌린다
+        }}
+      />
+      <span className="pv-lenunit num">mm</span>
+      {seg.lengthMm == null && (
+        <i className="pv-lennote">{segmentLengthNoteText(seg.lengthNote ?? 'none')}</i>
+      )}
+      {mark}
+    </>
+  );
+}
+
 /** 구간 호버 카드 — 폭 250px, 논리 뷰 배선 카드와 같은 골격 */
 function SegmentCard(props: { seg: Segment; model: PhysicalModel; x: number; y: number }) {
   const { seg, model, x, y } = props;
@@ -558,7 +657,15 @@ function SegmentCard(props: { seg: Segment; model: PhysicalModel; x: number; y: 
       <div className="pv-hover-b">
         <div className="pv-grid3">
           <div>
-            <i>{seg.lengthMm != null ? '길이' : '길이 미상'}</i>
+            {/* 같은 자리에서 값과 출처를 함께 읽히게 한다 — 숫자만 보면 어디서 온
+                값인지 알 수 없고, 도면을 고칠 때 그게 제일 먼저 필요한 정보다 */}
+            <i>
+              {seg.lengthMm == null
+                ? '길이 미상'
+                : seg.lengthSource === 'entered'
+                  ? '길이 · 입력값'
+                  : '길이'}
+            </i>
             <b className="num">{seg.lengthMm != null ? `${formatMm(seg.lengthMm)}mm` : '—'}</b>
           </div>
           <div>
@@ -577,6 +684,17 @@ function SegmentCard(props: { seg: Segment; model: PhysicalModel; x: number; y: 
             {segmentLengthNoteText(seg.lengthNote ?? 'none')}
             {seg.wireRangeMm && ` · 지나는 배선 전장 ${formatRange(seg.wireRangeMm)} (구간 치수 아님)`}
             {seg.missingLength > 0 && ` · 길이 미입력 ${seg.missingLength}본`}
+          </p>
+        )}
+        {/* 입력값이 유도값을 덮었으면 덮었다고 쓴다. 어느 쪽이 맞는지는 사람만 안다 */}
+        {seg.lengthSource === 'entered' && seg.derivedMm != null && seg.derivedMm !== seg.lengthMm && (
+          <p className="pv-note">
+            {`이 구간이 전 경로인 배선은 ${formatMm(seg.derivedMm)}mm 입니다 — 입력값과 다릅니다. 어느 쪽이 맞는지 확인하세요.`}
+          </p>
+        )}
+        {seg.lengthSource === 'entered' && seg.derivedMm == null && (
+          <p className="pv-note">
+            {`배선에서 유도할 근거는 없습니다 (${segmentLengthNoteText(seg.lengthNote ?? 'none')}) — 직접 넣은 값입니다.`}
           </p>
         )}
         <p className="pv-note">보호재 미지정 · 외경은 √본수 × 심선 외경 추정값</p>

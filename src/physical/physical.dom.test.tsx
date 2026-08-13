@@ -10,6 +10,7 @@ import type {
   Connector, Device, Endpoint, HarnessDocument, PartLibraryItem, Wire,
 } from '../types';
 import { PhysicalView } from './PhysicalView';
+import { buildPhysicalModel } from './segments';
 
 afterEach(cleanup);
 
@@ -273,6 +274,128 @@ describe('구간 ↔ 구간표 동기 강조', () => {
 
     fireEvent.mouseLeave(s2);
     expect(container.querySelector('[data-testid="pv-seg-S2"]')!.getAttribute('class')).not.toContain('is-hot');
+  });
+});
+
+// ================================================================
+// 구간 길이 직접 입력
+//
+// 분기가 있는 하네스는 구간 실치수를 유도할 근거가 아예 없다(위 시험).
+// 그 자리를 사람이 채운다. 화면은 그 값이 **입력값임을 밝혀야** 한다.
+// ================================================================
+
+describe('구간 길이 직접 입력', () => {
+  /** i 번째 구간의 저장 키 — UI 가 콜백에 실어 보내는 값과 같아야 한다 */
+  const keyAt = (doc: HarnessDocument, i = 0) => buildPhysicalModel(doc).segments[i].key;
+
+  const editable = (doc = makeDoc(), onSegmentLength = vi.fn()) => ({
+    onSegmentLength,
+    ...render(
+      <PhysicalView
+        doc={doc}
+        selection={null}
+        onSelect={vi.fn()}
+        onSegmentLength={onSegmentLength}
+      />,
+    ),
+  });
+
+  /** 구간표 한 줄의 길이 입력칸 */
+  const lenInput = (code: string) =>
+    within(screen.getByText(code).closest('tr')!).getByLabelText(`${code} 구간 길이 (mm)`, {
+      selector: 'input',
+    }) as HTMLInputElement;
+
+  it('길이 칸에 넣고 Enter 를 누르면 그 구간 키로 값이 나간다', () => {
+    const doc = makeDoc();
+    const { onSegmentLength } = editable(doc);
+    const input = lenInput('S1');
+
+    fireEvent.change(input, { target: { value: '250' } });
+    // 타이핑마다 문서를 고치면 실행취소 스택이 글자 수만큼 쌓인다 — 아직은 조용하다
+    expect(onSegmentLength).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(onSegmentLength).toHaveBeenCalledTimes(1);
+    expect(onSegmentLength).toHaveBeenCalledWith(keyAt(doc), 250);
+  });
+
+  it('비우고 확정하면 입력값을 지운다 — 유도값/미상으로 돌아가라는 뜻이다', () => {
+    const doc = makeDoc();
+    const withLen = { ...doc, segmentLengths: { [keyAt(doc)]: 250 } };
+    const { onSegmentLength } = editable(withLen);
+    const input = lenInput('S1');
+    expect(input.value).toBe('250');
+
+    fireEvent.change(input, { target: { value: '' } });
+    fireEvent.blur(input);
+    expect(onSegmentLength).toHaveBeenCalledWith(keyAt(doc), null);
+  });
+
+  it('0 · 음수 · 글자는 받지 않는다 — 0mm 치수는 "0mm 로 자르라"가 된다', () => {
+    const { onSegmentLength } = editable();
+    const input = lenInput('S1');
+    for (const bad of ['0', '-5', '길이']) {
+      fireEvent.change(input, { target: { value: bad } });
+      fireEvent.keyDown(input, { key: 'Enter' });
+    }
+    expect(onSegmentLength).not.toHaveBeenCalled();
+  });
+
+  it('입력값은 치수선으로 나가고 표에는 입력값이라고 밝힌다', () => {
+    const doc = makeDoc();
+    // S1(J1→B1)은 지나가는 배선뿐이라 예전에는 영영 — 이던 구간이다
+    const { container } = editable({ ...doc, segmentLengths: { [keyAt(doc)]: 250 } });
+    const s1 = screen.getByText('S1').closest('tr')!;
+    expect(within(s1).getByText('입력값')).toBeTruthy();
+    expect(lenInput('S1').value).toBe('250');
+    // 도면에도 정식 치수로 올라간다 (예전에는 S5 260 하나뿐이었다)
+    const dims = [...container.querySelectorAll('.pv-dimval.num')].map((n) => n.textContent);
+    expect(dims).toContain('250');
+  });
+
+  it('유도값은 흐린 글씨로 비치기만 하고 입력값 표시가 붙지 않는다', () => {
+    editable();
+    // S5 는 W3 260mm 가 통째로 지나는 구간 — 배선에서 나온 값이다
+    const input = lenInput('S5');
+    expect(input.value).toBe('');
+    expect(input.placeholder).toBe('260');
+    const s5 = screen.getByText('S5').closest('tr')!;
+    expect(within(s5).queryByText('입력값')).toBeNull();
+  });
+
+  it('유도값과 다른 값을 넣으면 그 자리에서 두 값을 같이 보여 준다', () => {
+    const doc = makeDoc();
+    const key = buildPhysicalModel(doc).segments[4].key;   // S5 (SP1 → D1)
+    editable({ ...doc, segmentLengths: { [key]: 300 } });
+    const s5 = screen.getByText('S5').closest('tr')!;
+    expect(s5.textContent).toContain('입력값');
+    expect(s5.textContent).toContain('배선 260mm');
+  });
+
+  it('입력 통로가 없으면 길이 칸은 읽기만 한다 — 눌러도 되지 않는 칸은 만들지 않는다', () => {
+    const doc = makeDoc();
+    const { container } = draw({ ...doc, segmentLengths: { [keyAt(doc)]: 250 } });
+    expect(container.querySelectorAll('.pv-leninput')).toHaveLength(0);
+    const s1 = screen.getByText('S1').closest('tr')!;
+    // 값과 출처는 그대로 보인다
+    expect(s1.querySelector('td.c-len')!.textContent).toContain('250mm');
+    expect(within(s1).getByText('입력값')).toBeTruthy();
+  });
+
+  it('전장이 구간 길이로 잡히면 무엇을 더한 값인지 밝힌다', () => {
+    const doc = makeDoc();
+    const keys = buildPhysicalModel(doc).segments.map((s) => s.key);
+    const { container } = editable({
+      ...doc,
+      segmentLengths: { [keys[0]]: 100, [keys[1]]: 50, [keys[2]]: 200, [keys[3]]: 300 },
+    });
+    const span = [...container.querySelectorAll('.pv-dimval')].find((n) =>
+      n.textContent?.startsWith('전장'),
+    );
+    expect(span?.textContent).toContain('전장 610mm');
+    expect(span?.textContent).toContain('구간 길이 기준');
+    expect(screen.getByTestId('pv-span-dim')).toBeTruthy();
   });
 });
 

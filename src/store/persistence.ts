@@ -17,6 +17,9 @@ import type {
   KitDocument, Pin, Wire,
 } from '../types';
 import { toKit, letterAt } from './kit';
+// 구간 키의 규칙은 만드는 곳에만 있다 — 여기서 형식을 다시 정의하면
+// 도출부와 저장부가 서로 다른 키를 쓰게 되고, 입력한 길이가 아무 데도 붙지 않는다.
+import { segmentKeyRefs } from '../physical/segments';
 
 const KEY = 'harness-tool:doc:v1';
 /**
@@ -259,6 +262,48 @@ function normPart(v: unknown): HarnessDocument['usedParts'][number] | null {
   return v as unknown as HarnessDocument['usedParts'][number];
 }
 
+/**
+ * 사람이 입력한 구간 길이.
+ *
+ * 이 값은 곧 도면의 치수선이 되므로 **고칠 수 있는 것이 없다** — 숫자가 아니거나
+ * 0 이하인 값을 0 이나 1 로 때우면 "0mm 로 자르라"는 지시가 되고, 없는 부품을
+ * 가리키는 키는 어느 구간에도 붙지 않은 채 파일에만 남아 다음 사람을 헷갈리게 한다.
+ * 그래서 못 쓰는 것은 버리고 **몇 건을 왜 버렸는지 알린다**.
+ *
+ * 키가 가리키는 부품이 문서에 있는지까지 본다: 커넥터를 지운 뒤 그 구간 길이만
+ * 남아 있으면 그건 이미 없는 구간의 치수다.
+ */
+function normSegmentLengths(
+  v: unknown,
+  known: Set<string>,
+  at: (label: string) => string,
+  warn: string[],
+): Record<string, number> {
+  if (v === undefined) return {};
+  if (!isObj(v)) {
+    warn.push(at('구간 길이가 형식에 맞지 않아 비운 채 불러왔습니다'));
+    return {};
+  }
+  const out: Record<string, number> = {};
+  let badValue = 0;
+  let badKey = 0;
+  for (const [key, raw] of Object.entries(v)) {
+    if (typeof raw !== 'number' || !Number.isFinite(raw) || raw <= 0) {
+      badValue += 1;
+      continue;
+    }
+    const refs = segmentKeyRefs(key);
+    if (!refs || refs.some((id) => !known.has(id))) {
+      badKey += 1;
+      continue;
+    }
+    out[key] = raw;
+  }
+  if (badValue > 0) warn.push(at(`구간 길이 ${badValue}건은 숫자가 아니거나 0 이하라 제외했습니다`));
+  if (badKey > 0) warn.push(at(`구간 길이 ${badKey}건은 문서에 없는 부품을 가리켜 제외했습니다`));
+  return out;
+}
+
 function normHarness(v: unknown, i: number, warn: string[]): HarnessDocument | null {
   if (!isObj(v)) return null;
   const where = str(v.name) ?? `${i + 1}번 하네스`;
@@ -291,6 +336,14 @@ function normHarness(v: unknown, i: number, warn: string[]): HarnessDocument | n
     ? (v.cables as unknown[]).map(normCable).filter((c): c is Cable => c != null)
     : [];
 
+  // 구간 길이도 선택 필드다. 키가 가리킬 수 있는 것은 살아남은 커넥터·장치뿐이다.
+  const segmentLengths = normSegmentLengths(
+    v.segmentLengths,
+    new Set([...connectors.map((c) => c.id), ...devices.map((d) => d.id)]),
+    at,
+    warn,
+  );
+
   return {
     schemaVersion: 1,
     id,
@@ -304,6 +357,9 @@ function normHarness(v: unknown, i: number, warn: string[]): HarnessDocument | n
     devices,
     wires,
     cables,
+    // 쓴 적 없는 문서에 빈 객체를 붙이지 않는다 — 없던 필드가 생기면 저장 파일이
+    // 달라져 형상관리에서 없는 변경이 보이고, 옛 문서와 왕복 결과도 어긋난다.
+    ...(Object.keys(segmentLengths).length ? { segmentLengths } : {}),
     usedParts,
   };
 }

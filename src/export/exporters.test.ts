@@ -11,6 +11,23 @@ describe('buildPartList', () => {
     expect(rows.some((r) => r.category === '와이어')).toBe(true);
     expect(rows.some((r) => r.category === '케이블')).toBe(true);
   });
+
+  /**
+   * 발주하는 것은 **전선 길이**지 구간 길이가 아니다. 구간은 여러 전선이 함께
+   * 지나는 다발이라, 사람이 넣은 구간 길이를 자재에 더하면 같은 전선을 구간
+   * 수만큼 다시 세게 된다. 접속표도 마찬가지다 — 현장에서 자르는 것은 전선이다.
+   * (구간 길이는 작업 지시용 치수이고, 물리 뷰에만 산다.)
+   */
+  it('입력한 구간 길이는 파트리스트·접속표를 건드리지 않는다 — 이중 계상 금지', () => {
+    const parts = buildPartList(sampleDoc);
+    const runs = buildRunList(sampleDoc);
+    const withSeg: HarnessDocument = {
+      ...sampleDoc,
+      segmentLengths: { 'con:con-a|con:sp-1': 5000, 'con:sp-1|dev:dev-1': 4000 },
+    };
+    expect(buildPartList(withSeg)).toEqual(parts);
+    expect(buildRunList(withSeg)).toEqual(runs);
+  });
 });
 
 // ============================================================

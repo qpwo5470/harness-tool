@@ -189,6 +189,42 @@ describe('왕복 무결성 — export → import', () => {
     expect(out.set.items).toEqual([{ harnessId: out.harnesses[0].id, perSet: 1 }]);
   });
 
+  /**
+   * 입력한 구간 길이는 배선 어디에도 적혀 있지 않은 **새 사실**이다.
+   * 왕복에서 빠지면 사람이 재어 넣은 치수가 통째로 사라진다.
+   */
+  it('입력한 구간 길이가 왕복에서 그대로 살아남는다', () => {
+    const before = richKit();
+    before.harnesses[0].segmentLengths = { 'con:con-a|con:sp-1': 300, 'con:sp-1|dev:dev-1': 120 };
+    S().replaceKit(before);
+    S().importJson(S().exportJson());
+    expect(S().kit.harnesses[0].segmentLengths).toEqual({
+      'con:con-a|con:sp-1': 300,
+      'con:sp-1|dev:dev-1': 120,
+    });
+    expect(S().kit).toEqual(before);
+  });
+
+  it('구간 길이를 쓴 적 없는 문서에는 빈 필드를 만들지 않는다', () => {
+    // 없던 필드가 생기면 저장 파일이 달라져 형상관리에서 없는 변경이 보인다
+    const r = parseDocument(JSON.stringify(richHarness()));
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect('segmentLengths' in r.kit.harnesses[0]).toBe(false);
+  });
+
+  it('구간 길이 입력·삭제가 자동저장과 내보내기에 반영된다', () => {
+    S().replaceKit(richKit());
+    S().setSegmentLength?.('con:con-a|con:sp-1', 300);
+    expect((JSON.parse(S().exportJson()) as KitDocument).harnesses[0].segmentLengths)
+      .toEqual({ 'con:con-a|con:sp-1': 300 });
+
+    // 지우면 키가 사라지고, 마지막 키였으면 필드째 없어진다
+    S().setSegmentLength?.('con:con-a|con:sp-1', null);
+    const out = (JSON.parse(S().exportJson()) as KitDocument).harnesses[0];
+    expect(out.segmentLengths).toBeUndefined();
+  });
+
   it('새 문서로 바꾸면 자동저장에도 그 문서가 담긴다', () => {
     S().replaceKit(richKit());
     S().replaceDoc(emptyDoc());
@@ -240,6 +276,8 @@ describe('마이그레이션', () => {
     expect(h.rev).toBeUndefined();
     expect(h.usedParts[0].gender).toBeUndefined();
     expect(h.wires[0].cableId).toBeUndefined();
+    // 구간 길이를 몰랐던 문서다 — 빈 객체를 붙이지 않는다
+    expect(h.segmentLengths).toBeUndefined();
     // 세트 문자는 없으면 붙여 준다 (없으면 발주 문구가 '?' 로 나간다)
     expect(h.letter).toBe('A');
     expect(h.cables).toEqual([]);
@@ -328,6 +366,54 @@ describe('깨진 입력', () => {
     if (!r.ok) return;
     expect(r.kit.harnesses[0].wires).toHaveLength(0);
     expect(r.warnings.join(' ')).toContain('배선 2본');
+  });
+
+  /**
+   * 구간 길이는 곧 도면의 치수선이 된다 — 고쳐 줄 수 있는 것이 없다.
+   * 0 이나 1 로 때우면 "0mm 로 자르라"는 지시가 되고, 없는 부품을 가리키는 키는
+   * 어느 구간에도 붙지 않은 채 파일에만 남아 다음 사람을 헷갈리게 한다.
+   */
+  it('숫자가 아니거나 0 이하인 구간 길이는 버리면서 몇 건인지 알린다', () => {
+    const h = richHarness() as unknown as Record<string, unknown>;
+    h.segmentLengths = {
+      'con:con-a|con:sp-1': 300,      // 정상
+      'con:sp-1|dev:dev-1': -50,      // 음수
+      'con:con-a|dev:dev-1': 0,       // 0mm 구간은 만들 수 없다
+      'con:con-a|con:유령': '300',    // 숫자가 아니다
+    };
+    const r = parseDocument(JSON.stringify(h));
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.kit.harnesses[0].segmentLengths).toEqual({ 'con:con-a|con:sp-1': 300 });
+    expect(r.warnings.join(' ')).toContain('구간 길이 3건');
+    expect(r.warnings.join(' ')).toContain('0 이하');
+  });
+
+  it('없는 부품·형식에 맞지 않는 키를 가리키는 구간 길이는 버리면서 알린다', () => {
+    const h = richHarness() as unknown as Record<string, unknown>;
+    h.segmentLengths = {
+      'con:con-a|con:sp-1': 300,      // 정상
+      'con:con-a|con:유령': 200,      // 문서에 없는 커넥터
+      'con:sp-1|con:con-a': 150,      // 정렬 규칙을 어긴 키 — 도출부가 만들 리 없다
+      'J1|J2': 100,                   // 정점 형식이 아니다
+      '': 100,
+    };
+    const r = parseDocument(JSON.stringify(h));
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.kit.harnesses[0].segmentLengths).toEqual({ 'con:con-a|con:sp-1': 300 });
+    expect(r.warnings.join(' ')).toContain('구간 길이 4건');
+    expect(r.warnings.join(' ')).toContain('없는 부품');
+  });
+
+  it('구간 길이 자리에 객체가 아닌 것이 오면 비운 채 알린다', () => {
+    const h = richHarness() as unknown as Record<string, unknown>;
+    h.segmentLengths = [1, 2, 3];
+    const r = parseDocument(JSON.stringify(h));
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.kit.harnesses[0].segmentLengths).toBeUndefined();
+    expect(r.warnings.join(' ')).toContain('구간 길이');
   });
 
   it('세트 구성이 없는 하네스를 가리키면 그 줄을 버리고 알린다', () => {

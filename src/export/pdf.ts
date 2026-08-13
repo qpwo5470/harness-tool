@@ -404,7 +404,15 @@ function makeCtx(paper: Paper): Ctx {
   };
 }
 
-/** 하네스 한 종 → 세 면(배선도 · 접속표 · 파트리스트) */
+/**
+ * 하네스 한 종 → 세 면(배선도 · 접속표 · 파트리스트).
+ *
+ * 물리 뷰(구간·전장·구간 길이)는 아직 PDF 로 나가지 않는다 — 이 세 면의 숫자는
+ * 전부 **배선 길이**(store/wireLength.ts)에서 오므로 사람이 넣은 구간 길이와
+ * 겹칠 일이 없다. 나중에 물리 면을 더한다면 화면과 같은 산출
+ * (`physical/segments.ts` 의 `buildPhysicalModel`)을 그대로 써야 한다.
+ * 여기서 다시 계산하면 화면과 종이가 다른 숫자를 말하게 된다.
+ */
 function addHarness(ctx: Ctx, doc: HarnessDocument): void {
   startPage(ctx, doc);
   drawSheet(ctx.pdf, doc, ctx.text, { w: ctx.pageW, h: ctx.pageH });

@@ -32,9 +32,13 @@
  * 물리 뷰는 **제조 도면**이다. 화면의 수치가 그대로 작업 지시가 되므로,
  * 틀린 숫자를 그럴듯하게 그리는 것보다 모르는 값을 모른다고 말하는 쪽이 낫다.
  *
- * - `lengthMm`(구간 실치수)는 **그 구간이 곧 전 경로인 배선**(트리 경로 길이 1)만
- *   보고 정한다. 그런 배선이 있고 길이가 전부 같을 때만 값이 되고, 아니면 `null`
- *   이며 `lengthNote` 에 이유가 남는다.
+ * - `derivedMm`(배선에서 유도한 구간 치수)는 **그 구간이 곧 전 경로인 배선**
+ *   (트리 경로 길이 1)만 보고 정한다. 그런 배선이 있고 길이가 전부 같을 때만 값이
+ *   되고, 아니면 `null` 이며 `lengthNote` 에 이유가 남는다.
+ *   분기가 있는 하네스는 대부분 그런 배선이 없어 유도할 근거가 아예 없다 — 그래서
+ *   **사람이 직접 넣은 값**(`doc.segmentLengths`)이 있으면 그것이 유도값을 이긴다.
+ *   최종 표시값은 `lengthMm`, 그 값이 어디서 왔는지는 `lengthSource` 다.
+ *   입력값도 실치수이므로 치수선을 그린다 — 출처 구분은 구간표·호버 카드가 한다.
  *   예전에는 "그 구간을 지나는 배선 길이의 최댓값"을 대표값으로 삼아 티크 달린
  *   정식 치수선으로 내보냈다. 그건 실치수가 아니다 — `J1—SP1` 100mm 2본과
  *   `SP1—J2` 150mm 2본에 `J1↔J2` 직결 900mm 를 하나 얹으면 두 구간 모두
@@ -89,9 +93,21 @@ export type PhysNode = {
  */
 export type SegmentLengthNote = 'mixed' | 'through' | 'missing' | 'none';
 
+/**
+ * 구간 길이가 어디서 왔는가.
+ * - `entered` 사람이 직접 넣었다(`doc.segmentLengths`)
+ * - `derived` 그 구간이 곧 전 경로인 배선에서 나왔다
+ */
+export type SegmentLengthSource = 'entered' | 'derived';
+
 export type Segment = {
   /** S1, S2 … */
   code: string;
+  /**
+   * 저장 키 — `segmentKey(from, to)`. 입력한 구간 길이는 이 키로 문서에 붙는다.
+   * 구간은 저장되지 않고 유도되므로, 입력값을 다시 찾아 붙이려면 안정된 키가 필요하다.
+   */
+  key: string;
   /** 정점 id */
   from: string;
   to: string;
@@ -105,11 +121,19 @@ export type Segment = {
   /** 본수 = wireIds.length */
   count: number;
   /**
-   * 구간 실치수(mm). `directWireIds` 의 길이가 전부 같을 때만 값이 있다.
-   * `null` 이면 치수선을 그리지 않는다 — 이유는 `lengthNote`.
+   * 구간 실치수(mm) — **표시·치수선에 쓰는 최종값**.
+   * 입력값(`doc.segmentLengths`)이 있으면 그 값, 없으면 유도값(`derivedMm`).
+   * `null` 이면 치수선을 그리지 않는다 — 근거가 없다는 뜻이고 이유는 `lengthNote`.
    */
   lengthMm: number | null;
-  /** lengthMm 이 null 인 이유. 값이 있으면 null */
+  /** lengthMm 이 어디서 왔는지. 값이 없으면 null */
+  lengthSource: SegmentLengthSource | null;
+  /**
+   * 배선에서 **유도한** 치수(mm). `directWireIds` 의 길이가 전부 같을 때만 값이 있다.
+   * 입력값이 있어도 계산해 둔다 — 두 값이 어긋나는지 검증이 봐야 하기 때문이다.
+   */
+  derivedMm: number | null;
+  /** derivedMm 이 null 인 이유(= 유도 실패 사유). 유도값이 있으면 null */
   lengthNote: SegmentLengthNote | null;
   /** 지나는 배선 **전장**의 범위 [최소, 최대]. 실치수가 아니라 참고값이다 */
   wireRangeMm: [number, number] | null;
@@ -127,13 +151,22 @@ export type LongestRun = {
   toRef: string;
 };
 
+/**
+ * 전장을 무엇을 더해 냈는가.
+ * - `wire`    배선 한 본 한 본의 길이 (근거가 가장 직접적이다)
+ * - `segment` 구간 길이 (그중 일부는 사람이 입력한 값이다)
+ */
+export type SpanBasis = 'wire' | 'segment';
+
 /** 전장 — 끝단↔끝단 경로 길이의 최댓값 */
 export type SpanRun = {
   lengthMm: number;
   fromRef: string;
   toRef: string;
-  /** 그 경로에 놓인 배선 코드 (W1 W2 …) */
-  wireCodes: string[];
+  /** 그 경로에 놓인 것들의 코드 — 배선 기준이면 `W1 W2 …`, 구간 기준이면 `S1 S2 …` */
+  pathCodes: string[];
+  /** 무엇을 더한 값인지. 화면은 이것을 밝혀야 한다 */
+  basis: SpanBasis;
 };
 
 /**
@@ -286,14 +319,71 @@ class UnionFind {
   }
 }
 
-const edgeKey = (u: string, v: string) => (u < v ? `${u}|${v}` : `${v}|${u}`);
+// ================================================================
+// 구간 키 — 저장부와 도출부가 같이 쓰는 **한 곳**
+// ================================================================
+
+/**
+ * 간선(=구간) 하나의 키. 양 끝 정점 id 를 정렬해 붙인다 → `a|b`.
+ *
+ * ## 왜 이 키인가
+ * 구간은 저장되지 않고 배선 그래프에서 유도되므로(파일 첫머리 주석), 사람이 넣은
+ * 구간 길이를 다시 그 구간에 붙이려면 **다시 계산해도 같은 값이 나오는 이름**이
+ * 있어야 한다. 정점 id 는 문서 안의 커넥터·장치 id(와 그 바깥 분기점)에서 오므로
+ * 배선을 더하고 빼도 변하지 않는다. 반면 `S1`·`B1` 같은 코드는 **작도 순서**로
+ * 매겨져 배선 한 본만 늘어도 통째로 밀린다 — 그걸 키로 쓰면 어제 넣은 300mm 가
+ * 오늘 옆 구간에 가서 붙는다. 정렬해 붙이는 이유는 같은 구간을 어느 쪽에서
+ * 부르든 한 키여야 하기 때문이다.
+ *
+ * 이 함수는 배선 그래프의 간선·트리 간선·저장 키가 **전부** 지나간다.
+ * 두 벌로 만들면 도출부와 저장부가 다른 이름을 쓰게 되고, 그러면 입력한 길이가
+ * 아무 데도 붙지 않은 채 파일에만 남는다.
+ */
+export function segmentKey(u: string, v: string): string {
+  return u < v ? `${u}|${v}` : `${v}|${u}`;
+}
+
+/** 정점 id → 그 정점이 가리키는 문서 id (`con:x` · `dev:x` · `vb:con:x`) */
+const VERTEX_RE = /^(?:vb:)?(?:con|dev):(.+)$/;
+
+/**
+ * 저장된 구간 키가 가리키는 **문서 id 들**. 형식이 아니면 null.
+ * 불러오기(`store/persistence.ts`)가 "존재하지 않는 부품을 가리키는 키"를 걸러낼 때
+ * 쓴다 — 키를 만드는 곳과 읽는 곳이 같은 파일에 있어야 규칙이 갈라지지 않는다.
+ */
+export function segmentKeyRefs(key: string): Id[] | null {
+  const parts = key.split('|');
+  // id 에 `|` 가 섞이면 두 토막으로 갈리지 않는다 — 그런 키는 우리가 만든 적이 없다
+  if (parts.length !== 2) return null;
+  const ids: Id[] = [];
+  for (const p of parts) {
+    const m = VERTEX_RE.exec(p);
+    if (!m) return null;
+    ids.push(m[1]);
+  }
+  // 정렬 규칙을 어긴 키는 도출부가 절대 만들지 않는다 → 어디에도 붙지 않을 키다
+  if (segmentKey(parts[0], parts[1]) !== key) return null;
+  return ids;
+}
+
+/**
+ * 문서에 든 입력 길이 하나를 읽는다. 숫자가 아니거나 0 이하면 **없는 것으로** 본다.
+ * (불러오기에서 이미 걸러 내지만, 손으로 만든 문서가 곧장 들어오는 길도 있다.)
+ */
+function enteredLengthOf(doc: HarnessDocument, key: string): number | null {
+  const v = doc.segmentLengths?.[key];
+  return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null;
+}
 
 // ================================================================
 // 전장(끝단↔끝단 최장 경로)
 // ================================================================
 
-/** 배선 하나 = 두 부품을 잇는 간선 하나 */
-export type SpanEdge = { a: string; b: string; wid: Id; mm: number | null };
+/**
+ * 길이를 아는 간선 하나.
+ * 배선 기준이면 배선 한 본(`id` = 배선 id), 구간 기준이면 구간 하나(`id` = S 코드).
+ */
+export type SpanEdge = { a: string; b: string; id: string; mm: number | null };
 
 /**
  * 끝단↔끝단 경로 길이의 최댓값(전장)을 구한다.
@@ -315,36 +405,42 @@ export type SpanEdge = { a: string; b: string; wid: Id; mm: number | null };
  * 지나가므로 도면상 두 부품이 벌어진 거리는 가장 긴 배선을 따른다(짧은 쪽은
  * 여유가 덜 든 것이다). 이렇게 해야 `J1↔J2` 6본짜리 단순 하네스처럼 고리가
  * 아닌 경우를 고리로 오판하지 않는다.
+ *
+ * ## 무엇을 간선으로 넣는가
+ * 이 함수는 "길이를 아는 간선들"만 알면 된다. `buildPhysicalModel` 은 두 번 부른다:
+ * 배선 한 본씩(가장 직접적인 근거)으로 한 번, 그것이 실패하면 **구간 길이**로 한 번.
+ * 구간 길이에는 사람이 입력한 값이 들어 있으므로, 배선만으로는 고리·미입력 때문에
+ * 확정할 수 없던 하네스도 전장이 잡힌다. 구간 트리는 정의상 고리가 없다.
  */
 export function endToEndSpan(
   edges: SpanEdge[],
-): { run: { from: string; to: string; mm: number; wires: Id[] } | null; note: SpanNote | null } {
+): { run: { from: string; to: string; mm: number; path: string[] } | null; note: SpanNote | null } {
   if (!edges.length) return { run: null, note: 'empty' };
   if (edges.some((e) => e.mm == null)) return { run: null, note: 'missing' };
 
   // 평행 간선(같은 두 부품 사이 여러 본)을 최댓값 하나로 합친다
-  const merged = new Map<string, { a: string; b: string; wid: Id; mm: number }>();
+  const merged = new Map<string, { a: string; b: string; id: string; mm: number }>();
   for (const e of edges) {
-    const k = edgeKey(e.a, e.b);
+    const k = segmentKey(e.a, e.b);
     const cur = merged.get(k);
-    if (!cur || (e.mm as number) > cur.mm) merged.set(k, { a: e.a, b: e.b, wid: e.wid, mm: e.mm as number });
+    if (!cur || (e.mm as number) > cur.mm) merged.set(k, { a: e.a, b: e.b, id: e.id, mm: e.mm as number });
   }
 
-  const adj = new Map<string, { to: string; mm: number; wid: Id }[]>();
-  const link = (u: string, v: string, mm: number, wid: Id) => {
+  const adj = new Map<string, { to: string; mm: number; id: string }[]>();
+  const link = (u: string, v: string, mm: number, id: string) => {
     const list = adj.get(u) ?? [];
-    list.push({ to: v, mm, wid });
+    list.push({ to: v, mm, id });
     adj.set(u, list);
   };
   for (const e of merged.values()) {
-    link(e.a, e.b, e.mm, e.wid);
-    link(e.b, e.a, e.mm, e.wid);
+    link(e.a, e.b, e.mm, e.id);
+    link(e.b, e.a, e.mm, e.id);
   }
 
   /** 한 정점에서 가장 먼 정점까지 — 나무이므로 방문 표시만으로 충분하다 */
   const farthest = (start: string) => {
     const dist = new Map<string, number>([[start, 0]]);
-    const via = new Map<string, { from: string; wid: Id }>();
+    const via = new Map<string, { from: string; id: string }>();
     const stack = [start];
     let best = start;
     const comp: string[] = [];
@@ -354,7 +450,7 @@ export function endToEndSpan(
       for (const e of adj.get(v) ?? []) {
         if (dist.has(e.to)) continue;
         dist.set(e.to, (dist.get(v) ?? 0) + e.mm);
-        via.set(e.to, { from: v, wid: e.wid });
+        via.set(e.to, { from: v, id: e.id });
         if ((dist.get(e.to) ?? 0) > (dist.get(best) ?? 0)) best = e.to;
         stack.push(e.to);
       }
@@ -363,7 +459,7 @@ export function endToEndSpan(
   };
 
   const seen = new Set<string>();
-  let out: { from: string; to: string; mm: number; wires: Id[] } | null = null;
+  let out: { from: string; to: string; mm: number; path: string[] } | null = null;
 
   for (const start of adj.keys()) {
     if (seen.has(start)) continue;
@@ -380,15 +476,15 @@ export function endToEndSpan(
     const second = farthest(first.best);
     const mm = second.dist.get(second.best) ?? 0;
     if (!out || mm > out.mm) {
-      const wires: Id[] = [];
+      const path: string[] = [];
       let cur = second.best;
       while (cur !== first.best) {
         const step = second.via.get(cur);
         if (!step) break;
-        wires.push(step.wid);
+        path.push(step.id);
         cur = step.from;
       }
-      out = { from: first.best, to: second.best, mm, wires: wires.reverse() };
+      out = { from: first.best, to: second.best, mm, path: path.reverse() };
     }
   }
 
@@ -461,7 +557,7 @@ export function buildPhysicalModel(doc: HarnessDocument): PhysicalModel {
     const b = vertexOf(w.to);
     if (!a || !b || a === b) continue; // 같은 부품 안에서 도는 배선은 구간을 만들지 않는다
     wireVerts.set(w.id, [a, b]);
-    const k = edgeKey(a, b);
+    const k = segmentKey(a, b);
     const cur = links.get(k);
     if (cur) cur.wires.push(w.id);
     else links.set(k, { a: a < b ? a : b, b: a < b ? b : a, wires: [w.id], order: seen++ });
@@ -583,7 +679,7 @@ export function buildPhysicalModel(doc: HarnessDocument): PhysicalModel {
   const wireBuckets: Id[][] = treeEdges.map(() => []);
   /** 그 구간이 **전 경로**인 배선 — 구간 실치수의 유일한 근거 */
   const directBuckets: Id[][] = treeEdges.map(() => []);
-  treeEdges.forEach(([u, v], i) => segIndex.set(edgeKey(u, v), i));
+  treeEdges.forEach(([u, v], i) => segIndex.set(segmentKey(u, v), i));
 
   // 각 배선의 트리 경로를 훑어 지나가는 구간에 적립
   const climb = (a: string, b: string): string[] => {
@@ -598,12 +694,12 @@ export function buildPhysicalModel(doc: HarnessDocument): PhysicalModel {
       if (dx >= dy) {
         const p = parent.get(x);
         if (p === undefined) break;
-        up.push(edgeKey(x, p));
+        up.push(segmentKey(x, p));
         x = p;
       } else {
         const p = parent.get(y);
         if (p === undefined) break;
-        down.push(edgeKey(y, p));
+        down.push(segmentKey(y, p));
         y = p;
       }
     }
@@ -633,17 +729,28 @@ export function buildPhysicalModel(doc: HarnessDocument): PhysicalModel {
   const segments: Segment[] = treeEdges.map(([u, v], i) => {
     const wireIds = wireBuckets[i];
     const directIds = directBuckets[i];
+    const key = segmentKey(u, v);
 
-    // --- 실치수: 이 구간이 전 경로인 배선만 근거로 삼는다 ---
+    // --- 유도값: 이 구간이 전 경로인 배선만 근거로 삼는다 ---
     const directLens = directIds.map(lengthOfId);
     const known = directLens.filter((n): n is number => n != null);
-    let lengthMm: number | null = null;
+    let derivedMm: number | null = null;
     let lengthNote: SegmentLengthNote | null = null;
     if (!wireIds.length) lengthNote = 'none';
     else if (!directIds.length) lengthNote = 'through';
     else if (known.length < directIds.length) lengthNote = 'missing';
     else if (Math.min(...known) !== Math.max(...known)) lengthNote = 'mixed';
-    else lengthMm = known[0];
+    else derivedMm = known[0];
+
+    // --- 입력값이 유도값을 이긴다 ---
+    // 유도값은 "그 구간이 곧 전 경로인 배선"이 있을 때만 나온다. 분기가 있는
+    // 하네스에는 그런 배선이 없어 근거가 아예 없고, 그 자리를 메우라고 사람이
+    // 넣는 값이다. 다만 **덮어썼다는 사실을 감추지 않는다** — lengthSource 로
+    // 출처를 밝히고, 유도값도 derivedMm 에 그대로 남겨 검증이 대조하게 둔다.
+    const enteredMm = enteredLengthOf(doc, key);
+    const lengthMm = enteredMm ?? derivedMm;
+    const lengthSource: SegmentLengthSource | null =
+      enteredMm != null ? 'entered' : derivedMm != null ? 'derived' : null;
 
     // --- 참고값: 지나는 배선 전장의 범위 (치수가 아니다) ---
     const allLens = wireIds.map(lengthOfId).filter((n): n is number => n != null);
@@ -654,6 +761,7 @@ export function buildPhysicalModel(doc: HarnessDocument): PhysicalModel {
 
     return {
       code: `S${i + 1}`,
+      key,
       from: u,
       to: v,
       fromRef: refOf(u),
@@ -662,6 +770,8 @@ export function buildPhysicalModel(doc: HarnessDocument): PhysicalModel {
       directWireIds: directIds,
       count: wireIds.length,
       lengthMm,
+      lengthSource,
+      derivedMm,
       lengthNote,
       wireRangeMm: allLens.length ? [Math.min(...allLens), Math.max(...allLens)] : null,
       missingLength: wireIds.length - allLens.length,
@@ -689,10 +799,24 @@ export function buildPhysicalModel(doc: HarnessDocument): PhysicalModel {
   }
 
   // --- 전장 = 끝단↔끝단 최장 경로 ---
-  const spanEdges: SpanEdge[] = [...wireVerts].map(([wid, [a, b]]) => ({
-    a, b, wid, mm: lengthOfId(wid),
-  }));
-  const { run, note: spanNote } = endToEndSpan(spanEdges);
+  // ① 배선 기준. 전선 한 본 한 본의 실제 길이를 더한 것이라 근거가 가장 직접적이다.
+  const wireSpan = endToEndSpan(
+    [...wireVerts].map(([wid, [a, b]]) => ({ a, b, id: wid, mm: lengthOfId(wid) })),
+  );
+  // ② 구간 기준(대체). 배선만으로는 고리·미입력 때문에 확정할 수 없던 하네스도,
+  //    사람이 구간 길이를 넣어 두면 전장이 잡힌다. 구간 트리는 고리가 없고
+  //    모든 구간 길이가 확정됐을 때만 값이 나온다(하나라도 비면 endToEndSpan 이
+  //    'missing' 을 돌려준다) — 아는 것만 더해 실제보다 짧은 숫자를 내지 않는다.
+  //    ①이 성공하면 그것을 쓴다: 이미 확정된 근거를 입력값으로 뒤집지 않는다.
+  //    두 값이 어긋나면 조용히 고르는 대신 검증이 짚는다(segment-length-conflict).
+  const segSpan = wireSpan.run
+    ? null
+    : endToEndSpan(segments.map((s) => ({ a: s.from, b: s.to, id: s.code, mm: s.lengthMm })));
+  const run = wireSpan.run ?? segSpan?.run ?? null;
+  const basis: SpanBasis = wireSpan.run ? 'wire' : 'segment';
+  // 대체 계산도 실패했으면 이유는 **배선 기준의 이유**를 그대로 쓴다 —
+  // 사용자가 먼저 손볼 곳은 배선 길이·고리이지 구간 입력칸이 아니다.
+  const spanNote = run ? null : wireSpan.note;
   // 라벨은 도면과 같은 방향으로 읽혀야 한다(왼쪽 → 오른쪽 = 작도 순서).
   // 지름 탐색은 어느 끝에서 시작했느냐에 따라 방향이 뒤집히므로 여기서 맞춘다.
   const flip = run ? ordOf(run.to) < ordOf(run.from) : false;
@@ -701,7 +825,11 @@ export function buildPhysicalModel(doc: HarnessDocument): PhysicalModel {
         lengthMm: run.mm,
         fromRef: refOf(flip ? run.to : run.from),
         toRef: refOf(flip ? run.from : run.to),
-        wireCodes: (flip ? [...run.wires].reverse() : run.wires).map((id) => codes.get(id) ?? id),
+        pathCodes: (flip ? [...run.path].reverse() : run.path).map(
+          // 배선 기준일 때만 W 번호로 옮긴다. 구간 기준은 이미 S 코드다.
+          (id) => (basis === 'wire' ? (codes.get(id) ?? id) : id),
+        ),
+        basis,
       }
     : null;
 
@@ -735,6 +863,13 @@ export function buildPhysicalModel(doc: HarnessDocument): PhysicalModel {
  * 보호재(슬리브·테이프)는 문서에 데이터가 없으므로 여기 오지 않는다.
  * 집계 규칙은 파트리스트(export/exporters)와 같은 것을 쓴다 —
  * 물리 뷰가 따로 세면 발주 숫자가 화면마다 달라진다.
+ *
+ * ## 입력한 구간 길이는 여기 오지 않는다
+ * 발주하는 것은 **전선 길이**지 구간 길이가 아니다. 구간은 여러 전선이 함께 지나는
+ * 다발이라, 구간 길이를 자재에 더하면 같은 전선을 구간 수만큼 다시 세는 꼴이 된다
+ * (S1 6본 300mm + S2 4본 200mm 를 더하면 실제 사야 할 전선보다 훨씬 길다).
+ * 구간 길이는 **작업 지시용 치수**이고, 자재는 배선 하나하나의 재단 길이로만 낸다
+ * (`store/wireLength.ts`). 그래서 이 함수는 `doc.segmentLengths` 를 보지 않는다.
  */
 export function materialRows(doc: HarnessDocument): MaterialRow[] {
   const unit: Record<string, string> = { 커넥터: 'ea', 터미널: 'ea', 와이어: '본', 케이블: 'ea' };

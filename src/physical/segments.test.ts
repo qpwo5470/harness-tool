@@ -16,7 +16,8 @@ import type {
   Connector, Device, Endpoint, HarnessDocument, PartLibraryItem, Wire,
 } from '../types';
 import {
-  buildPhysicalModel, bundleDiameterMm, materialRows, wireDiameterMm,
+  buildPhysicalModel, bundleDiameterMm, materialRows, segmentKey, segmentKeyRefs,
+  wireDiameterMm,
 } from './segments';
 
 // ---------------- 픽스처 헬퍼 ----------------
@@ -317,6 +318,122 @@ describe('구간 실치수', () => {
 });
 
 // ================================================================
+// ①-2 사람이 입력한 구간 길이
+//
+// 분기가 있는 하네스는 그 구간이 곧 전 경로인 배선이 없어 유도할 근거가 아예 없다
+// (위 'through' 시험). 그 자리를 메우는 것이 입력값이다.
+// ================================================================
+
+describe('구간 길이 직접 입력', () => {
+  /** 문서에서 i 번째 구간의 저장 키 */
+  const keyOf = (doc: HarnessDocument, i = 0) => buildPhysicalModel(doc).segments[i].key;
+  const withLen = (doc: HarnessDocument, lens: Record<string, number>): HarnessDocument =>
+    ({ ...doc, segmentLengths: lens });
+
+  it('키는 작도 순서가 아니라 정점 id 로 만든다', () => {
+    const m = buildPhysicalModel(branchedDoc());
+    // 코드(S1·B1)는 배선이 한 본만 늘어도 통째로 밀린다 — 키에 들어가면 안 된다
+    const toD1 = m.segments.find((s) => s.toRef === 'D1')!;
+    expect(toD1.key).toBe('con:SP1|dev:D1');
+    expect(m.segments[0].key).toBe(segmentKey('con:J1', 'vb:con:J1'));
+    // 어느 쪽에서 부르든 한 키다
+    expect(segmentKey('dev:D1', 'con:SP1')).toBe(toD1.key);
+  });
+
+  it('배선이 늘어 구간 번호가 밀려도 입력값은 같은 구간에 붙어 있다', () => {
+    const doc = branchedDoc();
+    const toD1 = buildPhysicalModel(doc).segments.find((s) => s.toRef === 'D1')!;
+    const grown = withLen(
+      { ...doc, wires: [w('w0', pin('J1', 1), pin('J3', 4), 150), ...doc.wires] },
+      { [toD1.key]: 90 },
+    );
+    const after = buildPhysicalModel(grown).segments.find((s) => s.key === toD1.key)!;
+    expect(after.toRef).toBe('D1');
+    expect(after.lengthMm).toBe(90);
+    expect(after.lengthSource).toBe('entered');
+  });
+
+  it('입력값이 유도값을 이긴다 — 다만 유도값도 그대로 남는다', () => {
+    const base = simpleDoc(3, 250);
+    const m = buildPhysicalModel(withLen(base, { [keyOf(base)]: 300 }));
+    const [s] = m.segments;
+    expect(s.lengthMm).toBe(300);
+    expect(s.lengthSource).toBe('entered');
+    // 유도값을 지워 버리면 두 값이 어긋난다는 사실을 아무도 알 수 없다
+    expect(s.derivedMm).toBe(250);
+    expect(s.lengthNote).toBeNull();
+  });
+
+  it('유도할 근거가 없던 구간도 입력하면 치수가 잡힌다 — 사유는 남는다', () => {
+    const doc = branchedDoc();      // 전 구간 through (실치수 근거 없음)
+    const key = keyOf(doc);
+    const s = buildPhysicalModel(withLen(doc, { [key]: 180 })).segments[0];
+    expect(s.lengthMm).toBe(180);
+    expect(s.lengthSource).toBe('entered');
+    expect(s.derivedMm).toBeNull();
+    expect(s.lengthNote).toBe('through');   // 왜 유도가 안 됐는지는 계속 밝힌다
+  });
+
+  it('값을 지우면 유도값으로 되돌아간다', () => {
+    const base = simpleDoc(3, 250);
+    const key = keyOf(base);
+    const gone = buildPhysicalModel(withLen(base, {}));
+    expect(gone.segments[0].lengthMm).toBe(250);
+    expect(gone.segments[0].lengthSource).toBe('derived');
+    // 유도값조차 없던 구간은 다시 미상으로 돌아간다
+    const noBasis = branchedDoc();
+    const put = buildPhysicalModel(withLen(noBasis, { [keyOf(noBasis)]: 180 }));
+    expect(put.segments[0].lengthMm).toBe(180);
+    const back = buildPhysicalModel({ ...noBasis, segmentLengths: {} });
+    expect(back.segments[0].lengthMm).toBeNull();
+    expect(back.segments[0].lengthSource).toBeNull();
+    expect(back.segments[0].lengthNote).toBe('through');
+    expect(key).toBe(keyOf(base));   // 키는 계산 때마다 같아야 한다
+  });
+
+  it('숫자가 아니거나 0 이하인 값은 없는 것으로 본다 — 0mm 치수는 만들 수 없다', () => {
+    const base = simpleDoc(3, 250);
+    const key = keyOf(base);
+    for (const bad of [0, -100, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const m = buildPhysicalModel(withLen(base, { [key]: bad }));
+      expect(m.segments[0].lengthMm).toBe(250);
+      expect(m.segments[0].lengthSource).toBe('derived');
+    }
+  });
+
+  it('없는 구간을 가리키는 값은 어디에도 새어 나오지 않는다', () => {
+    const doc = withLen(simpleDoc(3, 250), { 'con:없음|dev:없음': 999 });
+    const m = buildPhysicalModel(doc);
+    expect(m.segments.map((s) => s.lengthMm)).toEqual([250]);
+  });
+
+  it('자재표는 구간 길이를 보지 않는다 — 발주하는 것은 전선이다', () => {
+    // 구간은 여러 전선이 함께 지나는 다발이라, 구간 길이를 자재에 더하면
+    // 같은 전선을 구간 수만큼 다시 세게 된다.
+    const doc = branchedDoc();
+    const before = materialRows(doc);
+    const after = materialRows(withLen(doc, { [buildPhysicalModel(doc).segments[0].key]: 5000 }));
+    expect(after).toEqual(before);
+  });
+});
+
+describe('구간 키 해석 (segmentKeyRefs)', () => {
+  it('키가 가리키는 문서 id 를 돌려준다', () => {
+    expect(segmentKeyRefs('con:J1|dev:D1')).toEqual(['J1', 'D1']);
+    // 정렬된 순서 그대로 돌려준다 (`con:J3` < `vb:con:J1`)
+    expect(segmentKeyRefs(segmentKey('vb:con:J1', 'con:J3'))).toEqual(['J3', 'J1']);
+  });
+
+  it('우리가 만든 적 없는 키는 거절한다', () => {
+    expect(segmentKeyRefs('con:J1')).toBeNull();            // 두 토막이 아니다
+    expect(segmentKeyRefs('J1|J3')).toBeNull();             // 정점 형식이 아니다
+    expect(segmentKeyRefs('con:J3|con:J1')).toBeNull();     // 정렬 규칙을 어겼다
+    expect(segmentKeyRefs('con:a|con:b|con:c')).toBeNull();
+    expect(segmentKeyRefs('')).toBeNull();
+  });
+});
+
+// ================================================================
 // ② 전장
 // ================================================================
 
@@ -338,7 +455,9 @@ describe('전장 (끝단 ↔ 끝단)', () => {
     );
     const m = buildPhysicalModel(doc);
     expect(m.span).toMatchObject({ lengthMm: 1000, fromRef: 'J1', toRef: 'J2' });
-    expect(m.span!.wireCodes).toEqual(['W1', 'W2']);
+    // 배선 길이를 그대로 더한 값이므로 근거도 배선 코드로 적는다
+    expect(m.span!.basis).toBe('wire');
+    expect(m.span!.pathCodes).toEqual(['W1', 'W2']);
     // 최장 배선은 여전히 500 — 다만 그것을 '전장'이라 부르지 않는다
     expect(m.longest).toMatchObject({ code: 'W1', lengthMm: 500 });
   });
@@ -355,6 +474,54 @@ describe('전장 (끝단 ↔ 끝단)', () => {
     expect(m.span).toBeNull();
     expect(m.spanNote).toBe('cycle');
     expect(m.longest).toMatchObject({ code: 'W8', lengthMm: 380 });
+  });
+
+  /**
+   * 배선만으로는 고리 때문에 전장을 낼 수 없던 하네스다(바로 위 시험).
+   * 사람이 구간 길이를 채워 넣으면 도면상의 다발 길이가 전부 정해지므로
+   * 전장이 잡힌다 — 다만 **무엇을 더한 값인지**(basis) 밝힌다.
+   */
+  it('구간 길이를 입력하면 예전엔 미확정이던 전장이 확정된다', () => {
+    const doc = branchedDoc();
+    const keys = buildPhysicalModel(doc).segments.map((s) => s.key);
+    // S1..S4 만 넣는다. S5(SP1→D1)는 W3 260mm 가 통째로 지나 이미 유도값이 있다 —
+    // 입력값과 유도값이 한 도면에서 같이 쓰인다.
+    const lens: Record<string, number> = { [keys[0]]: 100, [keys[1]]: 50, [keys[2]]: 200, [keys[3]]: 300 };
+    const m = buildPhysicalModel({ ...doc, segmentLengths: lens });
+    // J3 —S4— B1 —S2— B2 —S5— D1 = 300 + 50 + 260 (J2↔J3 는 500 으로 더 짧다)
+    expect(m.span).toMatchObject({ lengthMm: 610, fromRef: 'J3', toRef: 'D1', basis: 'segment' });
+    expect([...m.span!.pathCodes].sort()).toEqual(['S2', 'S4', 'S5']);
+    expect(m.spanNote).toBeNull();
+  });
+
+  it('구간 하나라도 길이가 비면 전장을 만들지 않는다 — 이유는 배선 쪽을 그대로 쓴다', () => {
+    const doc = branchedDoc();
+    const keys = buildPhysicalModel(doc).segments.map((s) => s.key);
+    const m = buildPhysicalModel({
+      ...doc,
+      // S4(B1→J3)를 비워 둔다 — 아는 것만 더하면 실제보다 짧은 값이 나온다
+      segmentLengths: { [keys[0]]: 100, [keys[1]]: 50, [keys[2]]: 200 },
+    });
+    expect(m.span).toBeNull();
+    expect(m.spanNote).toBe('cycle');
+  });
+
+  it('배선으로 전장이 확정되면 그 근거를 쓴다 — 구간 입력값이 뒤집지 않는다', () => {
+    // 배선 기준(500+500=1,000)이 서면 그것을 쓴다. 입력값과 어긋나는지는
+    // 검증(segment-length-conflict)이 짚는다 — 여기서 조용히 고르지 않는다.
+    const doc = makeDoc(
+      [housing('h6', 'MDB 6P', 6), spliceItem, housing('h4', 'SMH250 4P', 4)],
+      [conn('J1', 'h6', 6), splice('SP1', 2), conn('J2', 'h4', 4)],
+      [],
+      [
+        w('w1', pin('J1', 1), pin('SP1', 1), 500),
+        w('w2', pin('SP1', 2), pin('J2', 1), 500),
+      ],
+    );
+    const keys = buildPhysicalModel(doc).segments.map((s) => s.key);
+    const m = buildPhysicalModel({ ...doc, segmentLengths: { [keys[0]]: 900 } });
+    expect(m.span).toMatchObject({ lengthMm: 1000, basis: 'wire' });
+    expect(m.span!.pathCodes).toEqual(['W1', 'W2']);
   });
 
   it('경로에 길이 미입력이 섞이면 전장을 만들지 않는다 — 짧게 나오면 제일 나쁘다', () => {

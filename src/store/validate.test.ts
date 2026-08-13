@@ -9,6 +9,7 @@ import type { HarnessDocument, PartLibraryItem, Wire } from '../types';
 import { validateHarness } from './validate';
 import { statsOf } from './kit';
 import { sampleDoc } from '../fixtures/sampleDoc';
+import { buildPhysicalModel } from '../physical/segments';
 
 // ================================================================
 // 픽스처 — 문제 없는 하네스 하나
@@ -497,6 +498,71 @@ describe('11. 하우징 스냅샷 없음', () => {
     doc.usedParts = doc.usedParts.filter((p) => p.id !== 'h4');
     doc.connectors[0].pins[0].index = 99;
     expect(only(doc, 'pin-overflow')).toHaveLength(0);
+  });
+});
+
+// ================================================================
+// 15·16. 사람이 입력한 구간 길이
+//
+// 구간은 배선에서 유도되고, 그 길이는 대부분 유도할 근거가 없어 사람이 넣는다.
+// 근거가 **있는데도** 다른 값이 들어와 있으면 둘 중 하나는 틀렸다 —
+// 조용히 덮지 않고 알린다. 자동으로 고치지 않는다.
+// ================================================================
+
+describe('15. 구간 길이 불일치', () => {
+  /** CLEAN 은 c1 ↔ c2 직결 200mm 두 본 = 구간 하나 (유도값 200) */
+  const soleKey = () => buildPhysicalModel(clean()).segments[0].key;
+
+  it('입력값이 배선에서 나온 값과 다르면 warn 이고 두 숫자를 다 보여 준다', () => {
+    const doc = clean();
+    doc.segmentLengths = { [soleKey()]: 260 };
+    const found = only(doc, 'segment-length-conflict');
+    expect(found).toHaveLength(1);
+    expect(found[0].level).toBe('warn');
+    expect(found[0].title).toContain('260mm');
+    expect(found[0].title).toContain('200mm');
+    expect(found[0].where).toContain('S1');
+    // 클릭하면 근거가 된 배선으로 데려간다
+    expect(found[0].targetId).toBe('w1');
+    expect(found[0].detail).toContain('W1');
+  });
+
+  it('같은 값이면 지적하지 않는다', () => {
+    const doc = clean();
+    doc.segmentLengths = { [soleKey()]: 200 };
+    expect(validateHarness(doc)).toEqual([]);
+  });
+
+  it('유도할 근거가 없는 구간은 지적하지 않는다 — 그러라고 넣는 값이다', () => {
+    const doc = clean();
+    // 배선마다 길이를 달리하면 유도값이 없어진다(mixed)
+    doc.wires[1].lengthMm = 300;
+    doc.segmentLengths = { [soleKey()]: 1000 };
+    expect(only(doc, 'segment-length-conflict')).toHaveLength(0);
+  });
+
+  it('입력값이 없는 문서는 구간 산출을 돌리지 않고 조용하다', () => {
+    expect(only(clean(), 'segment-length-conflict')).toHaveLength(0);
+    expect(only({ ...clean(), segmentLengths: {} }, 'segment-length-conflict')).toHaveLength(0);
+  });
+});
+
+describe('16. 쓰이지 않는 구간 길이', () => {
+  it('구간이 사라져 어디에도 붙지 않는 값이 있으면 info 로 알린다', () => {
+    const doc = clean();
+    // 배선을 다 지우면 구간도 사라진다 — 넣어 둔 길이는 파일에만 남는다
+    doc.segmentLengths = { 'con:c1|con:c2': 200, 'con:c1|con:c9': 300 };
+    doc.wires = [];
+    const found = only(doc, 'segment-length-orphan');
+    expect(found).toHaveLength(1);
+    expect(found[0].level).toBe('info');
+    expect(found[0].title).toContain('2건');
+  });
+
+  it('멀쩡히 쓰이는 값에는 아무 말도 하지 않는다', () => {
+    const doc = clean();
+    doc.segmentLengths = { [buildPhysicalModel(clean()).segments[0].key]: 200 };
+    expect(only(doc, 'segment-length-orphan')).toHaveLength(0);
   });
 });
 

@@ -343,6 +343,31 @@
   font-weight: 400;
   color: var(--muted);
 }
+/* 입력값 표시 — 강조는 스틸(--accent). 빨강은 전선 색이라 UI 강조에 쓰지 않는다 */
+.pv-lennote.is-in { color: var(--accent-dark); font-weight: 600; }
+.pv-lennote.is-in b { font-weight: 600; color: var(--muted); }
+
+/* 길이 직접 입력칸 — 표 안에 들어가므로 테두리를 눕히고 폭을 숫자에 맞춘다 */
+.pv-leninput {
+  width: 58px;
+  height: var(--h-control-sm);
+  padding: 0 4px;
+  font: inherit;
+  font-family: var(--font-num);
+  font-size: var(--fs-table);
+  font-weight: 600;
+  text-align: right;
+  color: var(--text);
+  background: var(--bg-canvas);
+  border: 1px solid var(--line-mid);
+  border-radius: var(--radius);
+}
+.pv-leninput:focus { outline: none; border-color: var(--accent); background: var(--bg-panel); }
+/* 유도값은 흐린 글씨로 비쳐 둔다 — 도면에 그려진 숫자이되 이 칸은 비어 있다 */
+.pv-leninput::placeholder { color: var(--text-3); font-weight: 400; }
+.pv-leninput.is-in { border-color: var(--accent); }
+.pv-lenunit { margin-left: 3px; font-size: var(--fs-sub); color: var(--text-3); }
+
 .pv-none { padding: 10px 8px; color: var(--muted); font-size: var(--fs-sub); }
 /* 구간표 밑의 근거 설명 */
 .pv-scroll > .pv-note { padding: 6px 8px; line-height: 1.45; }
