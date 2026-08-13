@@ -122,12 +122,32 @@ describe('논리 뷰 하우징 심볼 (핀 패드 격자)', () => {
   const pads = (o: 0 | 90 | 180 | 270) =>
     [...renderNode(o, 'logical').container.querySelectorAll('.hz-pad')] as HTMLElement[];
 
-  it('핀이 하우징 pinLayout 격자 좌표대로 놓인다', () => {
-    // 4P 1행 → x 만 30px 피치로 벌어지고 y 는 모두 같다
+  /**
+   * 예전에는 이 시험이 0°(왼쪽으로 나감)에서도 패드가 **가로로** 늘어서는 걸
+   * 못박고 있었다(left 6/36/66/96 · top 한 종류). 그 그림이 바로 결함이었다:
+   * 나가는 변(왼쪽)이 38px 밖에 안 되니 핸들 4개가 9.5px, 10P 면 3.8px 간격으로
+   * 뭉갠다. 지금은 나가는 변에 핀이 줄지어 서도록 격자를 세워 그린다
+   * (canvas/geometry.ts 의 drawGrid) — 그래서 0° 는 세로, 90° 는 가로가 맞다.
+   */
+  it('배선이 좌우로 나가면(0°) 핀이 세로 열로 선다', () => {
     const ps = pads(0);
+    expect(ps).toHaveLength(4);
+    expect(ps.map((p) => p.style.top)).toEqual(['6px', '36px', '66px', '96px']);
+    expect(new Set(ps.map((p) => p.style.left)).size).toBe(1);
+  });
+
+  it('배선이 위아래로 나가면(90°) 핀이 가로 행으로 선다', () => {
+    const ps = pads(90);
     expect(ps).toHaveLength(4);
     expect(ps.map((p) => p.style.left)).toEqual(['6px', '36px', '66px', '96px']);
     expect(new Set(ps.map((p) => p.style.top)).size).toBe(1);
+  });
+
+  it('0° 4P 의 핸들이 PITCH(30px) 간격으로 벌어진다 (예전엔 9.5px)', () => {
+    const tops = [...renderNode(0, 'logical').container.querySelectorAll('.react-flow__handle')]
+      .map((h) => parseFloat((h as HTMLElement).style.top));
+    const uniq = [...new Set(tops)].sort((a, b) => a - b);
+    expect(uniq).toEqual([19, 49, 79, 109]);   // INSET+PAD/2 부터 30px 씩
   });
 
   it('신호가 배정된 핀과 미배정 핀이 구분된다', () => {
@@ -290,9 +310,11 @@ describe('배선 시작점 — 도형 변에서 시작하는가', () => {
     );
     const handles = [...container.querySelectorAll('.react-flow__handle')] as HTMLElement[];
     /**
-     * 2행 2열이 왼쪽으로 나가면 같은 행의 두 핀이 같은 높이가 된다.
-     * 행에 맞춰 놓으면 도면상 정직하지만 두 핀이 한 점에 겹쳐 고를 수가 없다.
-     * 고를 수 있는 쪽이 우선이므로 4핀 모두 다른 높이에 편다.
+     * 2행 2열은 어느 쪽으로 세워도 한 자리에 두 핀이 겹친다(깊이 2).
+     * 행에 맞춰 그대로 놓으면 도면상 정직하지만 두 핀이 한 점에 포개져 고를 수가
+     * 없다 — 실제로 왼쪽 끝을 끌었더니 엉뚱한 핀이 잡혔다. 그래서 겹치는 핀은
+     * 제 패드 폭(PAD) 안에서 안쪽 순서만큼 나눠 앉힌다(geometry.connectorLayout).
+     * 자리(30px 격자)는 지키면서 4핀 모두 다른 높이가 된다.
      */
     expect(new Set(handles.map((h) => h.style.top)).size).toBe(4);
   });

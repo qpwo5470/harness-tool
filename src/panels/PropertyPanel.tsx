@@ -195,6 +195,11 @@ function wireCodes(doc: HarnessDocument): Map<string, string> {
  * 격자 해석은 캔버스와 **같은 함수**(geometry.layoutCells)로 한다 — 여기서
  * 따로 `s.offset.x` 를 읽던 시절에는 좌표가 없는 슬롯 하나에 속성 패널이 통째로
  * 터졌다. 8열로 접는 규칙만 이 패널 고유의 표시 규칙이라 남긴다.
+ *
+ * 이 그림은 **부품 정의 기준**(회전 전)이다 — 핀맵 에디터와 같은 좌표계이고,
+ * 핀 번호로 터미널을 지정하는 자리라 방향과 무관해야 한다. 캔버스 심볼은
+ * 방향에 맞춰 세워 그리므로(geometry.drawGrid) 0°/180° 에서는 이 그림과 행·열이
+ * 바뀐 모습으로 보인다. 패드에 찍힌 **핀 번호가 같은 것을 가리킨다**.
  */
 function gridOf(housing: PartLibraryItem | undefined, pinCount: number) {
   const layout = layoutCells(housing?.pinLayout);

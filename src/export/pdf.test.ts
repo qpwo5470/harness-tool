@@ -316,14 +316,21 @@ describe('pdfDraw 순수 함수', () => {
     expect(dr.nodes).toHaveLength(4);
     expect(dr.wires).toHaveLength(sampleDoc.wires.length);
 
-    // JST XH 4P: 4열 1행 → 폭 = 4*30 + 12 - 4 = 128, 높이 = 30 + 8 = 38
+    /**
+     * JST XH 4P(정의 4열 1행)를 0°(배선이 왼쪽으로) 로 놓은 커넥터다.
+     * 화면과 마찬가지로 **나가는 변에 핀이 줄지어 서도록** 세워 그리므로
+     * 폭 = 1*30+8 = 38, 높이 = 4*30+12-4 = 128 이다(예전 128×38 의 전치).
+     * 예전 값은 핸들 4개를 38px 변에 9.5px 간격으로 몰아넣던 그림이었다 —
+     * 10P·20P 로 가면 3.8px·1.9px 가 되어 못 쓴다. geometry.drawGrid 참고.
+     */
     const j1 = dr.nodes.find((n) => n.id === 'con-a')!;
     expect(j1.ref).toBe('J1');
-    expect(j1.box.w).toBe(128);
-    expect(j1.box.h).toBe(38);
+    expect(j1.box.w).toBe(38);
+    expect(j1.box.h).toBe(128);
     expect(j1.pads).toHaveLength(4);
-    // 패드 피치 30 유지
-    expect(j1.pads[1].x - j1.pads[0].x).toBe(30);
+    // 패드 피치 30 유지 (세로로 섰으므로 y 로 벌어진다)
+    expect(j1.pads[1].y - j1.pads[0].y).toBe(30);
+    expect(j1.pads[1].x - j1.pads[0].x).toBe(0);
 
     // 스플라이스는 SP1 이고 장치는 점선 테두리
     expect(dr.nodes.find((n) => n.id === 'sp-1')!.ref).toBe('SP1');

@@ -10,10 +10,10 @@
 import { describe, it, expect } from 'vitest';
 import {
   INSET, PAD, PITCH,
-  connectorLayout, gridOf, housingSize, layoutCells, partHousingSize, pinAnchor,
+  connectorLayout, drawGrid, gridOf, housingSize, layoutCells, partHousingSize, pinAnchor,
 } from './geometry';
 import { instantiate } from '../library/seed';
-import type { Connector, PartLibraryItem, PinSlot } from '../types';
+import type { Connector, Orientation, PartLibraryItem, PinSlot } from '../types';
 
 /** cols×rows 행 우선 배치 (핀맵 에디터가 만드는 모양) */
 function grid(cols: number, rows: number, total = cols * rows): PinSlot[] {
@@ -24,6 +24,8 @@ function grid(cols: number, rows: number, total = cols * rows): PinSlot[] {
   }));
 }
 
+const DIRS: Orientation[] = [0, 90, 180, 270];
+
 const housing = (pinLayout: PinSlot[], over: Partial<PartLibraryItem> = {}): PartLibraryItem => ({
   id: 'custom-h', category: 'housing', name: '시험 하우징',
   pinCount: pinLayout.length, pinLayout, ...over,
@@ -32,6 +34,15 @@ const housing = (pinLayout: PinSlot[], over: Partial<PartLibraryItem> = {}): Par
 const place = (part: PartLibraryItem): Connector => instantiate(part, { x: 0, y: 0 });
 
 describe('핀맵 정의가 하우징 심볼로 그대로 나온다', () => {
+  /**
+   * `instantiate` 는 커넥터를 0°(배선이 왼쪽으로) 로 만든다. 나가는 변이 **세로**라
+   * 긴 축을 그 변에 붙여 세워 그린다(geometry.drawGrid) — 그래서 정의가 가로로 긴
+   * 격자(5×1, 3×2)면 그리는 격자는 전치돼 세로로 길어진다.
+   *
+   * 예전 이 시험은 `[g.cols, g.rows] === [정의 열, 정의 행]` 을 못박고 있었는데,
+   * 그건 "그리는 격자 = 정의 격자" 라는 낡은 전제였다. 그 전제 때문에 1행 N핀
+   * 커넥터의 핸들 N 개가 38px 변에 뭉갰다. 정의는 `defCols/defRows` 로 따로 잰다.
+   */
   it.each([
     ['1핀', 1, 1],
     ['홀수 5핀 1열', 5, 1],
@@ -42,13 +53,19 @@ describe('핀맵 정의가 하우징 심볼로 그대로 나온다', () => {
     const part = housing(grid(cols, rows));
     const c = place(part);
     const g = connectorLayout(c, part);
+    // 0° 이므로 긴 축이 세로로 선다
+    const drawn = drawGrid(cols, rows, 0);
 
     expect(c.pins).toHaveLength(cols * rows);
-    expect([g.cols, g.rows]).toEqual([cols, rows]);
-    expect({ w: g.boxW, h: g.boxH }).toEqual(housingSize(cols, rows));
-    // 패드는 격자 칸 좌표 그대로 — 도면에 정의한 자리에 찍힌다
+    expect([g.defCols, g.defRows]).toEqual([cols, rows]);            // 정의는 그대로
+    expect([g.cols, g.rows]).toEqual([drawn.cols, drawn.rows]);      // 그림만 세운다
+    expect(g.cols).toBeLessThanOrEqual(g.rows);                      // 0° → 세로가 길다
+    expect({ w: g.boxW, h: g.boxH }).toEqual(housingSize(drawn.cols, drawn.rows));
+    // 1번 핀은 언제나 좌상단 — 등록 마크가 "1번 핀 위치"를 가리키기 때문
     expect(g.cellOf(1)).toEqual({ x: 0, y: 0 });
-    expect(g.cellOf(cols * rows)).toEqual({ x: cols - 1, y: rows - 1 });
+    expect(g.defCellOf(1)).toEqual({ x: 0, y: 0 });
+    expect(g.defCellOf(cols * rows)).toEqual({ x: cols - 1, y: rows - 1 });
+    expect(g.cellOf(cols * rows)).toEqual({ x: drawn.cols - 1, y: drawn.rows - 1 });
     // 모든 패드가 박스 안에 들어간다
     for (const p of c.pins) {
       const cell = g.cellOf(p.index);
@@ -58,9 +75,11 @@ describe('핀맵 정의가 하우징 심볼로 그대로 나온다', () => {
   });
 
   it('홀수 핀이 2열에 들어가면 마지막 줄이 덜 찬 채로 그려진다 (5핀 2열 3행)', () => {
+    // 정의 2열 3행 · 0° — 이미 세로가 길어 전치하지 않는다(그림이 예전과 같다)
     const part = housing(grid(2, 3, 5));
     const g = connectorLayout(place(part), part);
     expect([g.cols, g.rows]).toEqual([2, 3]);
+    expect(g.transposed).toBe(false);
     expect(g.cellOf(5)).toEqual({ x: 0, y: 2 });
   });
 
@@ -71,8 +90,12 @@ describe('핀맵 정의가 하우징 심볼로 그대로 나온다', () => {
     const c = place(part);
     const g = connectorLayout(c, part);
     expect(c.pins).toHaveLength(5);
-    expect([g.cols, g.rows]).toEqual([5, 1]);
-    expect(partHousingSize(part)).toEqual(housingSize(5, 1));
+    expect([g.defCols, g.defRows]).toEqual([5, 1]);
+    // 0°(왼쪽으로 나감) 이므로 5핀이 세로 한 줄로 선다.
+    // 드롭 보정(partHousingSize)도 같은 크기를 내야 커서가 부품 가운데에 온다.
+    expect([g.cols, g.rows]).toEqual([1, 5]);
+    expect(partHousingSize(part)).toEqual(housingSize(1, 5));
+    expect(partHousingSize(part, 90)).toEqual(housingSize(5, 1));
   });
 });
 
@@ -123,6 +146,133 @@ describe('방향을 바꾸면 핸들과 배선 앵커가 함께 따라온다', (
   });
 });
 
+/* ============================================================
+   격자를 방향에 맞춰 세운다 — 실제 밀도 도면에서 잡은 결함
+   ------------------------------------------------------------
+   20본(10P·8P·6P + 스플라이스) 도면을 그려 보고 찾았다.
+   1행 N핀 커넥터를 좌우(0°/180°)로 두면 예전 구현은 핸들 N 개를 하우징의 **짧은
+   변**(1행 = 38px)에 균등 분배했다: 10P 는 3.8px, 20P 는 1.9px 간격. 화면에서
+   배선 10본이 한 점에서 나오는 것처럼 붙어 어느 핀인지 구분할 수 없었다.
+   레인 분리를 아무리 잘 해도 시작점이 뭉개져 있으면 소용이 없다.
+   ============================================================ */
+describe('배선이 나가는 변에 핀이 줄지어 선다', () => {
+  /** 핀 번호 → 하우징 박스 좌상단 기준 핸들 좌표 */
+  const handles = (part: PartLibraryItem, o: Orientation) => {
+    const c: Connector = { ...place(part), orientation: o };
+    const g = connectorLayout(c, part);
+    return { g, list: c.pins.map((p) => ({ index: p.index, at: g.handleOffset(p.index) })) };
+  };
+
+  /** 나가는 변을 따라간 좌표만 뽑아 오름차순으로 */
+  const alongSorted = (part: PartLibraryItem, o: Orientation) => {
+    const { g, list } = handles(part, o);
+    const v = list.map(({ at }) => (o === 0 || o === 180 ? at.y : at.x));
+    return { g, v: [...v].sort((a, b) => a - b) };
+  };
+
+  const gaps = (v: number[]) => v.slice(1).map((x, i) => x - v[i]);
+
+  it.each(DIRS)(
+    '1행 10P — %s° 에서 핸들 간격이 전부 PITCH(30px) 다 (예전 0°/180° 는 3.8px)',
+    (o) => {
+      const part = housing(grid(10, 1));
+      const { g, v } = alongSorted(part, o);
+
+      expect(v).toHaveLength(10);
+      // 첫 핸들은 첫 패드 가운데(INSET + PAD/2 = 19px), 그다음부터 정확히 30px 씩
+      expect(v[0]).toBeCloseTo(INSET + PAD / 2, 9);
+      for (const d of gaps(v)) expect(d).toBeCloseTo(PITCH, 9);
+
+      // 나가는 변의 길이가 핀 수에 비례한다 = 뭉갤 자리가 없다
+      const edge = o === 0 || o === 180 ? g.boxH : g.boxW;
+      expect(edge).toBe(housingSize(10, 1).w);   // 10칸 변 = 308px
+      expect(o === 0 || o === 180 ? g.boxW : g.boxH).toBe(housingSize(1, 1).w); // 반대 변 = 38px
+    },
+  );
+
+  it('1행 20P 도 마찬가지다 (밀도를 두 배로 올려도 식이 버틴다)', () => {
+    for (const o of DIRS) {
+      const { v } = alongSorted(housing(grid(20, 1)), o);
+      expect(v).toHaveLength(20);
+      for (const d of gaps(v)) expect(d, `${o}°`).toBeCloseTo(PITCH, 9);
+    }
+  });
+
+  it.each(DIRS)('2×5 격자 — %s° 에서 행·열이 바뀌어도 자리 수는 5, 깊이는 2', (o) => {
+    // 정의: 2열 5행(2×5 몰렉스). 세운 뒤에도 "긴 축 5" 가 나가는 변에 붙는다.
+    const part = housing(grid(2, 5));
+    const { g, v } = alongSorted(part, o);
+    const edgeVertical = o === 0 || o === 180;
+
+    expect([g.defCols, g.defRows]).toEqual([2, 5]);
+    expect(edgeVertical ? g.rows : g.cols).toBe(5);   // 변을 따라 5자리
+    expect(edgeVertical ? g.cols : g.rows).toBe(2);   // 안쪽으로 2줄
+
+    // 한 자리에 2핀이 겹치므로 간격은 (PAD 안 반칸, 다음 칸) 이 번갈아 나온다.
+    // 두 핀이 **같은 자리**에 오지 않는다는 것이 요점이다.
+    expect(new Set(v.map((x) => Math.round(x * 100))).size).toBe(10);
+    expect(Math.min(...gaps(v))).toBeGreaterThan(0);
+    // 같은 rank 끼리는 정확히 PITCH — 자리 자체는 30px 격자를 지킨다
+    const rank0 = v.filter((_, i) => i % 2 === 0);
+    for (const d of gaps(rank0)) expect(d).toBeCloseTo(PITCH, 9);
+  });
+
+  it.each(DIRS)('5×2 격자도 같은 그림이 된다 — %s° (정의를 어느 축으로 적었든)', (o) => {
+    const a = connectorLayout({ ...place(housing(grid(2, 5))), orientation: o }, housing(grid(2, 5)));
+    const b = connectorLayout({ ...place(housing(grid(5, 2))), orientation: o }, housing(grid(5, 2)));
+    expect([a.cols, a.rows]).toEqual([b.cols, b.rows]);
+    expect({ w: a.boxW, h: a.boxH }).toEqual({ w: b.boxW, h: b.boxH });
+  });
+
+  it('회전해도 핀 index → 핸들 좌표가 1:1 이다 (두 핀이 한 자리에 겹치지 않는다)', () => {
+    const parts: [string, PartLibraryItem][] = [
+      ['1행 10P', housing(grid(10, 1))],
+      ['1열 10P', housing(grid(1, 10))],
+      ['2×5', housing(grid(2, 5))],
+      ['5×2', housing(grid(5, 2))],
+      ['3×3', housing(grid(3, 3))],
+      ['홀수 7P 1행', housing(grid(7, 1))],
+    ];
+    for (const [name, part] of parts) {
+      for (const o of DIRS) {
+        const { g, list } = handles(part, o);
+        const keys = list.map(({ at }) => `${at.x.toFixed(4)},${at.y.toFixed(4)}`);
+        expect(new Set(keys).size, `${name} ${o}°`).toBe(list.length);
+
+        // 패드도 겹치지 않는다 (그리는 격자에서도 1:1)
+        const cells = list.map(({ index }) => {
+          const c = g.cellOf(index);
+          return `${c.x},${c.y}`;
+        });
+        expect(new Set(cells).size, `${name} ${o}° 패드`).toBe(list.length);
+
+        // 핸들은 언제나 나가는 변 위에 있고 박스를 벗어나지 않는다
+        for (const { at } of list) {
+          if (o === 0) expect(at.x).toBe(0);
+          if (o === 180) expect(at.x).toBe(g.boxW);
+          if (o === 90) expect(at.y).toBe(0);
+          if (o === 270) expect(at.y).toBe(g.boxH);
+          const a = o === 0 || o === 180 ? at.y : at.x;
+          expect(a).toBeGreaterThan(0);
+          expect(a).toBeLessThan(o === 0 || o === 180 ? g.boxH : g.boxW);
+        }
+      }
+    }
+  });
+
+  it('정의 격자(저장 데이터)는 방향을 바꿔도 그대로다', () => {
+    // types/index.ts 동결 계약 — offset 은 부품 정의 기준이다. 회전은 그릴 때만.
+    const part = housing(grid(10, 1));
+    const before = JSON.stringify(part.pinLayout);
+    for (const o of DIRS) {
+      const g = connectorLayout({ ...place(part), orientation: o }, part);
+      expect(g.defCellOf(1)).toEqual({ x: 0, y: 0 });
+      expect(g.defCellOf(10)).toEqual({ x: 9, y: 0 });
+    }
+    expect(JSON.stringify(part.pinLayout)).toBe(before);
+  });
+});
+
 describe('망가진 pinLayout 을 조용히 받아들이지 않는다', () => {
   it('offset 이 없는 슬롯이 있어도 터지지 않는다 (예전엔 TypeError 로 캔버스가 죽었다)', () => {
     const broken = [
@@ -165,7 +315,10 @@ describe('망가진 pinLayout 을 조용히 받아들이지 않는다', () => {
     expect(layoutCells(layout)).toBeUndefined();
     const part = housing(layout, { pinCount: 2 });
     const g = connectorLayout(place(part), part);
-    expect(g.rows).toBe(1);
+    // 정의(회전 전)가 1행이라는 뜻이다. 그리는 격자는 0°(왼쪽으로 나감)라
+    // 세로로 세워지므로 rows 가 2다 — 폴백이 먹었는지는 defRows 로 재야 한다.
+    expect(g.defRows).toBe(1);
+    expect([g.cols, g.rows]).toEqual([1, 2]);
   });
 
   it('pinCount 와 pinLayout 이 어긋나면 그릴 수 있는 배치를 따른다', () => {

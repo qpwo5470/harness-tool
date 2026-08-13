@@ -134,7 +134,16 @@ describe('핀맵 편집이 도면에 반영된다', () => {
   });
 });
 
-describe('핀맵에서 정의한 형상이 캔버스 하우징 심볼로 그대로 나온다', () => {
+/**
+ * `instantiate` 가 만드는 커넥터는 0°(배선이 왼쪽으로) 다. 캔버스는 나가는 변에
+ * 핀이 줄지어 서도록 격자를 세워 그리므로(canvas/geometry.ts 의 drawGrid),
+ * **가로로 긴 정의는 세로로 서서** 나온다. 칸 수·핀 순서·피치(30px)는 그대로다.
+ *
+ * 예전에는 정의 격자를 그대로 그려서, 1행 N핀 커넥터를 좌우로 놓으면 핸들 N 개가
+ * 38px 짜리 짧은 변에 뭉갰다(10P 3.8px · 20P 1.9px). 아래 좌표들은 그 결함을 고친
+ * 뒤의 값이다.
+ */
+describe('핀맵에서 정의한 형상이 캔버스 하우징 심볼로 나온다 (방향에 맞춰 세워서)', () => {
   /** 핀맵 에디터로 부품을 만들고, 그 정의로 그린 노드의 패드 좌표를 읽는다 */
   function definePartAndRender(steps: () => void) {
     const onSave = vi.fn();
@@ -194,15 +203,16 @@ describe('핀맵에서 정의한 형상이 캔버스 하우징 심볼로 그대�
     expect(box.style.height).toBe('38px');
   });
 
-  it('24핀(12열 2행)도 열 수만큼 넓어진다', () => {
+  it('24핀(12열 2행)은 0° 에서 2열 12행으로 서서 긴 쪽이 나가는 변이 된다', () => {
     const { part, pads, box } = definePartAndRender(() => {
       for (let i = 0; i < 8; i++) fireEvent.click(screen.getByLabelText('열 늘리기'));  // 4 → 12
       fireEvent.click(screen.getByLabelText('행 늘리기'));                              // 1 → 2
     });
     expect(part.pinCount).toBe(24);
     expect(pads).toHaveLength(24);
-    expect(box.style.width).toBe('368px');   // 12 × 30 + 12 − 4
-    expect(box.style.height).toBe('68px');
+    // 12칸이 세로(왼쪽 변)로 가고 2칸이 가로로 남는다 — 예전 368×68 의 전치
+    expect(box.style.width).toBe('68px');     // 2 × 30 + 12 − 4
+    expect(box.style.height).toBe('368px');   // 12 × 30 + 12 − 4
   });
 
   it('한글·긴 신호명을 넣어도 패드 수와 자리는 그대로다', () => {
@@ -216,9 +226,11 @@ describe('핀맵에서 정의한 형상이 캔버스 하우징 심볼로 그대�
 
     expect(pads).toHaveLength(4);
     expect(part.pinLayout![0].signal).toBe('무정전 +34V 전원 (마스터측)');
-    // 표기가 길어도 패드는 격자 자리를 지킨다 (넘치는 글자는 CSS 가 자른다)
-    expect(pads[0].style.left).toBe(`${INSET}px`);
-    expect(pads[1].style.left).toBe(`${INSET + PITCH}px`);
+    // 표기가 길어도 패드는 격자 자리를 지킨다 (넘치는 글자는 CSS 가 자른다).
+    // 4핀 1행 정의가 0° 에서 세로로 섰으므로 자리는 top 으로 벌어진다.
+    expect(pads[0].style.top).toBe(`${INSET}px`);
+    expect(pads[1].style.top).toBe(`${INSET + PITCH}px`);
+    expect(new Set(pads.map((p) => p.style.left)).size).toBe(1);
     expect(pads[0].textContent).toBe('A1-전원');
   });
 });

@@ -130,10 +130,14 @@ export function ConnectorNode({ data, selected }: NodeProps) {
    * 배선 계획(docToFlow)이 같은 식을 써야 레인 배정이 화면과 어긋나지 않기 때문이다.
    * 여기서 남은 일은 그 숫자를 CSS 로 옮기는 것뿐이다.
    *
-   * along 규칙에 얽힌 실제 버그(인수인계 8장):
-   * 배선이 나가는 변과 **평행한 축**에 핀이 몰려 있으면(예: 4핀 1행 커넥터가
-   * 왼쪽으로 나가는 경우) 패드 좌표를 그대로 쓰면 핸들 4개가 한 점에 겹친다.
-   * 실제로 왼쪽 끝에서 끌었는데 4번 핀이 잡혔다. → geometry.connectorLayout 참고.
+   * **패드 격자는 방향에 따라 세워져서 나온다**(geometry.drawGrid). 배선이 좌우로
+   * 나가면(0°/180°) 핀이 세로 열로 서고, 위아래로 나가면(90°/270°) 가로 행으로
+   * 선다 — 나가는 변에 핀이 줄지어 있어야 핸들이 PITCH 간격으로 벌어진다.
+   * 예전에는 1행 10P 를 왼쪽으로 두면 핸들 10개가 38px 변에 3.8px 간격으로 뭉쳐
+   * 어느 핀에서 나온 선인지 눈으로 구분할 수 없었다(20본 밀도 도면에서 확인).
+   *
+   * 그래서 `cell` 은 **그리는 격자** 좌표다. 저장된 pinLayout.offset(부품 정의
+   * 기준)이 필요하면 `geo.defCellOf` 를 써라.
    */
   const geo = connectorLayout(connector, housing);
   const { layout, boxW, boxH, side, orderedPins } = geo;

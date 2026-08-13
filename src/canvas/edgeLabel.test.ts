@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { docToEdges } from './docToFlow';
+import { assignLanes, docToEdges } from './docToFlow';
 import { sampleDoc } from '../fixtures/sampleDoc';
+import { fanoutDoc } from '../fixtures/fanoutDoc';
 
 type EdgeData = {
   spec: string; detail?: string; abbr: string;
@@ -50,13 +51,24 @@ describe('배선 라벨 표시 규칙', () => {
     expect(new Set(lanes).size).toBe(lanes.length);
   });
 
-  it('세로 간선 레인도 함께 실린다 (한 변에서 여러 가닥이 나갈 때 x 를 벌린다)', () => {
+  /**
+   * 예전에는 여기서 샘플 문서의 w2·w3(스플라이스 왼쪽 변에서 나가는 두 가닥)이
+   * **서로 다른** laneX 를 받는지 봤다. 그런데 그건 스플라이스 3핀의 핸들이
+   * 12.7px 간격으로 뭉쳐 있어서 세로 스텁이 실제로 겹쳤기 때문이다.
+   * 격자를 방향에 맞춰 세운 뒤(geometry.drawGrid) 그 핸들은 30px 씩 벌어져
+   * 스텁이 더는 겹치지 않는다 — 겹치지 않는 배선에 레인을 쓰면 부채꼴만
+   * 쓸데없이 넓어진다(colorRuns 머리말). 그래서 "언제나 다르다"가 아니라
+   * **겹칠 때 갈린다**를 잰다. 20본 팬아웃이 실제로 겹치는 배치다.
+   */
+  it('세로 간선 레인도 함께 실린다 (겹치는 가닥끼리 x 를 벌린다)', () => {
     const edges = docToEdges(sampleDoc);
     expect(edges.every((e) => typeof dataOf(e).laneX === 'number')).toBe(true);
-    // 스플라이스 왼쪽 변에서 두 가닥(w2·w3)이 나가므로 서로 달라야 한다
-    const w2 = dataOf(edges.find((e) => e.id === 'w2')!).laneX;
-    const w3 = dataOf(edges.find((e) => e.id === 'w3')!).laneX;
-    expect(w2).not.toBe(w3);
+
+    // 한 커넥터 한 변에서 10가닥이 나가 세로 스텁이 서로 겹치는 배치
+    const lanes = assignLanes(fanoutDoc(), 'logical');
+    expect(new Set(lanes.laneX).size).toBeGreaterThan(1);
+    // 그래도 배선 수만큼 벌어지지는 않는다 (겹치는 만큼만 쓴다)
+    expect(new Set(lanes.laneX).size).toBeLessThanOrEqual(10);
   });
 
   it('직교 라우팅 엣지 타입을 쓴다 (베지어 아님)', () => {

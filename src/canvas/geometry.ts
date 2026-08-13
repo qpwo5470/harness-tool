@@ -75,6 +75,9 @@ export function layoutCells(layout?: PinSlot[]): PinSlot[] | undefined {
 /**
  * 하우징 pinLayout 에서 격자 크기를 역산. 없으면 1행으로 편다.
  *
+ * 여기서 나오는 cols/rows 는 **부품 정의 기준**(회전 전)이다. 방향에 맞춰 세우는
+ * 일은 `drawGrid`(그리기 전용)가 따로 한다 — 저장 데이터를 돌리지 않기 위해서다.
+ *
  * **정의 밖 핀(extra)** — 하우징 정의가 줄었는데(6P→2P) 이미 놓인 커넥터의
  * 핀은 그대로 남아 있는 경우가 있다. 예전에는 `(index-1) % cols` 폴백이
  * 박스 **바깥** 좌표를 내주어 패드가 허공에 떠 있었고, 운이 나쁘면 살아 있는
@@ -112,19 +115,71 @@ export function housingSize(cols: number, rows: number): { w: number; h: number 
   };
 }
 
-/** 라이브러리 항목만으로 하우징 크기 — 드롭 위치 보정(HarnessCanvas)용 */
-export function partHousingSize(item: PartLibraryItem): { w: number; h: number } {
+/**
+ * 정의 격자 → **그리는 격자**.
+ *
+ * 왜 필요한가 (실측한 결함):
+ * `pinLayout` 의 offset 은 **부품 정의 기준**이라 1행 N핀 커넥터는 언제나 가로로
+ * 긴 격자다. 그걸 그대로 그리면 배선이 좌우로 나가는(0°/180°) 커넥터에서
+ * 핸들 N 개가 **짧은 변**(1행 = 38px)에 몰린다. 10P 는 3.8px, 20P 는 1.9px 간격 —
+ * 어느 핀에서 나온 선인지 눈으로 구분할 수 없다(20본 밀도 도면에서 확인).
+ *
+ * 그래서 **그릴 때만** 격자를 세운다: 배선이 나가는 변에 칸이 많은 축을 붙여
+ * 핀이 그 변을 따라 줄지어 서게 한다. 그러면 나가는 변의 길이가 핀 수에 비례해
+ * 핸들이 PITCH(30px) 간격으로 놓인다. 실제 하네스 도면의 커넥터 심볼이 그렇고,
+ * 물리 뷰가 박스를 통째로 rotate 하는 것과도 결이 같다.
+ *
+ * **전치(transpose)이지 회전이 아닌 이유**: 좌상단 등록 마크가 "1번 핀 위치"를
+ * 뜻한다(nodes.tsx·pdfDraw 둘 다 박스 좌상단에 그린다). 90°·180° 회전은 1번 핀을
+ * 다른 모서리로 보내 그 표식을 거짓말로 만든다. 전치는 (0,0) 을 제자리에 두면서
+ * 긴 축만 세운다.
+ *
+ * 저장 데이터(`pinLayout.offset`)는 **건드리지 않는다**. 같은 부품을 방향만 바꿔
+ * 놓아도 정의가 흔들리면 안 되기 때문이다(types/index.ts 는 동결 계약).
+ */
+export function drawGrid(
+  defCols: number,
+  defRows: number,
+  o: Orientation,
+): { cols: number; rows: number; transposed: boolean; edgeVertical: boolean } {
+  // 배선이 나가는 변이 세로인가 (0°=왼쪽 · 180°=오른쪽)
+  const edgeVertical = o === 0 || o === 180;
+  // 나가는 변에 핀을 줄 세운다 = 칸이 많은 축을 그 변에 붙인다.
+  // (칸 수가 같으면 정의 그대로 둔다 — 굳이 뒤집을 이유가 없다)
+  const transposed = edgeVertical ? defCols > defRows : defRows > defCols;
+  return {
+    cols: transposed ? defRows : defCols,
+    rows: transposed ? defCols : defRows,
+    transposed,
+    edgeVertical,
+  };
+}
+
+/**
+ * 라이브러리 항목만으로 하우징 크기 — 드롭 위치 보정(HarnessCanvas)용.
+ * 방향 기본값이 0° 인 이유: `seed.instantiate` 가 드롭한 커넥터를 0° 로 만든다.
+ * 드롭 직후 화면에 그려지는 크기와 같아야 커서가 부품 가운데에 온다.
+ */
+export function partHousingSize(item: PartLibraryItem, o: Orientation = 0): { w: number; h: number } {
   const layout = layoutCells(item.pinLayout);
-  const cols = layout
+  const defCols = layout
     ? Math.max(...layout.map((s) => s.offset.x)) + 1
     : Math.max(1, item.pinCount ?? 2);
-  const rows = layout ? Math.max(...layout.map((s) => s.offset.y)) + 1 : 1;
+  const defRows = layout ? Math.max(...layout.map((s) => s.offset.y)) + 1 : 1;
+  const { cols, rows } = drawGrid(defCols, defRows, o);
   return housingSize(cols, rows);
 }
 
 export type ConnectorLayout = {
+  /** **그리는** 격자 열 수 (정의 격자를 방향에 맞춰 세운 뒤) */
   cols: number;
+  /** **그리는** 격자 행 수 */
   rows: number;
+  /** 부품 정의 격자 (회전 전) — 저장된 pinLayout 과 같은 좌표계 */
+  defCols: number;
+  defRows: number;
+  /** 정의 격자를 전치해서 그리는가 (drawGrid 참고) */
+  transposed: boolean;
   layout: PartLibraryItem['pinLayout'];
   boxW: number;
   boxH: number;
@@ -132,8 +187,10 @@ export type ConnectorLayout = {
   side: Position;
   /** 화면에 그리는 핀 순서 (180°/270° 는 뒤집힌다) */
   orderedPins: Connector['pins'];
-  /** 핀 번호 → 격자 칸 */
+  /** 핀 번호 → **그리는** 격자 칸 (패드를 찍는 자리) */
   cellOf(index: number): Vec2;
+  /** 핀 번호 → **부품 정의** 격자 칸 (핀맵 에디터·속성 패널이 쓰는 좌표계) */
+  defCellOf(index: number): Vec2;
   /** 핀 번호 → 변을 따라간 위치(px) */
   along(index: number): number;
   /** 핀 번호 → 하우징 박스 좌상단 기준 핸들 좌표 */
@@ -143,42 +200,59 @@ export type ConnectorLayout = {
 /**
  * 논리 뷰 하우징 심볼의 기하.
  *
- * 핸들을 노드 **가장자리**에 두는 규칙과, 변과 평행한 축에 핀이 몰려 있을 때
- * (예: 4핀 1행 커넥터가 왼쪽으로 나가는 경우) 핸들 4개가 한 점에 겹치지 않도록
- * 핀 순서로 고르게 펴는 규칙까지 여기 담는다. 두 규칙 다 실제 버그에서 나왔다
- * (nodes.tsx 머리말 참고).
+ * 두 규칙이 여기 산다. 둘 다 실제 도면에서 무너진 걸 보고 넣었다.
+ *
+ * (1) **격자를 방향에 맞춰 세운다** (drawGrid). 배선이 나가는 변에 핀이 줄지어
+ *     서야 핸들이 PITCH 간격으로 벌어진다. 예전에는 1행 10P 를 0°/180° 로 두면
+ *     핸들 10개가 38px 변에 3.8px 간격으로 뭉갰다.
+ *
+ * (2) 핸들은 핀 셀이 아니라 노드 **가장자리**에 둔다. 셀에 붙이면 배선이 도형
+ *     한가운데에서 시작하는 것처럼 보인다(nodes.tsx 머리말).
+ *
+ * 격자가 2행 이상이면 같은 "변 자리"에 핀이 여러 개 겹친다(예: 2×5 몰렉스는
+ * 한 자리에 2핀). 그 경우 패드 폭(PAD) 안에서 안쪽 순서(rank)만큼 나눠 앉힌다 —
+ * 핸들이 한 점에 겹치면 원하는 핀을 고를 수 없기 때문이다(실제로 왼쪽 끝을
+ * 끌었더니 4번 핀이 잡혔다). 깊이가 1이면 식이 정확히 `PAD/2`(칸 가운데)로
+ * 떨어져 예전 좌표와 같다.
  */
 export function connectorLayout(connector: Connector, housing?: PartLibraryItem): ConnectorLayout {
-  const { cols, rows, layout, extra } = gridOf(connector, housing);
-  const { w: boxW, h: boxH } = housingSize(cols, rows);
+  const { cols: defCols, rows: defRows, layout, extra } = gridOf(connector, housing);
   const o = connector.orientation;
   const side = handleSideOf(o);
 
+  const { cols, rows, transposed, edgeVertical } = drawGrid(defCols, defRows, o);
+  const { w: boxW, h: boxH } = housingSize(cols, rows);
+
   // 180°/270° 는 핀 순서가 뒤집혀 보여야 한다(도면을 반대에서 읽는 경우).
+  // 패드는 셀 좌표로 절대 배치하므로 이 순서는 DOM 순서(읽기 순서)만 바꾼다.
   const flipped = o === 180 || o === 270;
   const orderedPins = flipped ? [...connector.pins].reverse() : connector.pins;
 
-  const cellOf = (index: number): Vec2 => {
+  /** 부품 정의 기준 칸 — 저장된 offset 그대로 */
+  const defCellOf = (index: number): Vec2 => {
     const slot = layout?.find((s) => s.index === index);
     if (slot) return slot.offset;
     // 하우징 정의에 없는 핀 — gridOf 가 잡아 둔 아래 줄 자리 (박스 안이고 겹치지 않는다)
     const spill = extra?.get(index);
     if (spill) return spill;
     const i = index - 1;
-    return { x: i % cols, y: Math.floor(i / cols) };
+    return { x: i % defCols, y: Math.floor(i / defCols) };
   };
 
-  // 변과 평행한 축에 실제로 놓인 칸 수 — 좌우로 나가면 행 수, 위아래로 나가면 열 수
-  const alongVertical = o === 0 || o === 180;
-  const spanCount = alongVertical ? rows : cols;
-  const spreadByIndex = spanCount < orderedPins.length;
-  const edgeLength = alongVertical ? boxH : boxW;
+  /** 그리는 칸 — 정의 칸을 방향에 맞춰 세운 것. 전치라 1:1 대응이 깨지지 않는다. */
+  const cellOf = (index: number): Vec2 => {
+    const c = defCellOf(index);
+    return transposed ? { x: c.y, y: c.x } : c;
+  };
+
+  // 나가는 변에서 안쪽으로 들어가는 칸 수 = 한 자리에 겹치는 핀 수
+  const depth = Math.max(1, edgeVertical ? cols : rows);
 
   const along = (index: number): number => {
-    const i = orderedPins.findIndex((p) => p.index === index);
-    if (spreadByIndex) return ((Math.max(0, i) + 0.5) / orderedPins.length) * edgeLength;
     const cell = cellOf(index);
-    return INSET + (alongVertical ? cell.y : cell.x) * PITCH + PAD / 2;
+    const at = edgeVertical ? cell.y : cell.x;    // 변을 따라간 몇 번째 자리인가
+    const rank = edgeVertical ? cell.x : cell.y;  // 변에서 몇 번째 안쪽인가
+    return INSET + at * PITCH + ((rank + 0.5) / depth) * PAD;
   };
 
   const handleOffset = (index: number): Vec2 => {
@@ -189,7 +263,10 @@ export function connectorLayout(connector: Connector, housing?: PartLibraryItem)
     return { x: boxW, y: a };
   };
 
-  return { cols, rows, layout, boxW, boxH, side, orderedPins, cellOf, along, handleOffset };
+  return {
+    cols, rows, defCols, defRows, transposed, layout, boxW, boxH,
+    side, orderedPins, cellOf, defCellOf, along, handleOffset,
+  };
 }
 
 /**

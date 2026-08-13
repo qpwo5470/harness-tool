@@ -9,11 +9,22 @@
  */
 import type { Connector, HarnessDocument, Orientation, PartLibraryItem, Wire } from '../types';
 
-/** 1열 N핀 스트립 하우징 — 패드가 세로로 늘어서 핸들이 PITCH 간격으로 벌어진다 */
+/**
+ * **1행 N핀** 스트립 하우징 — 실제 부품표에서 가장 흔한 모양이다.
+ *
+ * 예전에는 이 픽스처가 1열 N행(`offset: {x:0, y:k}`)이었다. 캔버스가 정의 격자를
+ * 그대로 그리던 시절에는 그래야만 패드가 세로로 서서 핸들이 PITCH 간격으로
+ * 벌어졌기 때문이다 — 즉 **결함을 피해 간 픽스처**였다. 1행으로 적으면 예전
+ * 구현에서 핸들 10개가 38px 변에 3.8px 간격으로 뭉갠다.
+ *
+ * 지금은 그리는 쪽이 방향에 맞춰 격자를 세우므로(geometry.drawGrid) 좌우로
+ * 나가는 이 배치에서 1행 정의도 세로 열로 그려진다. 그림은 예전과 똑같고
+ * (박스 38×308 · 핸들 30px 간격), 대신 이 밀도 시험이 **결함을 실제로 붙잡는다**.
+ */
 export function strip(id: string, n: number): PartLibraryItem {
   return {
     id, category: 'housing', name: `${n}P 스트립`, pinCount: n,
-    pinLayout: Array.from({ length: n }, (_, k) => ({ index: k + 1, offset: { x: 0, y: k } })),
+    pinLayout: Array.from({ length: n }, (_, k) => ({ index: k + 1, offset: { x: k, y: 0 } })),
   };
 }
 
