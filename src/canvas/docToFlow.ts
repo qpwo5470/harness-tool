@@ -1,9 +1,13 @@
 /**
  * Agent A 소유 — 문서 → React Flow(커스텀 노드/엣지) 변환.
  */
-import type { Node, Edge } from '@xyflow/react';
-import type { HarnessDocument, ViewMode, Endpoint } from '../types';
+import { Position, type Node, type Edge } from '@xyflow/react';
+import type { HarnessDocument, ViewMode, Endpoint, Vec2 } from '../types';
 import { computeNets } from '../store/netlist';
+import {
+  pinAnchor, pinAnchorPhysical, deviceAnchor, isHorizontalSide,
+  connectorBox, deviceBox, type NodeBox,
+} from './geometry';
 
 function endpointNodeId(e: Endpoint): string {
   return e.type === 'pin' ? e.connectorId : e.deviceId;
@@ -69,6 +73,19 @@ export function refLabels(doc: HarnessDocument): Map<string, string> {
   return out;
 }
 
+/**
+ * 노드 배치 좌표 — 화면과 배선 계획이 **같은 좌표**를 봐야 한다.
+ * 위치가 없는 문서용 폴백까지 여기서 한 번만 정한다(두 곳에서 따로 계산하면
+ * 폴백 문서에서만 배선이 엉뚱한 데를 가리킨다).
+ */
+export function nodePositions(doc: HarnessDocument, view: ViewMode): Map<string, Vec2> {
+  const m = new Map<string, Vec2>();
+  let i = 0;
+  for (const c of doc.connectors) m.set(c.id, pos(c.positions, view, { x: 80 + i++ * 160, y: 80 }));
+  for (const d of doc.devices) m.set(d.id, pos(d.positions, view, { x: 80 + i++ * 160, y: 320 }));
+  return m;
+}
+
 export function docToNodes(
   doc: HarnessDocument,
   view: ViewMode,
@@ -76,13 +93,14 @@ export function docToNodes(
 ): Node[] {
   const nodes: Node[] = [];
   const refs = refLabels(doc);
+  const at = nodePositions(doc, view);
   let i = 0;
   for (const c of doc.connectors) {
     nodes.push({
       id: c.id,
       type: 'connector',
       zIndex: 1,
-      position: pos(c.positions, view, { x: 80 + i * 160, y: 80 }),
+      position: at.get(c.id)!,
       data: {
         connector: c,
         housing: doc.usedParts.find((p) => p.id === c.housingId),
@@ -98,7 +116,7 @@ export function docToNodes(
       id: d.id,
       type: 'device',
       zIndex: 1,
-      position: pos(d.positions, view, { x: 80 + i * 160, y: 320 }),
+      position: at.get(d.id)!,
       data: { device: d, ref: refs.get(d.id), hotPins: hotPinsByNode.get(d.id) ?? [] },
     });
     i++;
@@ -166,6 +184,168 @@ export function colorLanes(spans: [number, number][], gap = 10): number[] {
   return out;
 }
 
+/** 한 배선이 차지하는 구간 하나. key 가 같은 것끼리만 겹침을 따진다. */
+export type LaneRun = { item: number; key: string; a: number; b: number };
+
+/**
+ * 그룹별 구간 겹침 채색 — 세로 간선 레인(laneX) 배정용.
+ *
+ * 세로 간선은 **같은 노드의 같은 변**에서 나온 것끼리만 x 가 같다(스텁 끝).
+ * 그래서 전역으로 채색하면(colorLanes) 겹치지도 않을 배선까지 레인을 잡아먹어
+ * 부채꼴이 쓸데없이 넓어진다. key 로 묶어 필요한 만큼만 벌린다.
+ *
+ * 배선 하나가 구간을 둘 갖는다(출발 쪽 · 도착 쪽)는 점이 colorLanes 와 다르다.
+ * 레인은 배선당 하나이므로 두 구간의 제약을 **함께** 만족해야 한다.
+ *
+ * @param count 배선 수
+ * @param runs  배선별 구간들 (item = 배선 인덱스)
+ * @param gap   같은 레인을 재사용하기 위해 필요한 최소 간격
+ */
+export function colorRuns(count: number, runs: LaneRun[], gap = 4): number[] {
+  const byItem: LaneRun[][] = Array.from({ length: count }, () => []);
+  for (const r of runs) byItem[r.item]?.push(r);
+
+  const startOf = (rs: LaneRun[]) => (rs.length ? Math.min(...rs.map((r) => Math.min(r.a, r.b))) : Infinity);
+  // 구간 시작 순으로 훑어야 그리디 채색이 낭비 없이 돈다(colorLanes 와 같은 이유).
+  const order = Array.from({ length: count }, (_, i) => i)
+    .sort((p, q) => startOf(byItem[p]) - startOf(byItem[q]));
+
+  const overlaps = (x: LaneRun, y: LaneRun) => {
+    if (x.key !== y.key) return false;
+    const [a1, b1] = x.a <= x.b ? [x.a, x.b] : [x.b, x.a];
+    const [a2, b2] = y.a <= y.b ? [y.a, y.b] : [y.b, y.a];
+    return a1 - gap <= b2 && a2 - gap <= b1;
+  };
+
+  const lanes = new Array<number>(count).fill(0);
+  const placed: { lane: number; runs: LaneRun[] }[] = [];
+  for (const i of order) {
+    const mine = byItem[i];
+    const used = new Set<number>();
+    for (const p of placed) {
+      if (mine.some((r) => p.runs.some((o) => overlaps(r, o)))) used.add(p.lane);
+    }
+    let lane = 0;
+    while (used.has(lane)) lane++;
+    lanes[i] = lane;
+    placed.push({ lane, runs: mine });
+  }
+  return lanes;
+}
+
+/** 가로 주행 구간 레인 간격 */
+export const LANE_Y_STEP = 12;
+/** 세로 간선 레인 간격 — 패드에서 바깥으로 밀어내는 거리라 항상 0 이상 */
+export const LANE_X_STEP = 10;
+
+export type Anchor = { x: number; y: number; side: Position };
+
+/**
+ * 끝점 → 핸들 좌표(근사).
+ *
+ * 예전에는 **노드 좌상단 x** 로만 구간을 잡았다. 12핀 커넥터는 폭이 368px 이라
+ * 오른쪽 변에서 나가는 배선의 구간이 통째로 어긋났고, 그 위에서 돌린 레인 채색은
+ * 화면과 무관한 값이 됐다. 이제 geometry.ts 의 핸들 식을 그대로 쓴다.
+ *
+ * "근사"인 이유: 라벨 블록 높이(REF_BLOCK_H)만 CSS 실측 상수라 몇 px 오차가 있다.
+ * 레인 간격이 10px 단위라 배정 결과는 바뀌지 않는다.
+ */
+export function endpointAnchor(
+  doc: HarnessDocument,
+  e: Endpoint,
+  view: ViewMode,
+  at: Map<string, Vec2> = nodePositions(doc, view),
+): Anchor {
+  const p = at.get(endpointNodeId(e)) ?? { x: 0, y: 0 };
+  if (e.type === 'pin') {
+    const c = doc.connectors.find((x) => x.id === e.connectorId);
+    if (!c) return { x: p.x, y: p.y, side: Position.Right };
+    const housing = doc.usedParts.find((x) => x.id === c.housingId);
+    const index = c.pins.find((x) => x.id === e.pinId)?.index ?? 1;
+    return view === 'physical' && housing?.pinLayout?.length
+      ? pinAnchorPhysical(c, housing, index, p)
+      : pinAnchor(c, housing, index, p);
+  }
+  const d = doc.devices.find((x) => x.id === e.deviceId);
+  if (!d) return { x: p.x, y: p.y, side: Position.Left };
+  return deviceAnchor(d, e.terminal, p);
+}
+
+/**
+ * 끝점이 붙은 노드의 경계 상자.
+ *
+ * 배선은 노드보다 아래층(zIndex 0)에 그려진다. 그래서 경로가 노드 박스를 지나면
+ * 화면에서 통째로 사라진다 — 라우터가 피할 수 있게 상자를 알려줘야 한다.
+ * 상자를 못 구하면(끝점이 문서에 없는 등) undefined 를 준다: 라우터는 그때
+ * 회피 없이 예전대로 그린다.
+ */
+export function endpointBox(
+  doc: HarnessDocument,
+  e: Endpoint,
+  view: ViewMode,
+  at: Map<string, Vec2> = nodePositions(doc, view),
+): NodeBox | undefined {
+  const p = at.get(endpointNodeId(e));
+  if (!p) return undefined;
+  if (e.type === 'pin') {
+    const c = doc.connectors.find((x) => x.id === e.connectorId);
+    if (!c) return undefined;
+    return connectorBox(c, doc.usedParts.find((x) => x.id === c.housingId), p, view);
+  }
+  const d = doc.devices.find((x) => x.id === e.deviceId);
+  return d ? deviceBox(d, p) : undefined;
+}
+
+export type WireLanes = {
+  /** 배선별 가로 주행 구간 y 오프셋 */
+  laneY: number[];
+  /** 배선별 세로 간선 x 오프셋 (패드에서 바깥으로) */
+  laneX: number[];
+  /** 배선별 양 끝 핸들 좌표 — 시험·진단용 */
+  from: Anchor[];
+  to: Anchor[];
+  /** 배선별 양 끝 노드 경계 상자 — 라우터가 이 상자를 피해 간다 */
+  fromBox: (NodeBox | undefined)[];
+  toBox: (NodeBox | undefined)[];
+};
+
+/**
+ * 배선 레인 두 축을 한꺼번에 배정한다.
+ *
+ * 순서가 중요하다: 세로 간선이 y 로 어디까지 뻗는지는 주행 구간 y(=laneY)가
+ * 정해져야 알 수 있다. 그래서 laneY 를 먼저 풀고 그 결과로 세로 구간을 그린다.
+ */
+export function assignLanes(doc: HarnessDocument, view: ViewMode = 'logical'): WireLanes {
+  const at = nodePositions(doc, view);
+  const from = doc.wires.map((w) => endpointAnchor(doc, w.from, view, at));
+  const to = doc.wires.map((w) => endpointAnchor(doc, w.to, view, at));
+
+  // 1) 가로 주행 구간 — x 로 겹치는 배선끼리 y 를 달리한다.
+  const spans = doc.wires.map((_, i) => [from[i].x, to[i].x] as [number, number]);
+  const laneY = colorLanes(spans).map((k) => laneOffset(k, LANE_Y_STEP));
+
+  // 2) 세로 간선 — 같은 노드·같은 변에서 나온 세로 구간이 y 로 겹치면 x 를 벌린다.
+  //    (겹침 판정 구간은 패드 y 에서 주행 구간 y 까지)
+  const runs: LaneRun[] = [];
+  doc.wires.forEach((w, i) => {
+    const s = from[i];
+    const t = to[i];
+    const midY = (s.y + t.y) / 2 + laneY[i];
+    if (isHorizontalSide(s.side)) {
+      runs.push({ item: i, key: `${endpointNodeId(w.from)}:${s.side}`, a: s.y, b: midY });
+    }
+    if (isHorizontalSide(t.side)) {
+      runs.push({ item: i, key: `${endpointNodeId(w.to)}:${t.side}`, a: t.y, b: midY });
+    }
+  });
+  const laneX = colorRuns(doc.wires.length, runs).map((k) => k * LANE_X_STEP);
+
+  const fromBox = doc.wires.map((w) => endpointBox(doc, w.from, view, at));
+  const toBox = doc.wires.map((w) => endpointBox(doc, w.to, view, at));
+
+  return { laneY, laneX, from, to, fromBox, toBox };
+}
+
 /**
  * @param highlight 같은 네트에 속해 강조할 와이어들 (굵게/선명하게)
  * @param labelFor  상세 라벨을 띄울 와이어 id — 딱 하나만.
@@ -178,18 +358,7 @@ export function docToEdges(
   view: ViewMode = 'logical',
 ): Edge[] {
   const dim = highlight.size > 0;
-
-  // 각 배선의 수평 구간을 양 끝 노드의 x 로 근사해 레인을 채색한다.
-  // 정확한 핸들 좌표는 React Flow 가 렌더할 때 정해지지만, 겹침 판정에는
-  // 노드 x 로 충분하다(패드 격자 폭은 보통 100px 안쪽).
-  const nodeX = new Map<string, number>();
-  for (const c of doc.connectors) nodeX.set(c.id, pos(c.positions, view, { x: 0, y: 0 }).x);
-  for (const d of doc.devices) nodeX.set(d.id, pos(d.positions, view, { x: 0, y: 0 }).x);
-  const spans = doc.wires.map((w) => [
-    nodeX.get(endpointNodeId(w.from)) ?? 0,
-    nodeX.get(endpointNodeId(w.to)) ?? 0,
-  ] as [number, number]);
-  const laneIdx = colorLanes(spans);
+  const lanes = assignLanes(doc, view);
 
   // 스텁 신호명은 도착 핀의 규격 신호를 쓴다(없으면 출발 핀).
   const signalAt = (e: Endpoint): string | undefined => {
@@ -221,7 +390,11 @@ export function docToEdges(
         opacity: dim && !on ? 0.16 : 1,
       },
       data: {
-        lane: laneOffset(laneIdx[i]),
+        laneY: lanes.laneY[i],
+        laneX: lanes.laneX[i],
+        // 노드보다 아래층에 그려지므로 두 끝 노드 박스를 피해 가야 한다
+        sourceBox: lanes.fromBox[i],
+        targetBox: lanes.toBox[i],
         abbr: colorAbbr(w.color.base, w.color.stripe),
         signal: signalAt(w.to) ?? signalAt(w.from),
         on,

@@ -29,7 +29,8 @@ import { useHarnessStore } from '../store/harnessStore';
 import { useHoverStore } from '../store/hoverStore';
 import { useSelectionStore } from '../store/selectionStore';
 import { docToNodes, docToEdges, highlightedWires, refLabels, colorAbbr } from './docToFlow';
-import { nodeTypes, PAD, PITCH } from './nodes';
+import { nodeTypes } from './nodes';
+import { partHousingSize } from './geometry';
 import { edgeTypes } from './OrthogonalEdge';
 import { WireCard } from './WireCard';
 import type { Device, Endpoint, PartLibraryItem, Wire } from '../types';
@@ -43,26 +44,17 @@ const nextWireId = () => `w-${Date.now().toString(36)}-${wireSeq++}`;
 let devSeq = 0;
 const nextDeviceId = () => `dev-${Date.now().toString(36)}-${devSeq++}`;
 
-/** nodes.tsx 의 하우징 안쪽 여백과 같은 값 */
-const INSET = 6;
 /** 장치 블록은 단자 수에 따라 커지므로 빈 블록 기준 대략치로만 보정한다 */
 const DEVICE_OFFSET = { x: 30, y: 16 };
 
 /**
  * 드롭 좌표는 노드 "좌상단"이 된다. 그대로 쓰면 부품이 커서 오른쪽 아래로
  * 밀려 나와 놓고 싶은 자리와 어긋난다. 하우징 박스의 절반만큼 당겨
- * 커서가 부품 가운데에 오게 한다. (크기 식은 nodes.tsx 논리 뷰와 동일)
+ * 커서가 부품 가운데에 오게 한다. (크기 식은 geometry.ts 한 곳에만 있다)
  */
 function centerOffset(item: PartLibraryItem) {
-  const layout = item.pinLayout;
-  const cols = layout?.length
-    ? Math.max(...layout.map((s) => s.offset.x)) + 1
-    : Math.max(1, item.pinCount ?? 2);
-  const rows = layout?.length ? Math.max(...layout.map((s) => s.offset.y)) + 1 : 1;
-  return {
-    x: (cols * PITCH + INSET * 2 - (PITCH - PAD)) / 2,
-    y: (rows * PITCH + INSET * 2 - (PITCH - PAD)) / 2,
-  };
+  const { w, h } = partHousingSize(item);
+  return { x: w / 2, y: h / 2 };
 }
 
 /**

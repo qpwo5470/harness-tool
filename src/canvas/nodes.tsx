@@ -16,6 +16,11 @@
 import type { CSSProperties } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import type { Connector, Device, PartLibraryItem, ViewMode, Orientation } from '../types';
+/**
+ * 기하 상수·계산은 전부 geometry.ts 한 곳에만 둔다.
+ * 배선 계획(docToFlow)이 같은 숫자를 써야 레인 배정이 화면과 어긋나지 않는다.
+ */
+import { PITCH, INSET, PIN_PHYS, PIN_PHYS_PITCH, connectorLayout } from './geometry';
 
 export type ConnectorNodeData = {
   connector: Connector;
@@ -27,32 +32,6 @@ export type ConnectorNodeData = {
   hotPins?: string[];
 };
 export type DeviceNodeData = { device: Device; ref?: string; hotPins?: string[] };
-
-/** 패드 26px + 간격 4px = 30px 피치 (Claude Design 스펙) */
-export const PAD = 26;
-export const PITCH = 30;
-const INSET = 6; // 하우징 박스 안쪽 여백
-
-const PIN_PHYS = 12; // 물리 뷰 핀 크기
-
-/** 배선이 나가는 변 → React Flow Position */
-export function handleSideOf(o: Orientation): Position {
-  return o === 0 ? Position.Left
-    : o === 90 ? Position.Top
-    : o === 180 ? Position.Right
-    : Position.Bottom;
-}
-
-/** 하우징 pinLayout 에서 격자 크기를 역산. 없으면 1행으로 편다. */
-function gridOf(connector: Connector, housing?: PartLibraryItem) {
-  const layout = housing?.pinLayout;
-  if (layout?.length) {
-    const cols = Math.max(...layout.map((s) => s.offset.x)) + 1;
-    const rows = Math.max(...layout.map((s) => s.offset.y)) + 1;
-    return { cols, rows, layout };
-  }
-  return { cols: connector.pins.length || 1, rows: 1, layout: undefined };
-}
 
 /**
  * 래치 돌기 — 하우징 바깥으로 튀어나온 사각형.
@@ -85,8 +64,8 @@ export function ConnectorNode({ data, selected }: NodeProps) {
       : Position.Left;
     const xs = housing.pinLayout.map((s) => s.offset.x);
     const ys = housing.pinLayout.map((s) => s.offset.y);
-    const w = (Math.max(...xs) + 1) * (PIN_PHYS + 8);
-    const h = (Math.max(...ys) + 1) * (PIN_PHYS + 8);
+    const w = (Math.max(...xs) + 1) * PIN_PHYS_PITCH;
+    const h = (Math.max(...ys) + 1) * PIN_PHYS_PITCH;
     const border = isSplice ? 'var(--wire-splice, #a16207)' : 'var(--line-strong)';
     return (
       <div
@@ -109,8 +88,8 @@ export function ConnectorNode({ data, selected }: NodeProps) {
         />
         {connector.pins.map((pin) => {
           const slot = housing.pinLayout!.find((s) => s.index === pin.index);
-          const left = (slot?.offset.x ?? 0) * (PIN_PHYS + 8) + 4;
-          const top = (slot?.offset.y ?? 0) * (PIN_PHYS + 8) + 4;
+          const left = (slot?.offset.x ?? 0) * PIN_PHYS_PITCH + 4;
+          const top = (slot?.offset.y ?? 0) * PIN_PHYS_PITCH + 4;
           return (
             <div key={pin.id} style={{ position: 'absolute', left, top }}>
               <Handle
@@ -140,52 +119,25 @@ export function ConnectorNode({ data, selected }: NodeProps) {
   }
 
   // ── 논리 뷰: 하우징 심볼 (핀 패드 격자) ──────────────────────────────────
-  const { cols, rows, layout } = gridOf(connector, housing);
-  const boxW = cols * PITCH + INSET * 2 - (PITCH - PAD);
-  const boxH = rows * PITCH + INSET * 2 - (PITCH - PAD);
-  const side = handleSideOf(o);
-
-  // 핀 → 격자 좌표. pinLayout 이 없으면 순서대로 1행에 편다.
-  const cellOf = (index: number) => {
-    const slot = layout?.find((s) => s.index === index);
-    if (slot) return slot.offset;
-    const i = index - 1;
-    return { x: i % cols, y: Math.floor(i / cols) };
-  };
-
-  // 180°/270° 는 핀 순서가 뒤집혀 보여야 한다(도면을 반대에서 읽는 경우).
-  const flipped = o === 180 || o === 270;
-  const orderedPins = flipped ? [...connector.pins].reverse() : connector.pins;
+  /**
+   * 격자·박스 크기·핸들이 변을 따라 놓이는 자리(along)는 geometry.ts 가 계산한다.
+   * 배선 계획(docToFlow)이 같은 식을 써야 레인 배정이 화면과 어긋나지 않기 때문이다.
+   * 여기서 남은 일은 그 숫자를 CSS 로 옮기는 것뿐이다.
+   *
+   * along 규칙에 얽힌 실제 버그(인수인계 8장):
+   * 배선이 나가는 변과 **평행한 축**에 핀이 몰려 있으면(예: 4핀 1행 커넥터가
+   * 왼쪽으로 나가는 경우) 패드 좌표를 그대로 쓰면 핸들 4개가 한 점에 겹친다.
+   * 실제로 왼쪽 끝에서 끌었는데 4번 핀이 잡혔다. → geometry.connectorLayout 참고.
+   */
+  const geo = connectorLayout(connector, housing);
+  const { layout, boxW, boxH, side, orderedPins } = geo;
 
   const arrow = o === 0 ? '←' : o === 90 ? '↑' : o === 180 ? '→' : '↓';
   const dirWord = o === 0 ? '왼쪽' : o === 90 ? '위쪽' : o === 180 ? '오른쪽' : '아래쪽';
 
-  /**
-   * 핸들 위치 — 노드 **가장자리**에 절대 위치.
-   *
-   * 원칙은 "핀 패드의 행/열 중심에 맞춰 배선이 그 패드에서 나가는 것처럼" 이다.
-   * 그런데 배선이 나가는 변과 **평행한 축**에 핀이 몰려 있으면(예: 4핀 1행 커넥터가
-   * 왼쪽으로 나가는 경우) 패드 좌표를 그대로 쓰면 핸들 4개가 **한 점에 겹친다.**
-   * 그러면 원하는 핀을 골라 결선할 수 없고, 어느 핀으로 가는 선인지도 안 보인다.
-   * 실제로 그랬다 — 왼쪽 끝에서 끌었는데 4번 핀이 잡혔다.
-   *
-   * 겹치는 경우에는 핀 순서로 변을 따라 고르게 편다.
-   * (실물에서도 1행 커넥터의 전선은 같은 변에서 부채꼴로 나온다)
-   */
-  // 변과 평행한 축에 실제로 놓인 칸 수 — 좌우로 나가면 행 수, 위아래로 나가면 열 수
-  const spanCount = (o === 0 || o === 180) ? rows : cols;
-  const spreadByIndex = spanCount < orderedPins.length;
-  const edgeLength = (o === 0 || o === 180) ? boxH : boxW;
-
+  /** 핸들 위치 — 노드 **가장자리**에 절대 위치 (핀 셀에 붙이면 선이 도형 중간에서 시작한다) */
   const handleStyle = (index: number): CSSProperties => {
-    const cell = cellOf(index);
-    const i = orderedPins.findIndex((p) => p.index === index);
-    /** 변을 따라간 위치(px) */
-    const along = spreadByIndex
-      ? ((Math.max(0, i) + 0.5) / orderedPins.length) * edgeLength
-      : (o === 0 || o === 180)
-        ? INSET + cell.y * PITCH + PAD / 2
-        : INSET + cell.x * PITCH + PAD / 2;
+    const along = geo.along(index);
     const common: CSSProperties = {
       width: 6, height: 6, background: 'var(--accent)',
       border: '1px solid #fff', borderRadius: 0, zIndex: 3,
@@ -227,7 +179,7 @@ export function ConnectorNode({ data, selected }: NodeProps) {
         />
 
         {orderedPins.map((pin) => {
-          const cell = cellOf(pin.index);
+          const cell = geo.cellOf(pin.index);
           const slot = layout?.find((s) => s.index === pin.index);
           const assigned = Boolean(slot?.signal);
           return (

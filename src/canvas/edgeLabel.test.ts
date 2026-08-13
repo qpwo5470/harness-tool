@@ -2,7 +2,12 @@ import { describe, it, expect } from 'vitest';
 import { docToEdges } from './docToFlow';
 import { sampleDoc } from '../fixtures/sampleDoc';
 
-type EdgeData = { spec: string; detail?: string; abbr: string; lane: number; on: boolean; dim: boolean };
+type EdgeData = {
+  spec: string; detail?: string; abbr: string;
+  /** 레인은 두 축이다 — 가로 주행 구간의 y, 세로 간선의 x */
+  laneY: number; laneX: number;
+  on: boolean; dim: boolean;
+};
 const dataOf = (e: { data?: unknown }) => e.data as EdgeData;
 
 describe('배선 라벨 표시 규칙', () => {
@@ -40,8 +45,18 @@ describe('배선 라벨 표시 규칙', () => {
 
   it('배선마다 레인이 달라 수평 구간이 겹치지 않는다', () => {
     const edges = docToEdges(sampleDoc);
-    const lanes = edges.map((e) => dataOf(e).lane);
+    // 샘플의 세 배선은 x 구간이 서로 겹치므로 주행 구간 y 가 전부 갈려야 한다
+    const lanes = edges.map((e) => dataOf(e).laneY);
     expect(new Set(lanes).size).toBe(lanes.length);
+  });
+
+  it('세로 간선 레인도 함께 실린다 (한 변에서 여러 가닥이 나갈 때 x 를 벌린다)', () => {
+    const edges = docToEdges(sampleDoc);
+    expect(edges.every((e) => typeof dataOf(e).laneX === 'number')).toBe(true);
+    // 스플라이스 왼쪽 변에서 두 가닥(w2·w3)이 나가므로 서로 달라야 한다
+    const w2 = dataOf(edges.find((e) => e.id === 'w2')!).laneX;
+    const w3 = dataOf(edges.find((e) => e.id === 'w3')!).laneX;
+    expect(w2).not.toBe(w3);
   });
 
   it('직교 라우팅 엣지 타입을 쓴다 (베지어 아님)', () => {
