@@ -4,6 +4,7 @@
 import { Position, type Node, type Edge } from '@xyflow/react';
 import type { HarnessDocument, ViewMode, Endpoint, Vec2 } from '../types';
 import { computeNets } from '../store/netlist';
+import { lengthResolver } from '../store/wireLength';
 import {
   pinAnchor, pinAnchorPhysical, deviceAnchor, isHorizontalSide,
   connectorBox, deviceBox, type NodeBox,
@@ -369,10 +370,15 @@ export function docToEdges(
     return housing?.pinLayout?.find((s) => s.index === pin?.index)?.signal;
   };
 
+  // 길이는 공용 해석기를 쓴다 — 케이블 심선은 케이블 길이로 재단되므로
+  // 캔버스 라벨만 비워 두면 물리 뷰·자재표와 숫자가 갈린다.
+  const lengthOf = lengthResolver(doc);
+
   return doc.wires.map((w, i) => {
     const stripe = w.color.stripe ? `/${w.color.stripe}` : '';
     const on = highlight.has(w.id);
-    const len = w.lengthMm != null ? ` · ${w.lengthMm}mm` : '';
+    const mm = lengthOf(w).mm;
+    const len = mm != null ? ` · ${mm}mm` : '';
     const spec = `${w.color.base}${stripe} · ${w.gauge.system.toUpperCase()}${w.gauge.value}${len}`;
     const color = strokeColor(w.color.base);
     return {

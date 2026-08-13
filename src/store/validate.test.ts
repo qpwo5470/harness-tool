@@ -262,16 +262,39 @@ describe('4. 길이 미입력', () => {
     expect(issue.where).toContain('W1');
   });
 
-  it('케이블 길이를 따르는 심선은 info 로 낮추되 건수는 statsOf 와 같다', () => {
+  /**
+   * 케이블 길이를 따르는 심선은 "미입력"이 아니라 **다른 곳에 입력된 것**이다.
+   * 그래서 `statsOf().missingLength`(= 길이를 알 수 없는 배선 수)에는 세지 않고,
+   * 여기서 비교할 것은 error 등급 건수다. 예전에는 두 곳이 각자 길이를 판정해
+   * 물리 뷰는 "길이 미입력 2본", 검증은 "info 1 + error 1" 로 갈렸다.
+   */
+  it('케이블 길이를 따르는 심선은 info 로 낮추고 statsOf 는 미입력으로 세지 않는다', () => {
     const doc = clean();
     doc.wires[0].lengthMm = undefined;
     doc.wires[0].cableId = 'cb1';
     doc.wires[1].lengthMm = undefined;
     doc.cables = [{ id: 'cb1', name: '2C 전원 케이블', coreCount: 2, lengthMm: 300 }];
     const found = only(doc, 'length-missing');
-    expect(found).toHaveLength(statsOf(doc).missingLength);
+    const st = statsOf(doc);
+    expect(found).toHaveLength(2);
     expect(found.filter((i) => i.level === 'info')).toHaveLength(1);
-    expect(found.filter((i) => i.level === 'error')).toHaveLength(1);
+    expect(found.filter((i) => i.level === 'error')).toHaveLength(st.missingLength);
+    expect(st.missingLength).toBe(1);
+    expect(st.cableLength).toBe(1);
+    // 합계에도 케이블 길이가 반영된다 — 자재표·물리 뷰와 같은 함수를 쓴다
+    expect(st.wireLengthMm).toBe(300 + (doc.wires[2]?.lengthMm ?? 0));
+  });
+
+  it('케이블에도 길이가 없으면 그 심선은 error 로 남는다', () => {
+    const doc = clean();
+    doc.wires[0].lengthMm = undefined;
+    doc.wires[0].cableId = 'cb1';
+    doc.cables = [{ id: 'cb1', name: '2C 전원 케이블', coreCount: 2 }];
+    const found = only(doc, 'length-missing');
+    expect(found).toHaveLength(1);
+    expect(found[0].level).toBe('error');
+    expect(found[0].title).toContain('케이블에도 길이가 없다');
+    expect(statsOf(doc).missingLength).toBe(1);
   });
 });
 

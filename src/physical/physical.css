@@ -323,7 +323,8 @@
 .pv-table tbody tr:nth-child(even) { background: var(--bg-canvas); }
 
 .pv-table .c-seg { width: 44px; border-left: 3px solid transparent; font-weight: 700; }
-.pv-table .c-len { width: 70px; text-align: right; font-weight: 600; }
+/* 실치수를 못 낸 이유가 한 줄 더 들어가므로 조금 넓다 */
+.pv-table .c-len { width: 108px; text-align: right; font-weight: 600; }
 .pv-table .c-cnt { width: 56px; text-align: right; }
 .pv-table th.c-len, .pv-table th.c-cnt { text-align: right; }
 
@@ -333,7 +334,18 @@
 
 .pv-path { color: var(--text); }
 .pv-prot { font-size: var(--fs-sub); color: var(--muted); }
+/* 길이 칸의 `—` 밑에 붙는 이유 — 빈 칸을 "미입력"으로 오해하지 않도록 */
+.pv-lennote {
+  display: block;
+  font-family: var(--font-ui);
+  font-size: var(--fs-micro);
+  font-style: normal;
+  font-weight: 400;
+  color: var(--muted);
+}
 .pv-none { padding: 10px 8px; color: var(--muted); font-size: var(--fs-sub); }
+/* 구간표 밑의 근거 설명 */
+.pv-scroll > .pv-note { padding: 6px 8px; line-height: 1.45; }
 
 /* 자재 요약 — 행 높이 23px */
 .pv-mat { padding: 8px; border-top: 1px solid var(--line); }

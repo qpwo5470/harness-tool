@@ -8,6 +8,7 @@
 import type {
   AnyDocument, HarnessDocument, HarnessSet, KitDocument, Id,
 } from '../types';
+import { lengthResolver, tallyLengths } from './wireLength';
 
 let seq = 0;
 const newId = (p: string) => `${p}-${Date.now().toString(36)}-${seq++}`;
@@ -76,9 +77,18 @@ export function totalHarnesses(set: HarnessSet): number {
 export type HarnessStats = {
   ends: string;
   wireCount: number;
+  /**
+   * 길이를 **아는** 배선의 합(mm). 케이블 심선은 케이블 길이를 따른다
+   * (`store/wireLength.ts`). 모르는 배선은 0 으로 더하지 않고 빼 둔다 —
+   * 0 을 더하면 짧은 하네스처럼 보인다.
+   */
   wireLengthMm: number;
-  /** 길이가 입력되지 않은 배선 수 */
+  /** wireLengthMm 이 몇 본치인지 — 합계가 불완전함을 밝히기 위해 */
+  countedLength: number;
+  /** 길이를 알 수 없는 배선 수 (배선에도 없고 소속 케이블에도 없다) */
   missingLength: number;
+  /** 케이블 길이를 따르는 배선 수 */
+  cableLength: number;
   /** 터미널이 지정되지 않은, 배선된 핀 수 */
   missingTerminal: number;
 };
@@ -103,11 +113,16 @@ export function statsOf(h: HarnessDocument): HarnessStats {
     .map((c) => h.usedParts.find((p) => p.id === c.housingId)?.name ?? c.kind)
     .join(' ↔ ') || '끝단 없음';
 
+  // 길이 판단은 공용 해석기 하나만 쓴다 — 물리 뷰·자재표·검증과 같은 함수다
+  const len = tallyLengths(h.wires, lengthResolver(h));
+
   return {
     ends,
     wireCount: h.wires.length,
-    wireLengthMm: h.wires.reduce((n, w) => n + (w.lengthMm ?? 0), 0),
-    missingLength: h.wires.filter((w) => w.lengthMm == null).length,
+    wireLengthMm: len.totalMm,
+    countedLength: len.counted,
+    missingLength: len.missing,
+    cableLength: len.fromCable,
     missingTerminal,
   };
 }
@@ -146,7 +161,10 @@ export function blockersOf(kit: KitDocument): Blocker[] {
       });
     }
     if (s.missingLength > 0) {
-      const w = h.wires.find((x) => x.lengthMm == null);
+      // 케이블 길이를 따르는 심선은 재단 길이가 정해져 있으므로 발주를 막지 않는다.
+      // 여기서 막던 예전 코드는 검증(info 등급)과 판정이 어긋나 있었다.
+      const lengthOf = lengthResolver(h);
+      const w = h.wires.find((x) => lengthOf(x).mm == null);
       out.push({
         harnessId: h.id,
         targetId: w?.id,

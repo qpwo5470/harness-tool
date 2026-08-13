@@ -29,15 +29,32 @@
  * 뺄지 뿐이며, 그 선택은 데이터가 아니라 작도 취향이라 지선 쪽을 택했다.
  *
  * ## 숫자에 대한 태도
- * - `lengthMm` 은 그 구간을 지나는 배선 길이의 **대표값(최댓값)** 이다.
- *   배선 길이는 전 경로의 길이라 구간별로 쪼갤 근거가 없다. 하나도 입력돼 있지
- *   않으면 `null` 로 두고 화면에는 `—` 를 찍는다. 지어내지 않는다.
+ * 물리 뷰는 **제조 도면**이다. 화면의 수치가 그대로 작업 지시가 되므로,
+ * 틀린 숫자를 그럴듯하게 그리는 것보다 모르는 값을 모른다고 말하는 쪽이 낫다.
+ *
+ * - `lengthMm`(구간 실치수)는 **그 구간이 곧 전 경로인 배선**(트리 경로 길이 1)만
+ *   보고 정한다. 그런 배선이 있고 길이가 전부 같을 때만 값이 되고, 아니면 `null`
+ *   이며 `lengthNote` 에 이유가 남는다.
+ *   예전에는 "그 구간을 지나는 배선 길이의 최댓값"을 대표값으로 삼아 티크 달린
+ *   정식 치수선으로 내보냈다. 그건 실치수가 아니다 — `J1—SP1` 100mm 2본과
+ *   `SP1—J2` 150mm 2본에 `J1↔J2` 직결 900mm 를 하나 얹으면 두 구간 모두
+ *   `900` 이 찍혔다(실제는 100 / 150). 경유하는 배선의 **전장**은 그 구간의
+ *   길이에 대해 아무것도 말해 주지 않는다. 상한선일 뿐이다.
+ * - `span`(전장)은 **끝단↔끝단 경로 길이의 최댓값**이다. 최장 배선 한 본이
+ *   아니다 — 스플라이스로 이어진 500 + 500 은 전장 1,000 이다. 배선 그래프에
+ *   고리가 있거나 길이가 비면 경로 합을 확정할 수 없으므로 값을 만들지 않고
+ *   `spanNote` 에 이유를 남긴다. 그때 화면은 `longest`(최장 배선)를 **그 이름
+ *   그대로** 쓴다.
  * - `odMm` 은 `√본수 × 대표 심선 외경` 의 **추정값**이다. UI 에 반드시 "추정"임을
  *   밝힌다.
+ * - 배선 길이는 `store/wireLength.ts` 한 곳에서만 해석한다
+ *   (`w.lengthMm ?? cable.lengthMm`). 물리 뷰만 케이블을 못 보던 시절에는 같은
+ *   화면에 "케이블 500mm" 와 "전선 0mm · 길이 미입력 2본" 이 같이 떴다.
  * - 보호재(슬리브·테이프)는 문서에 데이터가 없다. 여기서 만들지 않는다.
  */
 import type { Endpoint, Gauge, HarnessDocument, Id } from '../types';
 import { buildPartList } from '../export/exporters';
+import { lengthResolver, tallyLengths } from '../store/wireLength';
 
 // ================================================================
 // 타입
@@ -63,6 +80,15 @@ export type PhysNode = {
   branchKind?: BranchKind;
 };
 
+/**
+ * 구간 길이를 치수로 낼 수 없는 이유.
+ * - `mixed`   이 구간이 전 경로인 배선들의 길이가 서로 다르다
+ * - `through` 이 구간만 지나는 배선이 없다(전부 더 멀리 가는 경유 배선이다)
+ * - `missing` 근거가 될 배선의 길이가 비어 있다
+ * - `none`    지나는 배선이 없다(있을 수 없지만 방어적으로 둔다)
+ */
+export type SegmentLengthNote = 'mixed' | 'through' | 'missing' | 'none';
+
 export type Segment = {
   /** S1, S2 … */
   code: string;
@@ -74,10 +100,21 @@ export type Segment = {
   toRef: string;
   /** 이 구간을 지나는 배선 (문서 순서) */
   wireIds: Id[];
+  /** 이 구간이 **전 경로**인 배선 — 실치수의 유일한 근거 */
+  directWireIds: Id[];
   /** 본수 = wireIds.length */
   count: number;
-  /** 대표 길이(mm). 구간의 배선 길이 중 최댓값. 전부 미입력이면 null */
+  /**
+   * 구간 실치수(mm). `directWireIds` 의 길이가 전부 같을 때만 값이 있다.
+   * `null` 이면 치수선을 그리지 않는다 — 이유는 `lengthNote`.
+   */
   lengthMm: number | null;
+  /** lengthMm 이 null 인 이유. 값이 있으면 null */
+  lengthNote: SegmentLengthNote | null;
+  /** 지나는 배선 **전장**의 범위 [최소, 최대]. 실치수가 아니라 참고값이다 */
+  wireRangeMm: [number, number] | null;
+  /** 지나는 배선 중 길이를 알 수 없는 본수 */
+  missingLength: number;
   /** 외경 **추정**(mm) = √본수 × 대표 심선 외경 */
   odMm: number | null;
 };
@@ -90,6 +127,23 @@ export type LongestRun = {
   toRef: string;
 };
 
+/** 전장 — 끝단↔끝단 경로 길이의 최댓값 */
+export type SpanRun = {
+  lengthMm: number;
+  fromRef: string;
+  toRef: string;
+  /** 그 경로에 놓인 배선 코드 (W1 W2 …) */
+  wireCodes: string[];
+};
+
+/**
+ * 전장을 확정할 수 없는 이유.
+ * - `cycle`   배선이 고리를 이뤄 두 끝단 사이 경로가 하나로 정해지지 않는다
+ * - `missing` 경로에 길이를 모르는 배선이 있다
+ * - `empty`   길이를 아는 배선이 없다
+ */
+export type SpanNote = 'cycle' | 'missing' | 'empty';
+
 export type PhysicalModel = {
   /** 끝단 + 분기점. 구간의 from/to 가 참조한다 */
   nodes: PhysNode[];
@@ -99,11 +153,22 @@ export type PhysicalModel = {
   roots: string[];
   /** 배선 id → W 번호 (접속표·속성 탭과 같은 규칙) */
   wireCodes: Map<Id, string>;
-  /** 길이가 입력된 배선의 합(mm) */
+  /** 길이를 아는 배선의 합(mm). 케이블 심선은 케이블 길이를 따른다 */
   totalWireMm: number;
-  /** 길이가 비어 있는 배선 수 — 합계가 불완전함을 밝히기 위해 */
+  /** totalWireMm 이 몇 본치인지 */
+  countedLength: number;
+  /** 길이를 알 수 없는 배선 수 — 합계가 불완전함을 밝히기 위해 */
   missingLength: number;
-  /** 가장 긴 배선 하나 (전장 치수 라벨용). 길이가 하나도 없으면 null */
+  /** 케이블 길이를 따르는 배선 수 */
+  cableLength: number;
+  /** 전장 — 끝단↔끝단 최장 경로. 확정할 수 없으면 null */
+  span: SpanRun | null;
+  /** span 이 null 인 이유. span 이 있으면 null */
+  spanNote: SpanNote | null;
+  /**
+   * 가장 긴 배선 **한 본**. 전장이 아니다 —
+   * 전장을 확정할 수 없을 때 화면이 사실대로 쓸 수 있는 보조 표기다.
+   */
   longest: LongestRun | null;
 };
 
@@ -126,6 +191,31 @@ const r1 = (n: number) => Math.round(n * 10) / 10;
 /** 3자리 콤마 — Barlow tabular-nums 와 함께 도면 숫자 규칙 */
 export function formatMm(n: number): string {
   return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+/**
+ * 구간 길이를 치수로 내지 못한 이유 — 화면 문구.
+ * 문구를 여기 두는 이유: 구간표·호버 카드·시험이 같은 말을 써야 하고,
+ * 판정(왜 `—` 인가)과 문구가 떨어져 있으면 한쪽만 고쳐진다.
+ */
+export function segmentLengthNoteText(note: SegmentLengthNote): string {
+  if (note === 'mixed') return '배선마다 다름';
+  if (note === 'through') return '지나가는 배선뿐 — 실치수 미상';
+  if (note === 'missing') return '길이 미입력';
+  return '배선 없음';
+}
+
+/** 전장을 확정할 수 없는 이유 — 화면 문구 */
+export function spanNoteText(note: SpanNote): string {
+  if (note === 'cycle') return '배선이 고리를 이뤄 전장을 확정할 수 없습니다';
+  if (note === 'missing') return '길이 미입력이 있어 전장을 확정할 수 없습니다';
+  return '배선 길이를 넣으면 전장이 잡힙니다';
+}
+
+/** 지나는 배선 전장의 범위 — "100–900mm". 하나뿐이면 한 값만 */
+export function formatRange(range: [number, number]): string {
+  const [lo, hi] = range;
+  return lo === hi ? `${formatMm(lo)}mm` : `${formatMm(lo)}–${formatMm(hi)}mm`;
 }
 
 /**
@@ -197,6 +287,113 @@ class UnionFind {
 }
 
 const edgeKey = (u: string, v: string) => (u < v ? `${u}|${v}` : `${v}|${u}`);
+
+// ================================================================
+// 전장(끝단↔끝단 최장 경로)
+// ================================================================
+
+/** 배선 하나 = 두 부품을 잇는 간선 하나 */
+export type SpanEdge = { a: string; b: string; wid: Id; mm: number | null };
+
+/**
+ * 끝단↔끝단 경로 길이의 최댓값(전장)을 구한다.
+ *
+ * ## 왜 "최장 배선 한 본" 이 아닌가
+ * 스플라이스로 이어진 `J1→SP1 500` + `SP1→J2 500` 은 끝에서 끝까지 1,000mm 다.
+ * 최장 배선을 전장이라 부르면 도면 전폭 치수선에 500 이 찍힌다 — 절반이 거짓이다.
+ *
+ * ## 언제 값을 만들지 않는가
+ * - 배선 그래프에 **고리**가 있으면 두 끝단 사이 경로가 여러 개라 전장이 하나로
+ *   정해지지 않는다(어느 경로를 따라 재는지 도면 데이터에 없다).
+ * - 길이를 모르는 배선이 하나라도 있으면 경로 합을 낼 수 없다. 아는 것만 더하면
+ *   **실제보다 짧은** 숫자가 나와 그게 제일 나쁘다.
+ * 두 경우 모두 `null` 을 돌려주고 이유를 남긴다. 화면은 그때 "최장 배선"이라고
+ * 사실대로 쓴다.
+ *
+ * ## 같은 두 부품을 잇는 배선이 여러 본이면
+ * 하나의 간선으로 합치되 길이는 **최댓값**을 쓴다. 그 배선들은 같은 다발을
+ * 지나가므로 도면상 두 부품이 벌어진 거리는 가장 긴 배선을 따른다(짧은 쪽은
+ * 여유가 덜 든 것이다). 이렇게 해야 `J1↔J2` 6본짜리 단순 하네스처럼 고리가
+ * 아닌 경우를 고리로 오판하지 않는다.
+ */
+export function endToEndSpan(
+  edges: SpanEdge[],
+): { run: { from: string; to: string; mm: number; wires: Id[] } | null; note: SpanNote | null } {
+  if (!edges.length) return { run: null, note: 'empty' };
+  if (edges.some((e) => e.mm == null)) return { run: null, note: 'missing' };
+
+  // 평행 간선(같은 두 부품 사이 여러 본)을 최댓값 하나로 합친다
+  const merged = new Map<string, { a: string; b: string; wid: Id; mm: number }>();
+  for (const e of edges) {
+    const k = edgeKey(e.a, e.b);
+    const cur = merged.get(k);
+    if (!cur || (e.mm as number) > cur.mm) merged.set(k, { a: e.a, b: e.b, wid: e.wid, mm: e.mm as number });
+  }
+
+  const adj = new Map<string, { to: string; mm: number; wid: Id }[]>();
+  const link = (u: string, v: string, mm: number, wid: Id) => {
+    const list = adj.get(u) ?? [];
+    list.push({ to: v, mm, wid });
+    adj.set(u, list);
+  };
+  for (const e of merged.values()) {
+    link(e.a, e.b, e.mm, e.wid);
+    link(e.b, e.a, e.mm, e.wid);
+  }
+
+  /** 한 정점에서 가장 먼 정점까지 — 나무이므로 방문 표시만으로 충분하다 */
+  const farthest = (start: string) => {
+    const dist = new Map<string, number>([[start, 0]]);
+    const via = new Map<string, { from: string; wid: Id }>();
+    const stack = [start];
+    let best = start;
+    const comp: string[] = [];
+    while (stack.length) {
+      const v = stack.pop()!;
+      comp.push(v);
+      for (const e of adj.get(v) ?? []) {
+        if (dist.has(e.to)) continue;
+        dist.set(e.to, (dist.get(v) ?? 0) + e.mm);
+        via.set(e.to, { from: v, wid: e.wid });
+        if ((dist.get(e.to) ?? 0) > (dist.get(best) ?? 0)) best = e.to;
+        stack.push(e.to);
+      }
+    }
+    return { best, dist, via, comp };
+  };
+
+  const seen = new Set<string>();
+  let out: { from: string; to: string; mm: number; wires: Id[] } | null = null;
+
+  for (const start of adj.keys()) {
+    if (seen.has(start)) continue;
+    const first = farthest(start);
+    for (const v of first.comp) seen.add(v);
+
+    // 나무인가 — 간선 수가 정점 수 - 1 이어야 한다
+    const compSet = new Set(first.comp);
+    let deg = 0;
+    for (const v of first.comp) deg += (adj.get(v) ?? []).length;
+    if (deg / 2 !== compSet.size - 1) return { run: null, note: 'cycle' };
+
+    // 두 번째 탐색 = 지름
+    const second = farthest(first.best);
+    const mm = second.dist.get(second.best) ?? 0;
+    if (!out || mm > out.mm) {
+      const wires: Id[] = [];
+      let cur = second.best;
+      while (cur !== first.best) {
+        const step = second.via.get(cur);
+        if (!step) break;
+        wires.push(step.wid);
+        cur = step.from;
+      }
+      out = { from: first.best, to: second.best, mm, wires: wires.reverse() };
+    }
+  }
+
+  return out ? { run: out, note: null } : { run: null, note: 'empty' };
+}
 
 // ================================================================
 // 본체
@@ -384,6 +581,8 @@ export function buildPhysicalModel(doc: HarnessDocument): PhysicalModel {
   // --- 구간 골격 ---
   const segIndex = new Map<string, number>();
   const wireBuckets: Id[][] = treeEdges.map(() => []);
+  /** 그 구간이 **전 경로**인 배선 — 구간 실치수의 유일한 근거 */
+  const directBuckets: Id[][] = treeEdges.map(() => []);
   treeEdges.forEach(([u, v], i) => segIndex.set(edgeKey(u, v), i));
 
   // 각 배선의 트리 경로를 훑어 지나가는 구간에 적립
@@ -412,23 +611,47 @@ export function buildPhysicalModel(doc: HarnessDocument): PhysicalModel {
   };
 
   for (const [wid, [a, b]] of wireVerts) {
-    for (const k of climb(a, b)) {
+    const path = climb(a, b);
+    for (const k of path) {
       const i = segIndex.get(k);
-      if (i !== undefined) wireBuckets[i].push(wid);
+      if (i === undefined) continue;
+      wireBuckets[i].push(wid);
+      // 경로가 이 간선 하나뿐이면 배선의 전장이 곧 이 구간의 길이다.
+      // 두 칸 이상 가는 배선의 전장은 이 구간에 대해 상한선일 뿐이다.
+      if (path.length === 1) directBuckets[i].push(wid);
     }
   }
 
   const wireById = new Map(doc.wires.map((w) => [w.id, w] as const));
+  // 길이는 공용 해석기로만 읽는다 — 케이블 심선도 케이블 길이를 따른다
+  const resolve = lengthResolver(doc);
+  const lengthOfId = (id: Id): number | null => {
+    const w = wireById.get(id);
+    return w ? resolve(w).mm : null;
+  };
 
   const segments: Segment[] = treeEdges.map(([u, v], i) => {
     const wireIds = wireBuckets[i];
-    const lens = wireIds
-      .map((id) => wireById.get(id)?.lengthMm)
-      .filter((n): n is number => typeof n === 'number');
+    const directIds = directBuckets[i];
+
+    // --- 실치수: 이 구간이 전 경로인 배선만 근거로 삼는다 ---
+    const directLens = directIds.map(lengthOfId);
+    const known = directLens.filter((n): n is number => n != null);
+    let lengthMm: number | null = null;
+    let lengthNote: SegmentLengthNote | null = null;
+    if (!wireIds.length) lengthNote = 'none';
+    else if (!directIds.length) lengthNote = 'through';
+    else if (known.length < directIds.length) lengthNote = 'missing';
+    else if (Math.min(...known) !== Math.max(...known)) lengthNote = 'mixed';
+    else lengthMm = known[0];
+
+    // --- 참고값: 지나는 배선 전장의 범위 (치수가 아니다) ---
+    const allLens = wireIds.map(lengthOfId).filter((n): n is number => n != null);
     const cores = wireIds
       .map((id) => wireById.get(id)?.gauge)
       .filter((g): g is Gauge => !!g)
       .map(wireDiameterMm);
+
     return {
       code: `S${i + 1}`,
       from: u,
@@ -436,24 +659,24 @@ export function buildPhysicalModel(doc: HarnessDocument): PhysicalModel {
       fromRef: refOf(u),
       toRef: refOf(v),
       wireIds,
+      directWireIds: directIds,
       count: wireIds.length,
-      lengthMm: lens.length ? Math.max(...lens) : null,
+      lengthMm,
+      lengthNote,
+      wireRangeMm: allLens.length ? [Math.min(...allLens), Math.max(...allLens)] : null,
+      missingLength: wireIds.length - allLens.length,
       odMm: cores.length ? bundleDiameterMm(wireIds.length, Math.max(...cores)) : null,
     };
   });
 
-  // --- 합계 / 전장 ---
-  let totalWireMm = 0;
-  let missingLength = 0;
-  for (const w of doc.wires) {
-    if (typeof w.lengthMm === 'number') totalWireMm += w.lengthMm;
-    else missingLength += 1;
-  }
+  // --- 합계 ---
+  const tally = tallyLengths(doc.wires, resolve);
 
+  // --- 최장 배선 한 본 (전장이 아니다) ---
   let longest: LongestRun | null = null;
   for (const [wid, [a, b]] of wireVerts) {
-    const len = wireById.get(wid)?.lengthMm;
-    if (typeof len !== 'number') continue;
+    const len = lengthOfId(wid);
+    if (len == null) continue;
     if (!longest || len > longest.lengthMm) {
       longest = {
         wireId: wid,
@@ -465,13 +688,42 @@ export function buildPhysicalModel(doc: HarnessDocument): PhysicalModel {
     }
   }
 
+  // --- 전장 = 끝단↔끝단 최장 경로 ---
+  const spanEdges: SpanEdge[] = [...wireVerts].map(([wid, [a, b]]) => ({
+    a, b, wid, mm: lengthOfId(wid),
+  }));
+  const { run, note: spanNote } = endToEndSpan(spanEdges);
+  // 라벨은 도면과 같은 방향으로 읽혀야 한다(왼쪽 → 오른쪽 = 작도 순서).
+  // 지름 탐색은 어느 끝에서 시작했느냐에 따라 방향이 뒤집히므로 여기서 맞춘다.
+  const flip = run ? ordOf(run.to) < ordOf(run.from) : false;
+  const span: SpanRun | null = run
+    ? {
+        lengthMm: run.mm,
+        fromRef: refOf(flip ? run.to : run.from),
+        toRef: refOf(flip ? run.from : run.to),
+        wireCodes: (flip ? [...run.wires].reverse() : run.wires).map((id) => codes.get(id) ?? id),
+      }
+    : null;
+
   // 트리에 실제로 쓰인 정점만 내보낸다 (배선이 없는 커넥터는 물리 도면에 나오지 않는다)
   const nodes = [...adj.keys()]
     .map((v) => meta.get(v))
     .filter((n): n is PhysNode => !!n)
     .sort((a, b) => ordOf(a.id) - ordOf(b.id));
 
-  return { nodes, segments, roots, wireCodes: codes, totalWireMm, missingLength, longest };
+  return {
+    nodes,
+    segments,
+    roots,
+    wireCodes: codes,
+    totalWireMm: tally.totalMm,
+    countedLength: tally.counted,
+    missingLength: tally.missing,
+    cableLength: tally.fromCable,
+    span,
+    spanNote,
+    longest,
+  };
 }
 
 // ================================================================

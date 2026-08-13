@@ -227,7 +227,12 @@ function runCells(r: RunRow): string[] {
   const net = r.netCode ? (r.net ? `${r.netCode} ${r.net}` : r.netCode) : (r.net || '—');
   // 색은 흑백 인쇄를 대비해 **약호 + 이름**을 함께 적는다
   const color = base ? `${colorAbbr(base, stripe)} ${r.color}` : '—';
-  return [net, r.from || '—', r.to || '—', color, r.gauge || '—', r.lengthMm || '—'];
+  // 케이블 심선은 케이블 길이로 재단된다 — 값은 적되 어디서 온 값인지 밝힌다.
+  // 그냥 숫자만 적으면 이 심선에 직접 지정된 길이처럼 읽힌다.
+  const len = r.lengthMm
+    ? (r.lengthSource === 'cable' ? `${r.lengthMm} (케이블)` : r.lengthMm)
+    : '—';
+  return [net, r.from || '—', r.to || '—', color, r.gauge || '—', len];
 }
 
 function drawRunList(ctx: Ctx, doc: HarnessDocument): void {

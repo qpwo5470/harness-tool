@@ -25,6 +25,7 @@ import {
 } from '../store/kit';
 import type { PartRow } from '../export/exporters';
 import { buildPartList, buildRunList, describeEndpoint, toCsv } from '../export/exporters';
+import { lengthResolver } from '../store/wireLength';
 import { colorAbbr, refLabels, strokeColor } from '../canvas/docToFlow';
 import './parts.css';
 
@@ -279,14 +280,27 @@ function specGroupsOf(doc: HarnessDocument): SpecGroup[] {
     })),
   ];
 
+  // 길이는 공용 해석기로만 읽는다 — 케이블 심선은 케이블 길이를 따른다
+  const lengthOf = lengthResolver(doc);
   const dims: SpecRow[] = [
-    { ref: '', text: '전선 총장 (도면 길이 합)', qty: `${fmt(st.wireLengthMm)}mm` },
-    ...doc.wires.map((w) => ({
-      ref: wl.get(w.id) ?? '',
-      text: `${describeEndpoint(doc, w.from)} → ${describeEndpoint(doc, w.to)}`,
-      qty: w.lengthMm != null ? `${fmt(w.lengthMm)}mm` : '미입력',
-      dim: w.lengthMm == null,
-    })),
+    {
+      ref: '',
+      // 합계가 몇 본치인지 밝힌다 — 미입력분을 0 으로 더한 합은 짧아 보인다
+      text: st.missingLength > 0
+        ? `전선 총장 (길이를 아는 ${st.countedLength}본 합)`
+        : '전선 총장 (도면 길이 합)',
+      qty: `${fmt(st.wireLengthMm)}mm`,
+    },
+    ...doc.wires.map((w) => {
+      const len = lengthOf(w);
+      return {
+        ref: wl.get(w.id) ?? '',
+        text: `${describeEndpoint(doc, w.from)} → ${describeEndpoint(doc, w.to)}`
+          + (len.source === 'cable' ? ' · 케이블 길이' : ''),
+        qty: len.mm != null ? `${fmt(len.mm)}mm` : '미입력',
+        dim: len.mm == null,
+      };
+    }),
   ];
 
   const work: SpecRow[] = [
@@ -684,9 +698,11 @@ export function PartsPanel(props: {
                   {open && (
                     <div className="pt-item-detail">
                       <div className="pt-kv">
-                        <span className="pt-k">전장</span>
+                        {/* 길이 합은 전장(끝단↔끝단)이 아니다 — 이름을 사실대로 쓴다 */}
+                        <span className="pt-k">전선 총장</span>
                         <span className="pt-v num">
-                          {fmt(st.wireLengthMm)}mm — 전선 길이 합 (도면 그대로)
+                          {fmt(st.wireLengthMm)}mm — 전선 길이 합
+                          {st.missingLength > 0 ? ` (${st.countedLength}본 기준)` : ' (도면 그대로)'}
                         </span>
                       </div>
                       <div className="pt-kv">

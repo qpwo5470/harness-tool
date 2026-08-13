@@ -17,6 +17,7 @@ import type {
 import {
   blockersOf, letterAt, perSetOf, statsOf, totalHarnesses, totalOf,
 } from '../store/kit';
+import { lengthResolver } from '../store/wireLength';
 import { strokeColor } from '../canvas/docToFlow';
 import './set.css';
 
@@ -187,9 +188,16 @@ export function miniSchematic(h: HarnessDocument): MiniSchematic {
 
 const num = (n: number) => n.toLocaleString('en-US');
 
-/** 전장 — 가장 긴 배선 한 본. 물리 뷰 구간이 아직 없으므로 최장 경로의 근사값이다. */
-function overallMm(h: HarnessDocument): number {
-  return h.wires.reduce((m, w) => Math.max(m, w.lengthMm ?? 0), 0);
+/**
+ * 가장 긴 배선 **한 본**의 길이. 전장(끝단↔끝단 경로 합)이 아니다 —
+ * 스플라이스로 이어진 500 + 500 은 여기서 500 으로 나온다. 그래서 카드의
+ * 항목명도 "최장 배선"이다. 전장이 필요하면 물리 뷰(`segments.ts` 의 `span`)를
+ * 봐야 하고, 그건 도면 하나를 다 만들어야 나오는 값이라 카드에는 싣지 않는다.
+ * 길이는 공용 해석기를 쓴다 — 케이블 심선도 케이블 길이를 따른다.
+ */
+function longestWireMm(h: HarnessDocument): number {
+  const lengthOf = lengthResolver(h);
+  return h.wires.reduce((m, w) => Math.max(m, lengthOf(w).mm ?? 0), 0);
 }
 
 /** 카드 푸터의 미완성 배지 — 빨강 없이 스틸로만 표기한다 */
@@ -327,7 +335,7 @@ export function SetOverview(props: {
             const issue = issueOf(h);
             const per = perSetOf(set, h.id);
             const sel = h.id === activeHarnessId;
-            const long = overallMm(h);
+            const long = longestWireMm(h);
             return (
               <article
                 key={h.id}
@@ -390,7 +398,7 @@ export function SetOverview(props: {
                     </span>
                   </div>
                   <div className="so-spec-row">
-                    <span className="so-spec-k">전장</span>
+                    <span className="so-spec-k">최장 배선</span>
                     <span className="so-spec-v num">{long ? `${num(long)}mm` : '—'}</span>
                   </div>
                 </div>

@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import type { HarnessDocument } from '../types';
 import { buildPartList, toCsv, buildRunList, runListToCsv } from './exporters';
 import { sampleDoc } from '../fixtures/sampleDoc';
 
@@ -9,6 +10,76 @@ describe('buildPartList', () => {
     expect(connQty).toBe(3); // 커넥터 3개
     expect(rows.some((r) => r.category === '와이어')).toBe(true);
     expect(rows.some((r) => r.category === '케이블')).toBe(true);
+  });
+});
+
+// ============================================================
+// 와이어 총 길이 — 미입력분을 조용히 0 으로 더하지 않는다
+// ============================================================
+
+/** 같은 규격·색 와이어 n 본짜리 문서. `lengths[i] === undefined` 면 미입력 */
+function wireDoc(lengths: (number | undefined)[], cables?: HarnessDocument['cables']) {
+  return {
+    ...sampleDoc,
+    cables,
+    wires: lengths.map((len, i) => ({
+      id: `w${i + 1}`,
+      from: { type: 'pin' as const, connectorId: 'con-a', pinId: `a${i + 1}` },
+      to: { type: 'pin' as const, connectorId: 'sp-1', pinId: 's1' },
+      color: { base: 'red' },
+      gauge: { system: 'awg' as const, value: 22 },
+      lengthMm: len,
+      cableId: cables ? 'cb1' : undefined,
+    })),
+  };
+}
+
+const wireRow = (doc: HarnessDocument) =>
+  buildPartList(doc).find((r) => r.category === '와이어')!;
+
+describe('와이어 총 길이', () => {
+  it('전부 입력돼 있으면 합만 적는다', () => {
+    expect(wireRow(wireDoc([100, 200])).detail).toBe('총 300mm');
+  });
+
+  /**
+   * 회귀(감사 ④): 예전에는 `w.lengthMm ?? 0` 으로 미입력분을 0 으로 더해
+   * `총 300mm · 3본` 이라 찍혔다 — 그 300 은 2본치다. 발주서에서는 이 한 줄이
+   * 그대로 수량이 되므로 합계가 몇 본치인지 행에 드러나야 한다.
+   */
+  it('미입력이 섞이면 몇 본치 합인지와 미입력 본수를 밝힌다', () => {
+    const row = wireRow(wireDoc([100, 200, undefined]));
+    expect(row.qty).toBe(3);
+    expect(row.detail).toBe('총 300mm (2본 기준) · 길이 미입력 1본');
+  });
+
+  it('전부 미입력이면 합을 만들지 않는다', () => {
+    expect(wireRow(wireDoc([undefined, undefined])).detail).toBe('길이 미입력 2본');
+  });
+
+  /**
+   * 케이블 심선은 케이블에 딸려 오므로 **전선으로 따로 사지 않는다**
+   * (같은 파트리스트의 '케이블' 행에 길이가 이미 잡힌다). 길이를 모르는 것과는
+   * 사정이 다르므로 0 으로 뭉개지 않고 본수를 따로 밝힌다.
+   */
+  it('케이블 심선은 전선 합계에 넣지 않고 본수만 밝힌다', () => {
+    const doc = wireDoc([undefined, undefined], [
+      { id: 'cb1', name: '2C 전원 케이블', coreCount: 2, lengthMm: 500 },
+    ]);
+    expect(wireRow(doc).detail).toBe('케이블 심선 2본');
+    // 케이블 행에는 그대로 500mm 가 잡힌다 — 이중 계상이 아니다
+    expect(buildPartList(doc).find((r) => r.category === '케이블')!.detail).toBe('500mm');
+  });
+});
+
+describe('접속표 길이', () => {
+  it('케이블 심선의 재단 길이는 케이블에서 온다 — 빈 칸으로 두지 않는다', () => {
+    // sampleDoc: w2 · w3 는 cbl-1(300mm) 소속이고 개별 길이가 없다
+    const rows = buildRunList(sampleDoc);
+    const w2 = rows.find((r) => r.wireId === 'w2')!;
+    expect(w2.lengthMm).toBe('300');
+    expect(w2.lengthSource).toBe('cable');
+    expect(rows.find((r) => r.wireId === 'w1')!.lengthSource).toBe('wire');
   });
 });
 

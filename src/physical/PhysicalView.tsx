@@ -11,7 +11,12 @@
  * 좌측 라이브러리 패널과 상단바는 App 셸이 붙인다.
  *
  * 숫자 원칙:
- * - 길이가 없으면 `—`. 치수선도 그리지 않는다. 지어내지 않는다.
+ * - **티크 달린 정식 치수선은 실치수에만 쓴다.** 구간 길이는 그 구간이 전 경로인
+ *   배선에서만 나오고(segments.ts), 나오지 않으면 치수선을 그리지 않고 표에는
+ *   `—` 와 그 이유를 적는다. 근거 없는 숫자를 치수선으로 그리면 그대로 잘린다.
+ * - 도면 전폭 치수선은 **전장이 확정될 때만** 그린다. 확정되지 않으면 최장 배선
+ *   한 본을 "최장 배선"이라는 이름으로 적는다 — "전장" 이라 부르지 않는다.
+ * - 길이가 없으면 `—`. 지어내지 않는다.
  * - 외경은 √본수 × 심선 외경의 **추정값**이라고 화면에 밝힌다.
  * - 보호재는 문서에 데이터가 없으므로 전부 `미지정`.
  */
@@ -19,7 +24,8 @@ import { useMemo, useRef, useState } from 'react';
 import type { MouseEvent } from 'react';
 import type { HarnessDocument } from '../types';
 import {
-  buildPhysicalModel, formatMm, materialRows,
+  buildPhysicalModel, formatMm, formatRange, materialRows,
+  segmentLengthNoteText, spanNoteText,
   type PhysNode, type PhysicalModel, type Segment,
 } from './segments';
 import './physical.css';
@@ -46,7 +52,7 @@ export type SegPath = {
   code: string;
   /** 다발 선 path */
   d: string;
-  /** 치수선 (길이가 입력된 구간만) */
+  /** 치수선 — **실치수가 확정된 구간만**. 대표값·추정값에는 그리지 않는다 */
   dim: { line: string; ticks: string; lx: number; ly: number; text: string } | null;
 };
 
@@ -232,8 +238,9 @@ export function PhysicalView(props: {
             <>
               {/* 전장 치수 한 줄 */}
               <svg className="pv-svg" width={layout.width} height={layout.height} aria-hidden>
-                {model.longest && (
-                  <g className="pv-dim">
+                {/* 전폭 치수선은 전장이 확정됐을 때만 — 최장 배선 한 본은 전장이 아니다 */}
+                {model.span && (
+                  <g className="pv-dim" data-testid="pv-span-dim">
                     <path d={`M 48 ${SPAN_Y} H ${layout.width - 48}`} />
                     <path
                       d={`M 48 ${SPAN_Y - TICK / 2} V ${SPAN_Y + TICK / 2} M ${layout.width - 48} ${SPAN_Y - TICK / 2} V ${SPAN_Y + TICK / 2}`}
@@ -310,12 +317,20 @@ export function PhysicalView(props: {
                   </span>
                 ) : null,
               )}
-              {model.longest && (
+              {/* 전장 — 끝단↔끝단 경로 합이 확정될 때만 "전장"이라 쓴다 */}
+              {model.span && (
                 <span className="pv-dimval num" style={{ left: layout.width / 2, top: SPAN_Y }}>
-                  {`전장 ${formatMm(model.longest.lengthMm)}mm · 최장 배선 ${model.longest.code} ${model.longest.fromRef} → ${model.longest.toRef}`}
+                  {`전장 ${formatMm(model.span.lengthMm)}mm · ${model.span.fromRef} → ${model.span.toRef}`}
+                  {model.span.wireCodes.length > 1 && ` (${model.span.wireCodes.join(' + ')})`}
                 </span>
               )}
-              {!model.longest && (
+              {!model.span && model.longest && (
+                <span className="pv-dimval is-empty" style={{ left: layout.width / 2, top: SPAN_Y }}>
+                  {`최장 배선 ${formatMm(model.longest.lengthMm)}mm · ${model.longest.code} ${model.longest.fromRef} → ${model.longest.toRef}`}
+                  {model.spanNote && ` — ${spanNoteText(model.spanNote)}`}
+                </span>
+              )}
+              {!model.span && !model.longest && (
                 <span className="pv-dimval is-empty" style={{ left: layout.width / 2, top: SPAN_Y }}>
                   전장 미입력 — 배선 길이를 넣으면 치수가 잡힙니다
                 </span>
@@ -426,7 +441,16 @@ export function PhysicalView(props: {
                         <div className="pv-prot">보호재 미지정</div>
                       </td>
                       <td className="c-len num">
-                        {s.lengthMm != null ? `${formatMm(s.lengthMm)}mm` : '—'}
+                        {s.lengthMm != null ? (
+                          `${formatMm(s.lengthMm)}mm`
+                        ) : (
+                          <>
+                            —
+                            {/* 왜 — 인지 밝힌다. 빈 칸은 "아직 안 적었다"로 읽히지만
+                                여기 대부분은 "이 데이터로는 알 수 없다"이다 */}
+                            <i className="pv-lennote">{segmentLengthNoteText(s.lengthNote ?? 'none')}</i>
+                          </>
+                        )}
                       </td>
                       <td className="c-cnt num">{s.count}본</td>
                     </tr>
@@ -440,6 +464,11 @@ export function PhysicalView(props: {
                   )}
                 </tbody>
               </table>
+              {/* 구간 길이가 어떤 근거로 나오는지 표 밑에 한 줄로 밝힌다 */}
+              <p className="pv-note">
+                구간 길이는 그 구간이 전 경로인 배선에서만 나옵니다 — 더 멀리 가는 배선의
+                전장은 이 구간의 길이가 아니므로 근거가 없으면 <b>—</b> 로 둡니다.
+              </p>
               <MaterialList rows={materials} />
             </>
           )}
@@ -449,7 +478,17 @@ export function PhysicalView(props: {
         <div className="pv-status">
           <span>
             구간 <b className="num">{model.segments.length}</b> · 전선{' '}
-            <b className="num">{formatMm(model.totalWireMm)}mm</b>
+            {/* 아는 길이가 하나도 없으면 0mm 가 아니라 — 다. 0 은 "0mm 로 자르라"로 읽힌다 */}
+            <b className="num">
+              {model.countedLength > 0 ? `${formatMm(model.totalWireMm)}mm` : '—'}
+            </b>
+            {/* 합계가 몇 본치인지 밝힌다 — 미입력분을 0 으로 더한 합은 짧아 보인다 */}
+            {model.missingLength > 0 && model.countedLength > 0 && (
+              <span className="num"> ({model.countedLength}본 기준)</span>
+            )}
+            {model.cableLength > 0 && (
+              <span className="num"> · 케이블 기준 {model.cableLength}본</span>
+            )}
             {model.missingLength > 0 && (
               <span className="pv-warn"> · 길이 미입력 {model.missingLength}본</span>
             )}
@@ -519,7 +558,7 @@ function SegmentCard(props: { seg: Segment; model: PhysicalModel; x: number; y: 
       <div className="pv-hover-b">
         <div className="pv-grid3">
           <div>
-            <i>길이</i>
+            <i>{seg.lengthMm != null ? '길이' : '길이 미상'}</i>
             <b className="num">{seg.lengthMm != null ? `${formatMm(seg.lengthMm)}mm` : '—'}</b>
           </div>
           <div>
@@ -531,6 +570,15 @@ function SegmentCard(props: { seg: Segment; model: PhysicalModel; x: number; y: 
             <b className="num">{seg.odMm != null ? `Ø${seg.odMm}` : '—'}</b>
           </div>
         </div>
+        {/* 실치수를 못 내면 그 이유와, 판단 근거가 된 배선 전장 범위를 같이 보여준다.
+            범위는 참고값이지 구간 치수가 아니라는 것을 문구로 못 박는다. */}
+        {seg.lengthMm == null && (
+          <p className="pv-note">
+            {segmentLengthNoteText(seg.lengthNote ?? 'none')}
+            {seg.wireRangeMm && ` · 지나는 배선 전장 ${formatRange(seg.wireRangeMm)} (구간 치수 아님)`}
+            {seg.missingLength > 0 && ` · 길이 미입력 ${seg.missingLength}본`}
+          </p>
+        )}
         <p className="pv-note">보호재 미지정 · 외경은 √본수 × 심선 외경 추정값</p>
         <p className="pv-wires">
           <i>포함 배선</i> <span className="num">{wires.join(' ')}</span>

@@ -229,6 +229,18 @@ describe('접속표', () => {
     expect(p2.some((s) => s.startsWith('R/W red/white'))).toBe(true);
   });
 
+  /**
+   * 케이블 심선(w2 · w3)은 개별 길이가 없고 cbl-1(300mm)을 따른다.
+   * 예전에는 길이 칸이 `—` 라 종이만 보고 자를 수 없었다. 값을 적되 그 값이
+   * 이 심선에 직접 지정된 것이 아님을 함께 밝힌다.
+   */
+  it('케이블 심선의 재단 길이를 적고 출처를 밝힌다', async () => {
+    await downloadPdf(sampleDoc);
+    const p2 = textsOnPage(2);
+    expect(p2.filter((s) => s === '300 (케이블)')).toHaveLength(2); // w2 · w3
+    expect(p2).toContain('120'); // w1 은 배선에 직접 입력된 길이
+  });
+
   it('행이 넘치면 페이지를 나누고 헤더를 페이지마다 반복한다', async () => {
     await downloadPdf(docWithWires(140));
     // 배선도 1 + 접속표 2 + 파트리스트 1 이상

@@ -4,6 +4,7 @@
 import type { HarnessDocument, Endpoint, PartGender } from '../types';
 import { computeNets } from '../store/netlist';
 import { genderDetail } from '../library/gender';
+import { lengthResolver, type LengthSource } from '../store/wireLength';
 
 export type PartRow = {
   category: string;
@@ -11,6 +12,43 @@ export type PartRow = {
   qty: number;
   detail?: string;
 };
+
+/** 와이어 한 그룹(게이지+색)의 길이 집계 상태 */
+type WireGroup = {
+  /** 그룹의 전체 본수 */
+  qty: number;
+  /** 전선으로 **발주할** 길이 합(mm) — 배선에 직접 입력된 것만 */
+  len: number;
+  /** len 이 몇 본치인지 */
+  counted: number;
+  /** 케이블 길이를 따르는 심선 수 — 케이블 행으로 이미 발주된다 */
+  cable: number;
+  /** 길이를 알 수 없는 배선 수 */
+  missing: number;
+};
+
+/**
+ * 와이어 행의 비고 문구.
+ *
+ * ## 왜 "(N본 기준)" 을 붙이는가
+ * 예전에는 `w.lengthMm ?? 0` 으로 미입력분을 조용히 0 으로 더했다. 3본 중 1본에
+ * 길이가 없으면 `총 300mm · 3본` 이라 찍혔고, 그 300 은 2본치였다. 발주서에서
+ * 이 한 줄이 그대로 수량이 되므로, 합계가 몇 본치인지 행에 드러낸다.
+ *
+ * ## 왜 케이블 심선은 합계에서 빼는가
+ * 케이블 심선은 케이블에 딸려 오는 것이라 **전선으로 따로 사지 않는다**
+ * (같은 파트리스트의 '케이블' 행에 이미 길이가 잡혀 있다). 길이를 모르는 것과는
+ * 다른 사정이므로 0 으로 뭉개지 않고 본수를 따로 밝힌다.
+ */
+function wireLengthDetail(g: WireGroup): string | undefined {
+  const notes: string[] = [];
+  if (g.counted > 0) {
+    notes.push(g.counted < g.qty ? `총 ${g.len}mm (${g.counted}본 기준)` : `총 ${g.len}mm`);
+  }
+  if (g.cable > 0) notes.push(`케이블 심선 ${g.cable}본`);
+  if (g.missing > 0) notes.push(`길이 미입력 ${g.missing}본`);
+  return notes.length ? notes.join(' · ') : undefined;
+}
 
 /** 하우징 / 와이어 / 케이블을 집계한 파트리스트 */
 export function buildPartList(doc: HarnessDocument): PartRow[] {
@@ -31,17 +69,24 @@ export function buildPartList(doc: HarnessDocument): PartRow[] {
   }
 
   // 와이어: 게이지+색 기준 그룹, 총 길이 합산
-  const wg = new Map<string, { qty: number; len: number }>();
+  const lengthOf = lengthResolver(doc);
+  const wg = new Map<string, WireGroup>();
   for (const w of doc.wires) {
     const color = w.color.stripe ? `${w.color.base}/${w.color.stripe}` : w.color.base;
     const key = `${w.gauge.system.toUpperCase()}${w.gauge.value} · ${color}`;
-    const cur = wg.get(key) ?? { qty: 0, len: 0 };
+    const cur = wg.get(key) ?? { qty: 0, len: 0, counted: 0, cable: 0, missing: 0 };
     cur.qty += 1;
-    cur.len += w.lengthMm ?? 0;
+    const { mm, source } = lengthOf(w);
+    if (mm == null) cur.missing += 1;
+    else if (source === 'cable') cur.cable += 1;   // 케이블에 딸려 오므로 전선으로 사지 않는다
+    else {
+      cur.len += mm;
+      cur.counted += 1;
+    }
     wg.set(key, cur);
   }
-  for (const [part, { qty, len }] of wg) {
-    rows.push({ category: '와이어', part, qty, detail: len ? `총 ${len}mm` : undefined });
+  for (const [part, g] of wg) {
+    rows.push({ category: '와이어', part, qty: g.qty, detail: wireLengthDetail(g) });
   }
 
   // 터미널(크림프핀): 하우징에 연결된 핀 수만큼 필요 — 발주 시 필수 항목
@@ -104,7 +149,10 @@ export type RunRow = {
   to: string;
   color: string;
   gauge: string;
+  /** 재단 길이(mm). 케이블 심선은 케이블 길이를 따른다. 모르면 빈 문자열 */
   lengthMm: string;
+  /** 그 길이가 어디서 왔는지 — 화면·PDF 에서 '케이블 기준'임을 밝히는 데 쓴다 */
+  lengthSource: LengthSource;
 };
 
 /** 끝점을 사람이 읽는 문자열로 ("JST XH 4P#1", "Raspberry Pi.5V") */
@@ -131,16 +179,25 @@ export function buildRunList(doc: HarnessDocument): RunRow[] {
     }
   }
 
-  return doc.wires.map((w) => ({
-    wireId: w.id,
-    net: netOfWire.get(w.id) ?? '',
-    netCode: codeOfWire.get(w.id) ?? '',
-    from: describeEndpoint(doc, w.from),
-    to: describeEndpoint(doc, w.to),
-    color: w.color.stripe ? `${w.color.base}/${w.color.stripe}` : w.color.base,
-    gauge: `${w.gauge.system.toUpperCase()}${w.gauge.value}`,
-    lengthMm: w.lengthMm != null ? String(w.lengthMm) : '',
-  }));
+  // 접속표는 현장에서 전선을 자를 때 보는 표다. 케이블 심선의 재단 길이는
+  // 케이블에 적혀 있으므로 여기에도 그 값이 나와야 한다 — 빈 칸으로 두면
+  // 작업자가 길이를 모른 채 자르게 된다.
+  const lengthOf = lengthResolver(doc);
+
+  return doc.wires.map((w) => {
+    const len = lengthOf(w);
+    return {
+      wireId: w.id,
+      net: netOfWire.get(w.id) ?? '',
+      netCode: codeOfWire.get(w.id) ?? '',
+      from: describeEndpoint(doc, w.from),
+      to: describeEndpoint(doc, w.to),
+      color: w.color.stripe ? `${w.color.base}/${w.color.stripe}` : w.color.base,
+      gauge: `${w.gauge.system.toUpperCase()}${w.gauge.value}`,
+      lengthMm: len.mm != null ? String(len.mm) : '',
+      lengthSource: len.source,
+    };
+  });
 }
 
 /** 접속표 → CSV */

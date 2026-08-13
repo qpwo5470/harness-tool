@@ -26,6 +26,7 @@ import type {
   Connector, Endpoint, Gauge, HarnessDocument, Id, PartLibraryItem, Pin, PinSlot, Wire,
 } from '../types';
 import { statsOf } from './kit';
+import { lengthResolver } from './wireLength';
 import { computeNets, endpointKey } from './netlist';
 import { describeEndpoint } from '../export/exporters';
 // 도면 레퍼런스(J1 · SP1 · D1)는 캔버스와 같은 규칙을 써야 한다.
@@ -237,34 +238,37 @@ export function validateHarness(doc: HarnessDocument): Issue[] {
 
   // ================================================================
   // 4. 길이 미입력
-  //    케이블에 속한 심선은 케이블 길이를 따르므로(types.ts) 만들 수는 있다 → info.
-  //    총 건수는 statsOf().missingLength 와 언제나 같다.
+  //    케이블에 속한 심선은 케이블 길이를 따르므로(store/wireLength.ts) 만들 수는
+  //    있다 → info. 그건 "미입력"이 아니라 **다른 곳에 입력된 것**이므로
+  //    `statsOf().missingLength` 에도 세지 않는다. 그래서 여기서 비교할 것은
+  //    "error 등급 건수 === statsOf().missingLength" 다.
+  //    길이 해석은 공용 함수 하나만 쓴다 — 물리 뷰·자재표와 판정이 갈리면 안 된다.
   // ================================================================
-  if (stats.missingLength > 0) {
-    const cableById = new Map((doc.cables ?? []).map((c) => [c.id, c]));
-    for (const w of doc.wires) {
-      if (w.lengthMm != null) continue;
-      const cable = w.cableId ? cableById.get(w.cableId) : undefined;
-      if (cable?.lengthMm != null) {
-        out.push({
-          id: 'length-missing',
-          level: 'info',
-          title: '길이 미입력 — 케이블 길이를 따름',
-          detail: `${cable.name ?? '케이블'} 의 ${cable.lengthMm}mm 로 재단되므로 개별 입력은 필요 없다 — 다른 길이로 잘라야 한다면 이 심선에 길이를 직접 넣어야 한다.`,
-          targetId: w.id,
-          where: whereWire(w),
-        });
-        continue;
-      }
+  const lengthOf = lengthResolver(doc);
+  for (const w of doc.wires) {
+    if (w.lengthMm != null) continue;
+    const { mm, cable } = lengthOf(w);
+    if (mm != null && cable) {
       out.push({
         id: 'length-missing',
-        level: 'error',
-        title: '길이 미입력',
-        detail: '길이가 없으면 전선을 재단할 수도, 견적을 낼 수도 없다 — 도면의 길이가 그대로 발주 수량이 된다.',
+        level: 'info',
+        title: '길이 미입력 — 케이블 길이를 따름',
+        detail: `${cable.name ?? '케이블'} 의 ${mm}mm 로 재단되므로 개별 입력은 필요 없다 — 다른 길이로 잘라야 한다면 이 심선에 길이를 직접 넣어야 한다.`,
         targetId: w.id,
         where: whereWire(w),
       });
+      continue;
     }
+    out.push({
+      id: 'length-missing',
+      level: 'error',
+      title: cable ? '길이 미입력 — 케이블에도 길이가 없다' : '길이 미입력',
+      detail: cable
+        ? `${cable.name ?? '케이블'} 에도 길이가 없어 이 심선을 몇 mm 로 자를지 알 수 없다 — 케이블이나 심선 중 한쪽에 길이를 넣어야 한다.`
+        : '길이가 없으면 전선을 재단할 수도, 견적을 낼 수도 없다 — 도면의 길이가 그대로 발주 수량이 된다.',
+      targetId: w.id,
+      where: whereWire(w),
+    });
   }
 
   // ================================================================

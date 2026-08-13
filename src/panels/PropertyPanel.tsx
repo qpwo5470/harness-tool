@@ -34,6 +34,7 @@ import { loadCustomParts } from '../library/customParts';
 import { GENDER_LABEL, GENDER_LONG } from '../library/gender';
 import { refLabels, colorAbbr, strokeColor } from '../canvas/docToFlow';
 import { computeNets } from '../store/netlist';
+import { lengthResolver, tallyLengths } from '../store/wireLength';
 import './property.css';
 
 // ============================================================
@@ -986,7 +987,9 @@ function MultiWireEditor({ doc, wires }: { doc: HarnessDocument; wires: Wire[] }
   const sysC = allSame(wires, (w) => w.gauge.system);
   const valC = allSame(wires, (w) => w.gauge.value);
   const lenC = allSame(wires, (w) => w.lengthMm);
-  const sumLen = wires.reduce((a, w) => a + (w.lengthMm ?? 0), 0);
+  // 합계는 공용 해석기로 낸다 — 케이블 심선도 케이블 길이를 따르고,
+  // 모르는 값은 0 으로 더하지 않고 "몇 본치 합"인지 옆에 밝힌다.
+  const sumLen = tallyLengths(wires, lengthResolver(doc));
 
   /** 일괄 지정 — 파괴적 동작이므로 되돌릴 길을 토스트로 남긴다 */
   const applyAll = (patch: (w: Wire) => Partial<Wire>) => {
@@ -1138,7 +1141,10 @@ function MultiWireEditor({ doc, wires }: { doc: HarnessDocument; wires: Wire[] }
               onKeyDown={(e) => { if (e.key === 'Enter') commitLen(); }}
             />
             <span className="pp-unit num">mm</span>
-            <span className="pp-multi-sum num">합 {sumLen}mm</span>
+            <span className="pp-multi-sum num">
+              합 {sumLen.totalMm}mm
+              {sumLen.missing > 0 && ` (${sumLen.counted}본 기준)`}
+            </span>
             <span className="pp-spacer" />
             <MixTag same={lenC.same} n={n} />
           </Field>

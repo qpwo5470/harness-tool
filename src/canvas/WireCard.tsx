@@ -9,6 +9,7 @@
 import { useHoverStore } from '../store/hoverStore';
 import { strokeColor } from './docToFlow';
 import { computeNets } from '../store/netlist';
+import { resolveWireLength } from '../store/wireLength';
 import type { HarnessDocument, Wire, Endpoint } from '../types';
 
 const W = 268;
@@ -62,6 +63,7 @@ export function WireCard({
 
   const from = describe(wire.from);
   const to = describe(wire.to);
+  const len = resolveWireLength(doc, wire);
 
   // 커서 오른쪽이 기본. 오른쪽 공간이 부족하면 왼쪽으로 뒤집는다.
   const flip = x > 380;
@@ -100,8 +102,10 @@ export function WireCard({
             <b className="num">{wire.gauge.system.toUpperCase()}{wire.gauge.value}</b>
           </div>
           <div>
-            <span className="hz-card-label num">길이</span>
-            <b className="num">{wire.lengthMm != null ? `${wire.lengthMm}mm` : '—'}</b>
+            {/* 케이블 심선은 케이블 길이로 재단된다 — 여기서만 '—' 로 두면
+                물리 뷰·자재표와 숫자가 갈린다. 대신 출처를 밝힌다. */}
+            <span className="hz-card-label num">{len.source === 'cable' ? '길이(케이블)' : '길이'}</span>
+            <b className="num">{len.mm != null ? `${len.mm}mm` : '—'}</b>
           </div>
         </div>
       </div>
