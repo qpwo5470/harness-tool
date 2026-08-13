@@ -24,7 +24,8 @@
 import { BaseEdge, EdgeLabelRenderer, type EdgeProps } from '@xyflow/react';
 import { useSelectionStore } from '../store/selectionStore';
 import { useHoverStore } from '../store/hoverStore';
-import { routeOrthogonal, DEFAULT_STUB, type Box } from './route';
+import type { Box } from './route';
+import { routeWire } from './wirePlan';
 
 export type OrthoEdgeData = {
   /** 가로 주행 구간의 y 오프셋(px) */
@@ -56,17 +57,16 @@ export function OrthogonalEdge(props: EdgeProps) {
   const clickSelect = useSelectionStore((s) => s.click);
   const setHover = useHoverStore((s) => s.setHover);
 
-  const { d: path, labelX, labelY } = routeOrthogonal({
-    sourceX, sourceY, targetX, targetY,
-    sourcePosition, targetPosition,
-    laneY: d.laneY ?? 0,
-    laneX: d.laneX ?? 0,
-    stub: DEFAULT_STUB,        // 패드에서 곧게 빠져나오는 거리
-    // 엣지는 노드보다 아래층(zIndex 0)이라 박스를 지나면 선이 화면에서 사라진다.
-    // 상자를 알면 주행 구간을 박스 바깥으로 돌린다(없으면 예전 경로 그대로).
-    sourceBox: d.sourceBox,
-    targetBox: d.targetBox,
-  });
+  /**
+   * 경로는 **wirePlan.routeWire 하나**에서만 나온다 — PDF(pdfDraw)도 같은 함수를
+   * 부른다. 여기서 따로 계산하면 종이와 화면이 다른 그림이 된다(실제로 그랬다).
+   * 이쪽 좌표는 React Flow 의 DOM 실측값이고 PDF 는 geometry 계산값이라 출처만
+   * 다르다. 레인·상자는 data 에 실려 온 것을 그대로 넘긴다.
+   */
+  const { d: path, labelX, labelY } = routeWire(
+    { sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition },
+    d,
+  );
 
   const stroke = (style?.stroke as string) ?? 'var(--text)';
 

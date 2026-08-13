@@ -1,8 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { docToFlow, docToEdges, highlightedWires, assignLanes } from './docToFlow';
 import { routeOrthogonal, type Pt } from './route';
+import { planWires } from './wirePlan';
 import { sampleDoc } from '../fixtures/sampleDoc';
-import type { Connector, HarnessDocument, Orientation, PartLibraryItem, Wire } from '../types';
+import { fanoutDoc } from '../fixtures/fanoutDoc';
+import type { HarnessDocument } from '../types';
 
 describe('docToFlow', () => {
   it('노드 = 커넥터+장치, 엣지 = 와이어', () => {
@@ -100,94 +102,13 @@ describe('레인 배정 — 구간 겹침 채색', () => {
 });
 
 /* ============================================================
-   밀도 시험 — 20본 두 열 팬아웃
+   밀도 시험 — 20본 두 열 팬아웃 (픽스처는 fixtures/fanoutDoc.ts)
    ------------------------------------------------------------
    getSmoothStepPath 시절 이 배치에서 세로 구간 겹침 123쌍(전부 같은 x 에 포개짐),
    스텁 라벨 좌표가 완전히 같은 쌍 6개가 나왔다. 그 수치를 못박는 자리다.
    ============================================================ */
 
-/** 1열 N핀 스트립 하우징 — 패드가 세로로 늘어서 핸들이 PITCH 간격으로 벌어진다 */
-function strip(id: string, n: number): PartLibraryItem {
-  return {
-    id, category: 'housing', name: `${n}P 스트립`, pinCount: n,
-    pinLayout: Array.from({ length: n }, (_, k) => ({ index: k + 1, offset: { x: 0, y: k } })),
-  };
-}
-
-function conn(id: string, housingId: string, n: number, o: Orientation, x: number, y: number): Connector {
-  return {
-    id, kind: 'connector', housingId, orientation: o,
-    positions: { logical: { x, y } },
-    pins: Array.from({ length: n }, (_, k) => ({ id: `${id}p${k + 1}`, index: k + 1 })),
-  };
-}
-
-/**
- * 왼쪽 두 열(오른쪽으로 나감) → 오른쪽 두 열(왼쪽으로 나감), 20본.
- * 핀 순서를 뒤집어 물려 배선이 서로 교차하게 한다(가장 빡센 경우).
- */
-function fanoutDoc(): HarnessDocument {
-  const h10 = strip('lib-strip-10', 10);
-  const A = conn('J-A', h10.id, 10, 180, 40, 40);
-  const B = conn('J-B', h10.id, 10, 180, 40, 420);
-  const C = conn('J-C', h10.id, 10, 0, 900, 40);
-  const D = conn('J-D', h10.id, 10, 0, 900, 420);
-  const wires: Wire[] = [];
-  const link = (from: Connector, to: Connector, tag: string) => {
-    for (let k = 0; k < 10; k++) {
-      wires.push({
-        id: `${tag}${k}`,
-        from: { type: 'pin', connectorId: from.id, pinId: from.pins[k].id },
-        to: { type: 'pin', connectorId: to.id, pinId: to.pins[9 - k].id },
-        color: { base: 'red' },
-        gauge: { system: 'awg', value: 22 },
-      });
-    }
-  };
-  link(A, C, 'ac');
-  link(B, D, 'bd');
-  return {
-    schemaVersion: 1, id: 'fan', name: '팬아웃',
-    createdAt: '2026-08-13T00:00:00Z', updatedAt: '2026-08-13T00:00:00Z',
-    connectors: [A, B, C, D], devices: [], wires, cables: [], usedParts: [h10],
-  };
-}
-
 type Seg = { wire: number; a: number; b: number; at: number };
-
-/**
- * 실제 그려질 경로를 계산해 가로·세로 선분으로 쪼갠다.
- * @param useLanes false 면 레인을 끈다 — 이 시험이 정말 물리는지 보이는 대조군.
- */
-function segmentsOf(doc: HarnessDocument, useLanes = true) {
-  const lanes = assignLanes(doc, 'logical');
-  const horiz: Seg[] = [];
-  const vert: Seg[] = [];
-  const labels: Pt[] = [];
-  doc.wires.forEach((_, i) => {
-    const r = routeOrthogonal({
-      sourceX: lanes.from[i].x, sourceY: lanes.from[i].y,
-      targetX: lanes.to[i].x, targetY: lanes.to[i].y,
-      sourcePosition: lanes.from[i].side, targetPosition: lanes.to[i].side,
-      laneY: useLanes ? lanes.laneY[i] : 0,
-      laneX: useLanes ? lanes.laneX[i] : 0,
-      // 화면과 같은 조건으로 잰다 — 실제 엣지도 두 끝 노드 상자를 피해 간다.
-      sourceBox: lanes.fromBox[i],
-      targetBox: lanes.toBox[i],
-    });
-    labels.push({ x: r.labelX, y: r.labelY });
-    for (let k = 1; k < r.points.length; k++) {
-      const p = r.points[k - 1];
-      const q = r.points[k];
-      if (Math.abs(p.y - q.y) < 1e-6 && Math.abs(p.x - q.x) > 1e-6) {
-        horiz.push({ wire: i, at: p.y, a: Math.min(p.x, q.x), b: Math.max(p.x, q.x) });
-      } else if (Math.abs(p.x - q.x) < 1e-6 && Math.abs(p.y - q.y) > 1e-6) {
-        vert.push({ wire: i, at: p.x, a: Math.min(p.y, q.y), b: Math.max(p.y, q.y) });
-      }
-    }
-  });
-  return { horiz, vert, labels };
-}
 
 /** 같은 축 위에서 실제로 포개지는(선끼리 구분이 안 되는) 쌍 수 */
 function overlapPairs(segs: Seg[], tol = 2): number {
@@ -202,6 +123,51 @@ function overlapPairs(segs: Seg[], tol = 2): number {
     }
   }
   return n;
+}
+
+/**
+ * 실제 그려질 경로를 계산해 가로·세로 선분으로 쪼갠다.
+ *
+ * 경로는 **planWires** 로 받는다 — 화면 엣지(OrthogonalEdge)와 PDF 가 부르는 그
+ * 함수다. 예전에는 이 시험이 routeOrthogonal 을 직접 불러 인자를 손으로 맞췄고,
+ * 그래서 화면이 실제로 무엇을 그리는지와 조용히 갈릴 수 있었다.
+ *
+ * @param useLanes false 면 레인을 끈다 — 이 시험이 정말 물리는지 보이는 대조군.
+ */
+function segmentsOf(doc: HarnessDocument, useLanes = true) {
+  const horiz: Seg[] = [];
+  const vert: Seg[] = [];
+  const labels: Pt[] = [];
+  const planned = useLanes ? planWires(doc, 'logical') : plainRoutes(doc);
+  planned.forEach((r, i) => {
+    labels.push({ x: r.labelX, y: r.labelY });
+    for (let k = 1; k < r.points.length; k++) {
+      const p = r.points[k - 1];
+      const q = r.points[k];
+      if (Math.abs(p.y - q.y) < 1e-6 && Math.abs(p.x - q.x) > 1e-6) {
+        horiz.push({ wire: i, at: p.y, a: Math.min(p.x, q.x), b: Math.max(p.x, q.x) });
+      } else if (Math.abs(p.x - q.x) < 1e-6 && Math.abs(p.y - q.y) > 1e-6) {
+        vert.push({ wire: i, at: p.x, a: Math.min(p.y, q.y), b: Math.max(p.y, q.y) });
+      }
+    }
+  });
+  return { horiz, vert, labels };
+}
+
+/** 대조군용 — 레인만 끄고 나머지(끝점·상자 회피)는 planWires 와 같게 둔다 */
+function plainRoutes(doc: HarnessDocument) {
+  const lanes = assignLanes(doc, 'logical');
+  return doc.wires.map((w, i) => {
+    const r = routeOrthogonal({
+      sourceX: lanes.from[i].x, sourceY: lanes.from[i].y,
+      targetX: lanes.to[i].x, targetY: lanes.to[i].y,
+      sourcePosition: lanes.from[i].side, targetPosition: lanes.to[i].side,
+      laneY: 0, laneX: 0,
+      sourceBox: lanes.fromBox[i],
+      targetBox: lanes.toBox[i],
+    });
+    return { id: w.id, points: r.points, labelX: r.labelX, labelY: r.labelY };
+  });
 }
 
 describe('밀도 — 20본 두 열 팬아웃', () => {
@@ -274,19 +240,22 @@ function segHitsBox(p: Pt, q: Pt, b: { x: number; y: number; w: number; h: numbe
     && y1 > b.y + eps && y0 < b.y + b.h - eps;
 }
 
-/** 배선 전체에서 제 끝 노드 상자를 관통하는 선분 수 */
+/**
+ * 배선 전체에서 제 끝 노드 상자를 관통하는 선분 수.
+ * @param useBoxes true 면 실제로 그려지는 경로(planWires), false 면 회피를 끈 대조군.
+ */
 function boxHits(doc: HarnessDocument, useBoxes: boolean): number {
   const lanes = assignLanes(doc, 'logical');
+  const routes = useBoxes
+    ? planWires(doc, 'logical')
+    : doc.wires.map((_, i) => routeOrthogonal({
+        sourceX: lanes.from[i].x, sourceY: lanes.from[i].y,
+        targetX: lanes.to[i].x, targetY: lanes.to[i].y,
+        sourcePosition: lanes.from[i].side, targetPosition: lanes.to[i].side,
+        laneY: lanes.laneY[i], laneX: lanes.laneX[i],
+      }));
   let n = 0;
-  doc.wires.forEach((_, i) => {
-    const r = routeOrthogonal({
-      sourceX: lanes.from[i].x, sourceY: lanes.from[i].y,
-      targetX: lanes.to[i].x, targetY: lanes.to[i].y,
-      sourcePosition: lanes.from[i].side, targetPosition: lanes.to[i].side,
-      laneY: lanes.laneY[i], laneX: lanes.laneX[i],
-      sourceBox: useBoxes ? lanes.fromBox[i] : undefined,
-      targetBox: useBoxes ? lanes.toBox[i] : undefined,
-    });
+  routes.forEach((r, i) => {
     for (const b of [lanes.fromBox[i], lanes.toBox[i]]) {
       if (!b) continue;
       for (let k = 1; k < r.points.length; k++) {
