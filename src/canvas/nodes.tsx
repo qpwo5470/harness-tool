@@ -20,7 +20,7 @@ import type { Connector, Device, PartLibraryItem, ViewMode, Orientation } from '
  * 기하 상수·계산은 전부 geometry.ts 한 곳에만 둔다.
  * 배선 계획(docToFlow)이 같은 숫자를 써야 레인 배정이 화면과 어긋나지 않는다.
  */
-import { PITCH, INSET, PIN_PHYS, PIN_PHYS_PITCH, connectorLayout } from './geometry';
+import { PITCH, INSET, PIN_PHYS, PIN_PHYS_PITCH, connectorLayout, layoutCells } from './geometry';
 
 export type ConnectorNodeData = {
   connector: Connector;
@@ -56,14 +56,20 @@ export function ConnectorNode({ data, selected }: NodeProps) {
   const hot = new Set(hotPins ?? []);
 
   // ── 물리 뷰: 기존 회전 렌더 유지 (제조 도면 뷰는 별도 과제) ──────────────
-  if (view === 'physical' && housing?.pinLayout?.length) {
+  /**
+   * 좌표가 쓸 수 없는 슬롯(offset 없음·음수)은 layoutCells 가 걸러 낸다.
+   * 걸러낸 결과가 비면 논리 뷰 경로로 내려간다 — geometry.connectorBox·
+   * docToFlow 의 판정과 **같은 함수**를 써야 배선 계획이 화면과 어긋나지 않는다.
+   */
+  const physLayout = layoutCells(housing?.pinLayout);
+  if (view === 'physical' && physLayout) {
     const handlePos =
       o === 0 ? Position.Top
       : o === 90 ? Position.Right
       : o === 180 ? Position.Bottom
       : Position.Left;
-    const xs = housing.pinLayout.map((s) => s.offset.x);
-    const ys = housing.pinLayout.map((s) => s.offset.y);
+    const xs = physLayout.map((s) => s.offset.x);
+    const ys = physLayout.map((s) => s.offset.y);
     const w = (Math.max(...xs) + 1) * PIN_PHYS_PITCH;
     const h = (Math.max(...ys) + 1) * PIN_PHYS_PITCH;
     const border = isSplice ? 'var(--wire-splice, #a16207)' : 'var(--line-strong)';
@@ -76,7 +82,7 @@ export function ConnectorNode({ data, selected }: NodeProps) {
           transform: `rotate(${o}deg)`, transformOrigin: 'center center',
           boxSizing: 'border-box',
         }}
-        title={`${connector.kind} · ${housing.name} · ${o}°`}
+        title={`${connector.kind} · ${housing?.name ?? connector.housingId} · ${o}°`}
       >
         <div
           className="hz-regmark"
@@ -87,7 +93,7 @@ export function ConnectorNode({ data, selected }: NodeProps) {
           title="1번 핀 위치"
         />
         {connector.pins.map((pin) => {
-          const slot = housing.pinLayout!.find((s) => s.index === pin.index);
+          const slot = physLayout.find((s) => s.index === pin.index);
           const left = (slot?.offset.x ?? 0) * PIN_PHYS_PITCH + 4;
           const top = (slot?.offset.y ?? 0) * PIN_PHYS_PITCH + 4;
           return (

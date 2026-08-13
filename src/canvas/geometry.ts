@@ -10,7 +10,7 @@
  * React/DOM 을 쓰지 않는다 — 순수 계산만. (Position 은 문자열 enum 이라 값으로 필요)
  */
 import { Position } from '@xyflow/react';
-import type { Connector, Device, Orientation, PartLibraryItem, Vec2, ViewMode } from '../types';
+import type { Connector, Device, Orientation, PartLibraryItem, PinSlot, Vec2, ViewMode } from '../types';
 
 /** 패드 26px + 간격 4px = 30px 피치 (Claude Design 스펙) */
 export const PAD = 26;
@@ -50,15 +50,58 @@ export function isHorizontalSide(p: Position): boolean {
   return p === Position.Left || p === Position.Right;
 }
 
-/** 하우징 pinLayout 에서 격자 크기를 역산. 없으면 1행으로 편다. */
+/**
+ * pinLayout 정규화 — **격자에 실제로 앉힐 수 있는 슬롯만** 남긴다.
+ *
+ * 왜 필요한가: pinLayout 은 CSV·JSON 가져오기와 저장 파일에서 그대로 들어온다.
+ * `offset` 이 없는 슬롯 하나면 `s.offset.x` 에서 TypeError 가 나 캔버스 전체가
+ * 하얗게 죽었다(실제로 재현됨). 음수 좌표는 죽지는 않지만 패드를 하우징 박스
+ * 바깥에 그려 도면이 조용히 틀어진다.
+ *
+ * 그래서 여기서 한 번만 걸러 낸다 — 쓸 수 없는 슬롯은 배치에서 빠지고,
+ * 그 핀은 아래 `gridOf` 의 "정의 밖 핀" 경로로 떨어진다(사라지지 않는다).
+ * 남는 게 없으면 undefined 를 돌려 1행 기본 배치로 간다.
+ */
+export function layoutCells(layout?: PinSlot[]): PinSlot[] | undefined {
+  if (!layout?.length) return undefined;
+  const ok = layout.filter(
+    (s) =>
+      Number.isInteger(s?.offset?.x) && Number.isInteger(s?.offset?.y) &&
+      s.offset.x >= 0 && s.offset.y >= 0,
+  );
+  return ok.length ? ok : undefined;
+}
+
+/**
+ * 하우징 pinLayout 에서 격자 크기를 역산. 없으면 1행으로 편다.
+ *
+ * **정의 밖 핀(extra)** — 하우징 정의가 줄었는데(6P→2P) 이미 놓인 커넥터의
+ * 핀은 그대로 남아 있는 경우가 있다. 예전에는 `(index-1) % cols` 폴백이
+ * 박스 **바깥** 좌표를 내주어 패드가 허공에 떠 있었고, 운이 나쁘면 살아 있는
+ * 핀 자리와 겹쳐 그렸다. 지금은 정의된 격자 **아래 줄**에 차례로 앉히고
+ * 박스 높이를 그만큼 늘린다 — 도면에 남아 있다는 사실이 보여야 하고
+ * (검증 탭이 `핀 수 초과` 로 따로 잡는다), 겹치지는 않아야 한다.
+ */
 export function gridOf(connector: Connector, housing?: PartLibraryItem) {
-  const layout = housing?.pinLayout;
-  if (layout?.length) {
+  const layout = layoutCells(housing?.pinLayout);
+  if (layout) {
     const cols = Math.max(...layout.map((s) => s.offset.x)) + 1;
-    const rows = Math.max(...layout.map((s) => s.offset.y)) + 1;
-    return { cols, rows, layout };
+    const defined = Math.max(...layout.map((s) => s.offset.y)) + 1;
+    const known = new Set(layout.map((s) => s.index));
+    const orphans = connector.pins.filter((p) => !known.has(p.index));
+    const extra = new Map<number, Vec2>();
+    orphans.forEach((p, k) => {
+      extra.set(p.index, { x: k % cols, y: defined + Math.floor(k / cols) });
+    });
+    const rows = defined + Math.ceil(orphans.length / cols);
+    return { cols, rows, layout, extra };
   }
-  return { cols: connector.pins.length || 1, rows: 1, layout: undefined };
+  return {
+    cols: connector.pins.length || 1,
+    rows: 1,
+    layout: undefined,
+    extra: undefined as Map<number, Vec2> | undefined,
+  };
 }
 
 /** 격자 칸 수 → 하우징 박스 크기 */
@@ -71,11 +114,11 @@ export function housingSize(cols: number, rows: number): { w: number; h: number 
 
 /** 라이브러리 항목만으로 하우징 크기 — 드롭 위치 보정(HarnessCanvas)용 */
 export function partHousingSize(item: PartLibraryItem): { w: number; h: number } {
-  const layout = item.pinLayout;
-  const cols = layout?.length
+  const layout = layoutCells(item.pinLayout);
+  const cols = layout
     ? Math.max(...layout.map((s) => s.offset.x)) + 1
     : Math.max(1, item.pinCount ?? 2);
-  const rows = layout?.length ? Math.max(...layout.map((s) => s.offset.y)) + 1 : 1;
+  const rows = layout ? Math.max(...layout.map((s) => s.offset.y)) + 1 : 1;
   return housingSize(cols, rows);
 }
 
@@ -106,7 +149,7 @@ export type ConnectorLayout = {
  * (nodes.tsx 머리말 참고).
  */
 export function connectorLayout(connector: Connector, housing?: PartLibraryItem): ConnectorLayout {
-  const { cols, rows, layout } = gridOf(connector, housing);
+  const { cols, rows, layout, extra } = gridOf(connector, housing);
   const { w: boxW, h: boxH } = housingSize(cols, rows);
   const o = connector.orientation;
   const side = handleSideOf(o);
@@ -118,6 +161,9 @@ export function connectorLayout(connector: Connector, housing?: PartLibraryItem)
   const cellOf = (index: number): Vec2 => {
     const slot = layout?.find((s) => s.index === index);
     if (slot) return slot.offset;
+    // 하우징 정의에 없는 핀 — gridOf 가 잡아 둔 아래 줄 자리 (박스 안이고 겹치지 않는다)
+    const spill = extra?.get(index);
+    if (spill) return spill;
     const i = index - 1;
     return { x: i % cols, y: Math.floor(i / cols) };
   };
@@ -176,8 +222,8 @@ export function connectorBox(
   nodePos: Vec2,
   view: ViewMode = 'logical',
 ): NodeBox {
-  const layout = housing?.pinLayout;
-  if (view === 'physical' && layout?.length) {
+  const layout = layoutCells(housing?.pinLayout);
+  if (view === 'physical' && layout) {
     // 물리 뷰는 박스를 통째로 rotate 한다 — 90°/270° 는 중심을 축으로 가로·세로가 바뀐다.
     const w = (Math.max(...layout.map((s) => s.offset.x)) + 1) * PIN_PHYS_PITCH;
     const h = (Math.max(...layout.map((s) => s.offset.y)) + 1) * PIN_PHYS_PITCH;
@@ -218,7 +264,7 @@ export function pinAnchorPhysical(
   pinIndex: number,
   nodePos: Vec2,
 ): { x: number; y: number; side: Position } {
-  const layout = housing?.pinLayout;
+  const layout = layoutCells(housing?.pinLayout);
   const o = connector.orientation;
   const side = o === 0 ? Position.Top
     : o === 90 ? Position.Right

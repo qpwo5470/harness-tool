@@ -72,6 +72,30 @@ export function newCustomPartId(): string {
   return `${CUSTOM_PREFIX}${Date.now().toString(36)}-${seq++}`;
 }
 
+/**
+ * 문서에 딸려 온 사용자 정의 부품을 내 라이브러리에 합친다.
+ *
+ * 부품은 두 곳에 산다(문서의 usedParts · 이 저장소). 남이 만든 문서를 열면
+ * 도면은 usedParts 스냅샷으로 정확히 재현되지만, 라이브러리에는 그 부품이 없어
+ * **같은 커넥터를 하나 더 놓을 수가 없었다**. 문서를 여는 김에 내 목록에도 넣는다.
+ *
+ * 이미 같은 id 가 있으면 덮어쓰지 않는다 — 내가 고쳐 둔 핀맵을 남의 파일이
+ * 말없이 되돌리면 안 된다. 반환값은 새로 들어온 부품만.
+ */
+export function mergeDocumentParts(parts: PartLibraryItem[]): PartLibraryItem[] {
+  const mine = loadCustomParts();
+  const have = new Set(mine.map((p) => p.id));
+  const added: PartLibraryItem[] = [];
+  for (const p of parts) {
+    if (!isCustomPart(p.id) || have.has(p.id)) continue;
+    have.add(p.id);   // 한 문서에 같은 부품이 여러 번 실려 있어도 한 번만 넣는다
+    added.push(p);
+  }
+  if (!added.length) return [];
+  saveCustomParts([...mine, ...added]);
+  return added;
+}
+
 /** 커스텀 부품 목록 → JSON 문자열 (내보내기) */
 export function exportCustomParts(parts: PartLibraryItem[]): string {
   return JSON.stringify({ kind: 'harness-custom-parts', version: 1, parts }, null, 2);

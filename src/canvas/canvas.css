@@ -63,12 +63,18 @@
 }
 
 /* 핀 패드 */
+/* 패드는 26×26 고정이다. 긴 표기(A10 · 한글 신호명)를 넣어도 옆 패드를 덮지 않도록
+   글자를 패드 안에서 잘라 낸다 — 넘치면 도면에서 두 핀 번호가 겹쳐 읽힌다. */
 .hz-pad {
   position: absolute; width: 26px; height: 26px;
   display: flex; align-items: center; justify-content: center;
   border: 1px solid var(--line-strong); background: #fff;
   font-family: var(--font-num); font-weight: 700; font-size: 11px;
   color: var(--muted-2);
+  overflow: hidden;
+}
+.hz-pad > span {
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .hz-pad.assigned { background: var(--bg-subtle); color: var(--text); }
 .hz-pad.hot { background: var(--accent-pad); border-color: var(--accent); color: var(--accent-dark); }

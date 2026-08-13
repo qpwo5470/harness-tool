@@ -18,7 +18,7 @@ import type {
   Id,
 } from '../types';
 import { sampleDoc } from '../fixtures/sampleDoc';
-import { loadSavedKit, saveKit, emptyDoc } from './persistence';
+import { loadSavedKit, saveKit, emptyDoc, parseDocument } from './persistence';
 import { toKit, letterAt, withNewHarness, withoutHarness } from './kit';
 
 function touch(doc: HarnessDocument): HarnessDocument {
@@ -47,14 +47,23 @@ function resetHistory() {
   future = [];
 }
 
-/** 활성 하네스를 세트에 반영한 새 kit */
+/**
+ * 활성 하네스를 세트에 반영한 새 kit.
+ *
+ * 세트 수정시각은 **뒤로 가지 않는다**. 예전에는 `doc.updatedAt` 을 그대로 썼는데,
+ * 방금 연 문서(오래된 하네스)를 활성으로 두고 내보내면 세트 시각이 하네스 시각으로
+ * 되감겨 저장됐다 — 파일만 보고 어느 쪽이 최신인지 알 수 없게 된다.
+ */
 function syncBack(kit: KitDocument, doc: HarnessDocument): KitDocument {
   return {
     ...kit,
-    updatedAt: doc.updatedAt,
+    updatedAt: doc.updatedAt > kit.updatedAt ? doc.updatedAt : kit.updatedAt,
     harnesses: kit.harnesses.map((h) => (h.id === doc.id ? doc : h)),
   };
 }
+
+/** 새 하네스 id 의 꼬리 — 같은 밀리초에 여러 종이 들어와도 겹치지 않게 한다 */
+let harnessSeq = 0;
 
 const initialKit = loadSavedKit() ?? toKit(sampleDoc);
 
@@ -105,7 +114,9 @@ export const useHarnessStore = create<HarnessStore>((set, get) => ({
           : emptyDoc());
       const h: HarnessDocument = {
         ...base,
-        id: `hrn-${Date.now().toString(36)}`,
+        // 한 파일에서 여러 종을 연달아 추가하면 같은 밀리초에 들어온다 —
+        // 시각만으로 id 를 만들면 서로 같은 id 가 되어 배선이 엉뚱한 하네스를 가리킨다
+        id: `hrn-${Date.now().toString(36)}-${harnessSeq++}`,
         createdAt: now,
         updatedAt: now,
       };
@@ -200,6 +211,21 @@ export const useHarnessStore = create<HarnessStore>((set, get) => ({
       return { doc: touch({ ...s.doc, usedParts: [...s.doc.usedParts, part] }) };
     }),
 
+  /**
+   * 이미 문서에 든 부품의 정의를 갱신한다 (핀맵 에디터 저장 경로).
+   * 없는 부품이면 추가한다. 도면이 눈에 띄게 바뀌는 동작이라 실행취소 한 단계를 쌓는다.
+   */
+  syncUsedPart: (part: PartLibraryItem) =>
+    set((s) => {
+      const i = s.doc.usedParts.findIndex((p) => p.id === part.id);
+      if (i >= 0 && JSON.stringify(s.doc.usedParts[i]) === JSON.stringify(part)) return s;
+      pushHistory(s.doc);
+      const usedParts = i >= 0
+        ? s.doc.usedParts.map((p) => (p.id === part.id ? part : p))
+        : [...s.doc.usedParts, part];
+      return { doc: touch({ ...s.doc, usedParts }) };
+    }),
+
   remove: (id: Id) =>
     set((s) => {
       pushHistory(s.doc);
@@ -222,10 +248,24 @@ export const useHarnessStore = create<HarnessStore>((set, get) => ({
       };
     }),
 
-  replaceDoc: (doc: HarnessDocument) => {
-    resetHistory();
-    set({ doc, selection: null });
-  },
+  /**
+   * 문서 교체(불러오기 · 새 문서).
+   *
+   * 세트에 없는 문서를 doc 자리에만 꽂으면 **그 문서는 어디에도 저장되지 않는다**:
+   * 내보내기(`exportJson`)는 kit 을 내보내고 자동저장도 kit 이 바뀔 때만 도는데,
+   * `syncBack` 은 id 가 세트에 있는 하네스만 갈아끼우기 때문이다. 실제로 '새 문서'
+   * 뒤에 작업한 내용은 JSON 저장에서 통째로 빠지고 새로고침에서도 사라졌다.
+   * 세트에 없는 문서면 그 문서를 담은 새 세트를 만든다 — 새 문서 = 새 세트.
+   */
+  replaceDoc: (doc: HarnessDocument) =>
+    set((s) => {
+      resetHistory();
+      if (s.kit.harnesses.some((h) => h.id === doc.id)) {
+        return { doc, kit: syncBack(s.kit, doc), activeHarnessId: doc.id, selection: null };
+      }
+      const kit = toKit(doc);
+      return { doc: kit.harnesses[0], kit, activeHarnessId: kit.harnesses[0].id, selection: null };
+    }),
 
   rename: (name: string) =>
     set((s) => {
@@ -260,12 +300,20 @@ export const useHarnessStore = create<HarnessStore>((set, get) => ({
 
   // 내보내기는 세트 전체를 낸다 — 하네스 하나만 내면 세트 구성이 사라진다
   exportJson: () => JSON.stringify(syncBack(get().kit, get().doc), null, 2),
+  /**
+   * v1(하네스 하나)·v2(세트) 둘 다 받는다.
+   *
+   * 검사는 `parseDocument` 하나가 한다. 예전처럼 `JSON.parse` 결과를 그대로
+   * `toKit` 에 넘기면 미래 버전 문서·부분만 있는 문서·숫자 하나짜리 파일까지
+   * 오류 없이 통과해 앱이 이상한 상태로 들어갔다.
+   * 못 읽는 파일은 **이유를 담아 던진다** — 부르는 쪽이 사용자에게 알려야 한다.
+   */
   importJson: (json: string) => {
-    // v1(하네스 하나)·v2(세트) 둘 다 받는다
-    const kit = toKit(JSON.parse(json) as HarnessDocument | KitDocument);
+    const r = parseDocument(json);
+    if (!r.ok) throw new Error(r.reason);
     resetHistory();
-    const doc = kit.harnesses[0];
-    set({ kit, doc, activeHarnessId: doc.id, selection: null });
+    const doc = r.kit.harnesses[0];
+    set({ kit: r.kit, doc, activeHarnessId: doc.id, selection: null });
   },
 }));
 

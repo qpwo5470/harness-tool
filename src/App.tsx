@@ -5,7 +5,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useHarnessStore } from './store/harnessStore';
 import { useHoverStore } from './store/hoverStore';
-import { emptyDoc, clearSaved } from './store/persistence';
+import {
+  emptyDoc, clearSaved, parseDocument, setStorageProblemHandler,
+} from './store/persistence';
+import { mergeDocumentParts } from './library/customParts';
 import { HarnessCanvas } from './canvas/HarnessCanvas';
 import { strokeColor } from './canvas/docToFlow';
 import { LibraryPanel } from './library/LibraryPanel';
@@ -14,7 +17,7 @@ import { PartsPanel, type PartsScope } from './panels/PartsPanel';
 import { SetOverview } from './set/SetOverview';
 import { PhysicalView } from './physical/PhysicalView';
 import { ExportDialog, type ExportPlan } from './export/ExportDialog';
-import { ToastHost } from './ui/Toast';
+import { ToastHost, showToast } from './ui/Toast';
 import { EmptyCanvas } from './ui/EmptyCanvas';
 import { ValidationPanel } from './panels/ValidationPanel';
 import { validateHarness } from './store/validate';
@@ -60,7 +63,7 @@ export default function App() {
   const setDocMeta = useHarnessStore((s) => s.setDocMeta);
   const replaceDoc = useHarnessStore((s) => s.replaceDoc);
   const exportJson = useHarnessStore((s) => s.exportJson);
-  const importJson = useHarnessStore((s) => s.importJson);
+  const replaceKit = useHarnessStore((s) => s.replaceKit);
   const kit = useHarnessStore((s) => s.kit);
   const activeHarnessId = useHarnessStore((s) => s.activeHarnessId);
   const setActiveHarness = useHarnessStore((s) => s.setActiveHarness);
@@ -70,6 +73,17 @@ export default function App() {
   const removeHarness = useHarnessStore((s) => s.removeHarness);
 
   const fileRef = useRef<HTMLInputElement>(null);
+  /**
+   * 같은 파일 입력을 두 곳이 쓴다.
+   * 세트 개요의 'JSON 가져오기' 는 "이 세트에 하네스 추가" 밑에 있는데도
+   * 세트를 통째로 갈아치웠다 — 하네스 두 종을 만들어 둔 사용자가 세 번째를
+   * 가져오면 앞의 둘이 사라졌다. 어느 버튼이 열었는지 기억해 두고 갈라 처리한다.
+   */
+  const importMode = useRef<'replace' | 'append'>('replace');
+  const pickFile = (mode: 'replace' | 'append') => {
+    importMode.current = mode;
+    fileRef.current?.click();
+  };
   const menuRef = useRef<HTMLDivElement>(null);
   const [tab, setTab] = useState<Tab>('prop');
   const [menuOpen, setMenuOpen] = useState(false);
@@ -77,6 +91,12 @@ export default function App() {
   const [hTab, setHTab] = useState<HarnessTab>(activeHarnessId);
   const [partsScope, setPartsScope] = useState<PartsScope>({ kind: 'harness', harnessId: activeHarnessId });
   const [exportOpen, setExportOpen] = useState(false);
+  /**
+   * 라이브러리 패널은 커스텀 부품을 마운트 때 한 번만 읽는다.
+   * 불러오기가 문서에 딸려 온 부품을 저장소에 넣어도 패널은 모르므로,
+   * 새로 들어온 게 있을 때만 키를 바꿔 다시 읽게 한다.
+   */
+  const [libRev, setLibRev] = useState(0);
   // 캔버스 ↔ 접속표 동기 강조
   const hoverWire = useHoverStore((s) => s.wireId);
   const setHover = useHoverStore((s) => s.setHover);
@@ -107,6 +127,25 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [selection, remove, undo, redo]);
 
+  /**
+   * 자동저장 사고 알림.
+   * 저장 용량 초과와 "저장된 작업을 못 읽음"은 조용히 넘기면 **작업을 잃는** 사고다.
+   * 용량이 찬 뒤로는 저장이 멈춘 채 화면만 멀쩡하고, 못 읽은 자동저장은 다음 저장에
+   * 덮어써진다. persistence 는 UI 를 모르므로(순환 import) 여기서 토스트에 잇는다.
+   */
+  useEffect(() => {
+    setStorageProblemHandler((p) => {
+      showToast(
+        p.kind === 'quota'
+          ? '브라우저 저장 공간이 가득 차 자동저장이 멈췄습니다 — JSON 으로 저장해 두세요'
+          : `직전 자동저장을 열지 못했습니다 (${p.reason}) — 원본은 지우지 않고 보관했습니다`,
+        undefined,
+        10000,
+      );
+    });
+    return () => setStorageProblemHandler(null);
+  }, []);
+
   // 내보내기 메뉴: 바깥 클릭 / Esc 로 닫기
   useEffect(() => {
     if (!menuOpen) return;
@@ -124,10 +163,48 @@ export default function App() {
     };
   }, [menuOpen]);
 
+  /**
+   * JSON 불러오기.
+   *
+   * 예전에는 `f.text().then(importJson)` 이었다. JSON 이 아닌 파일·빈 파일은
+   * Promise 안에서 예외가 터진 채 **아무 일도 일어나지 않았고**, 커넥터 목록이
+   * 없는 문서는 오류 없이 통과해 다음 렌더에서 화면이 백지가 됐다.
+   * 이제 못 읽으면 이유를 띄우고 현재 작업은 건드리지 않는다.
+   */
   function onFile(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
     if (!f) return;
-    f.text().then(importJson);
+    f.text()
+      .then((text) => {
+        const r = parseDocument(text);
+        if (!r.ok) {
+          showToast(`불러오지 못했습니다 — ${r.reason}`);
+          return;
+        }
+        const append = importMode.current === 'append';
+        if (append) for (const h of r.kit.harnesses) addHarness('blank', h);
+        else replaceKit(r.kit);
+
+        // 문서에 딸려 온 내 부품을 라이브러리에도 넣는다 — 남의 기기에서 열었을 때
+        // 도면은 재현되지만 같은 커넥터를 하나 더 놓을 수 없던 문제.
+        const added = mergeDocumentParts(r.kit.harnesses.flatMap((h) => h.usedParts));
+        if (added.length) setLibRev((n) => n + 1);
+
+        const errors = r.kit.harnesses
+          .reduce((n, h) => n + validateHarness(h).filter((i) => i.level === 'error').length, 0);
+        const notes = [
+          append
+            ? `하네스 ${r.kit.harnesses.length}종을 세트에 추가했습니다`
+            : `${r.kit.harnesses.length}종을 불러왔습니다`,
+          added.length ? `내 부품 ${added.length}종 추가` : '',
+          // 정규화에서 고친 것은 사용자가 알아야 한다 — 조용히 넘기면 다음에 놀란다
+          r.warnings.length ? r.warnings[0] : '',
+          r.warnings.length > 1 ? `외 ${r.warnings.length - 1}건` : '',
+          errors ? `검증 오류 ${errors}건 — 검증 탭을 확인하세요` : '',
+        ].filter(Boolean);
+        showToast(notes.join(' · '));
+      })
+      .catch(() => showToast('파일을 읽지 못했습니다'));
     e.target.value = '';
   }
   function newDoc() {
@@ -277,7 +354,7 @@ export default function App() {
               <button onClick={runMenu(() => saveBlob(`${doc.name || 'harness'}.json`, exportJson(), 'application/json'))}>
                 JSON 저장 (세트 전체)
               </button>
-              <button onClick={runMenu(() => fileRef.current?.click())}>JSON 불러오기</button>
+              <button onClick={runMenu(() => pickFile('replace'))}>JSON 불러오기</button>
               <hr />
               <button onClick={runMenu(() => saveBlob(`${doc.name}-접속표.csv`, runListToCsv(runs), 'text/csv;charset=utf-8;'))}>
                 접속표 CSV
@@ -327,7 +404,7 @@ export default function App() {
           onChangeOrderQty={(q) => updateSet({ orderQty: Math.max(1, q) })}
           onChangeSet={updateSet}
           onAddHarness={(mode) => {
-            if (mode === 'import') fileRef.current?.click();
+            if (mode === 'import') pickFile('append');   // '이 세트에 하네스 추가' 밑의 버튼이다
             else addHarness(mode);
           }}
           onRemoveHarness={removeHarness}
@@ -338,12 +415,12 @@ export default function App() {
       ) : view === 'physical' ? (
       /* 물리 뷰 = 제조 도면. 구간·치수·자재를 다루므로 우측 패널을 자체적으로 갖는다. */
       <div className="body body-phys">
-        <LibraryPanel />
+        <LibraryPanel key={libRev} />
         <PhysicalView doc={doc} selection={selection} onSelect={select} />
       </div>
       ) : (
       <div className="body">
-        <LibraryPanel />
+        <LibraryPanel key={libRev} />
         <main className="canvas-area">
           {/* 빈 상태에서도 캔버스는 살아 있어야 한다 —
               온보딩이 "끌어다 놓으라"고 안내하는데 정작 드롭을 못 받으면 거짓말이 된다.
@@ -357,7 +434,7 @@ export default function App() {
               onNewPart={() => {
                 (document.querySelector('.lib-new') as HTMLButtonElement | null)?.click();
               }}
-              onImport={() => fileRef.current?.click()}
+              onImport={() => pickFile('replace')}
             />
           )}
         </main>

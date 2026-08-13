@@ -329,6 +329,15 @@ export interface HarnessStore {
   /** 라이브러리에서 쓴 부품을 문서 스냅샷(usedParts)에 추가 (중복 무시) */
   addUsedPart(part: PartLibraryItem): void;
 
+  /**
+   * 이미 문서에 든 부품의 **정의를 갱신**한다 (선택 액션).
+   *
+   * `addUsedPart` 는 계약상 중복을 무시하므로, 핀맵 에디터에서 이미 쓰고 있는
+   * 부품을 고쳐도 도면 스냅샷은 옛 정의 그대로였다. 그 통로가 필요해 더한다.
+   * 기존 필드의 뜻은 그대로 두고 optional 로만 얹으므로 schemaVersion 은 1 이다.
+   */
+  syncUsedPart?(part: PartLibraryItem): void;
+
   // 공통
   remove(id: Id): void;
   replaceDoc(doc: HarnessDocument): void; // 불러오기

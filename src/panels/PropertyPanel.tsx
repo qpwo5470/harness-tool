@@ -33,6 +33,8 @@ import { SEED_PARTS } from '../library/seed';
 import { loadCustomParts } from '../library/customParts';
 import { GENDER_LABEL, GENDER_LONG } from '../library/gender';
 import { refLabels, colorAbbr, strokeColor } from '../canvas/docToFlow';
+// 핀 격자 해석은 캔버스와 같은 출처를 쓴다 (기하는 geometry.ts 한 곳)
+import { PAD, layoutCells } from '../canvas/geometry';
 import { computeNets } from '../store/netlist';
 import { lengthResolver, tallyLengths } from '../store/wireLength';
 import './property.css';
@@ -187,10 +189,16 @@ function wireCodes(doc: HarnessDocument): Map<string, string> {
   return new Map(doc.wires.map((w, i) => [w.id, `W${i + 1}`]));
 }
 
-/** 하우징 pinLayout 으로 열/행 수를 구한다 (없으면 한 줄, 최대 8열) */
+/**
+ * 하우징 pinLayout 으로 열/행 수를 구한다 (없으면 한 줄, 최대 8열).
+ *
+ * 격자 해석은 캔버스와 **같은 함수**(geometry.layoutCells)로 한다 — 여기서
+ * 따로 `s.offset.x` 를 읽던 시절에는 좌표가 없는 슬롯 하나에 속성 패널이 통째로
+ * 터졌다. 8열로 접는 규칙만 이 패널 고유의 표시 규칙이라 남긴다.
+ */
 function gridOf(housing: PartLibraryItem | undefined, pinCount: number) {
-  const layout = housing?.pinLayout;
-  if (layout && layout.length) {
+  const layout = layoutCells(housing?.pinLayout);
+  if (layout) {
     const cols = Math.max(...layout.map((s) => s.offset.x)) + 1;
     const rows = Math.max(...layout.map((s) => s.offset.y)) + 1;
     return { cols: Math.max(1, cols), rows: Math.max(1, rows), layout };
@@ -502,7 +510,13 @@ function ConnectorEditor({ doc, conn }: { doc: HarnessDocument; conn: Connector 
 
   const { cols, layout } = gridOf(housing, conn.pins.length);
 
-  /** 핀 → 격자 위치 (pinLayout 이 있으면 그대로, 없으면 행 우선) */
+  /**
+   * 핀 → 격자 위치 (pinLayout 이 있으면 그대로, 없으면 행 우선).
+   *
+   * 하우징 정의에 **없는 핀**(정의가 줄었는데 배선이 물려 있어 남은 핀)도
+   * 아래 줄에 이어 그린다. 예전에는 격자에서 통째로 빠져 터미널을 지정할 수도,
+   * 남아 있다는 사실을 볼 수도 없었다 — 캔버스와 같은 규칙으로 맞춘다.
+   */
   const cells = useMemo(() => {
     const out: { key: string; pinId?: string; label?: string }[] = [];
     if (layout) {
@@ -514,6 +528,16 @@ function ConnectorEditor({ doc, conn }: { doc: HarnessDocument; conn: Connector 
           out.push({ key: `${x}-${y}`, pinId: pin?.id, label: pin ? (pin.label ?? String(pin.index)) : undefined });
         }
       }
+      const known = new Set(layout.map((s) => s.index));
+      const orphans = conn.pins.filter((p) => !known.has(p.index));
+      orphans.forEach((p, i) => {
+        out.push({ key: `x-${p.id}`, pinId: p.id, label: p.label ?? String(p.index) });
+        // 마지막 줄을 채워 격자 모양을 지킨다
+        if (i === orphans.length - 1) {
+          const pad = (cols - (orphans.length % cols)) % cols;
+          for (let k = 0; k < pad; k++) out.push({ key: `x-pad-${k}` });
+        }
+      });
       return out;
     }
     for (const p of conn.pins) out.push({ key: p.id, pinId: p.id, label: p.label ?? String(p.index) });
@@ -629,7 +653,7 @@ function ConnectorEditor({ doc, conn }: { doc: HarnessDocument; conn: Connector 
         <Section label="터미널" note={`핀 ${conn.pins.length}개`}>
           <div className="pp-pads-card">
             <div className="pp-housing dashed">
-              <div className="pp-pad-grid" style={{ gridTemplateColumns: `repeat(${cols}, 26px)` }}>
+              <div className="pp-pad-grid" style={{ gridTemplateColumns: `repeat(${cols}, ${PAD}px)` }}>
                 {conn.pins.map((p) => (
                   <span key={p.id} className="pp-pad ghost num">
                     {p.label ?? p.index}
@@ -662,7 +686,7 @@ function ConnectorEditor({ doc, conn }: { doc: HarnessDocument; conn: Connector 
         >
           <div className="pp-pads-card">
             <div className="pp-housing">
-              <div className="pp-pad-grid" style={{ gridTemplateColumns: `repeat(${cols}, 26px)` }}>
+              <div className="pp-pad-grid" style={{ gridTemplateColumns: `repeat(${cols}, ${PAD}px)` }}>
                 {cells.map((c) => {
                   if (!c.pinId) return <span key={c.key} className="pp-pad blank" />;
                   const pin = conn.pins.find((p) => p.id === c.pinId)!;

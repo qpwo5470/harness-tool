@@ -19,11 +19,15 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { PartLibraryItem, PinSlot, PartCategory, PartGender } from '../types';
 import { newCustomPartId } from './customParts';
 import { GENDER_LONG } from './gender';
+/**
+ * 패드·피치는 캔버스와 **같은 숫자**여야 한다 — 여기서 정의한 형상이 도면에
+ * 그대로 나온다는 것이 이 화면의 요지다. 그래서 베껴 쓰지 않고 geometry.ts 에서 가져온다.
+ */
+import { PAD, PITCH, layoutCells } from '../canvas/geometry';
 import './pinmap.css';
 
-/** 캔버스와 동일 규격: 패드 26px + 간격 4px = 피치 30px */
-const PAD = 26;
-const GAP_X = 4;
+/** 패드 사이 가로 간격 = 피치 − 패드 (캔버스와 같은 격자) */
+const GAP_X = PITCH - PAD;
 const GAP_Y = 3; // 패드 아래 신호명 캡션이 같은 셀에 들어가므로 세로 간격은 3px
 
 const MAX_COLS = 24;
@@ -166,20 +170,21 @@ export function PinMapEditor({ initial, onSave, onCancel }: Props) {
 
   const isTerminal = category === 'terminal';
 
-  // 초기 그리드 크기: 기존 핀 배치에서 역산
-  const initCols = initial?.pinLayout?.length
-    ? Math.max(...initial.pinLayout.map((s) => s.offset.x)) + 1
-    : 4;
-  const initRows = initial?.pinLayout?.length
-    ? Math.max(...initial.pinLayout.map((s) => s.offset.y)) + 1
-    : 1;
+  /**
+   * 초기 그리드 크기: 기존 핀 배치에서 역산.
+   * 좌표가 없거나 음수인 슬롯(깨진 가져오기 파일)은 layoutCells 가 걸러 낸다 —
+   * 예전에는 `s.offset.x` 에서 그대로 터져 편집 창이 열리지도 않았다.
+   */
+  const initLayout = layoutCells(initial?.pinLayout);
+  const initCols = initLayout ? Math.max(...initLayout.map((s) => s.offset.x)) + 1 : 4;
+  const initRows = initLayout ? Math.max(...initLayout.map((s) => s.offset.y)) + 1 : 1;
 
   const [cols, setCols] = useState(initCols);
   const [rows, setRows] = useState(initRows);
   const [origin, setOrigin] = useState<Origin>('tl');
   const [order, setOrder] = useState<Order>('row');
   const [pins, setPins] = useState<PinSlot[]>(
-    initial?.pinLayout?.length ? initial.pinLayout : buildPins(4, 1, 'tl', 'row', []),
+    initLayout ?? buildPins(4, 1, 'tl', 'row', []),
   );
   /** 선택은 **물리 셀** 로 들고 있는다 — 번호를 다시 매겨도 고른 패드가 그대로 남는다 */
   const [selCell, setSelCell] = useState<{ x: number; y: number } | null>(null);

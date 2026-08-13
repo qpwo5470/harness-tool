@@ -401,6 +401,15 @@
   border: 1px solid var(--line-strong);
   border-radius: 0;
   cursor: pointer;
+  /* 표기가 길어도(A10 · 한글) 옆 패드를 덮지 않게 패드 안에서 자른다 —
+     캔버스 .hz-pad 와 같은 규칙이다. 여기 형상이 도면에 그대로 나가야 한다. */
+  overflow: hidden;
+}
+.pm-pad > .num {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .pm-pad.assigned { color: var(--text); background: var(--bg-subtle); }
 .pm-pad:hover { border-color: var(--accent); }

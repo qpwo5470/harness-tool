@@ -19,6 +19,8 @@
  * 발주 시 암수를 잘못 사면 현장에서 못 쓰기 때문이다.
  */
 import type { PartLibraryItem, Connector, ConnectorKind, Vec2, PinSlot } from '../types';
+// 핀 배치 해석은 캔버스와 같은 함수를 쓴다 — 기하는 geometry.ts 한 곳에만 산다
+import { layoutCells } from '../canvas/geometry';
 
 /** 그리드형 핀 배치 (cols × rows, 1-base) */
 function grid(cols: number, rows: number): PinSlot[] {
@@ -428,13 +430,21 @@ const kindOf = (cat: PartLibraryItem['category']): ConnectorKind =>
 let seq = 0;
 const uid = (p: string) => `${p}-${Date.now().toString(36)}-${seq++}`;
 
-/** 라이브러리 항목 → 캔버스에 놓을 Connector 인스턴스 */
+/**
+ * 라이브러리 항목 → 캔버스에 놓을 Connector 인스턴스.
+ *
+ * 핀 수는 **그릴 수 있는 배치(pinLayout)** 를 우선한다. pinCount 와 pinLayout 이
+ * 어긋난 부품(손으로 고친 JSON, 깨진 가져오기)에서 pinCount 를 믿으면 하우징
+ * 박스에 자리가 없는 핀이 생겨 패드가 박스 밖에 떠 버린다 — 도면이 조용히 틀어진다.
+ * 배치는 index 순으로 정렬해서 쓴다(파일 안 순서를 믿지 않는다).
+ */
 export function instantiate(item: PartLibraryItem, at: Vec2): Connector {
-  const n = item.pinCount ?? item.pinLayout?.length ?? 2;
+  const slots = layoutCells(item.pinLayout)?.slice().sort((a, b) => a.index - b.index);
+  const n = slots?.length ?? item.pinCount ?? 2;
   const pins = Array.from({ length: n }, (_, i) => ({
     id: uid('pin'),
-    index: item.pinLayout?.[i]?.index ?? i + 1,
-    label: item.pinLayout?.[i]?.label,
+    index: slots?.[i]?.index ?? i + 1,
+    label: slots?.[i]?.label,
   }));
   const kind = kindOf(item.category);
   const conn: Connector = {

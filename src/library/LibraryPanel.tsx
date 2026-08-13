@@ -11,6 +11,8 @@ import {
 } from './customParts';
 import { PinMapEditor } from './PinMapEditor';
 import { genderBadge, GENDER_LONG } from './gender';
+import { planPartSync, partSyncMessage } from './partSync';
+import { showToast, undoSteps } from '../ui/Toast';
 import type { PartLibraryItem, Device } from '../types';
 
 /**
@@ -73,6 +75,8 @@ let devSeq = 0;
 export function LibraryPanel() {
   const addConnector = useHarnessStore((s) => s.addConnector);
   const addUsedPart = useHarnessStore((s) => s.addUsedPart);
+  const syncUsedPart = useHarnessStore((s) => s.syncUsedPart);
+  const updateConnector = useHarnessStore((s) => s.updateConnector);
   const addDevice = useHarnessStore((s) => s.addDevice);
   const select = useHarnessStore((s) => s.select);
 
@@ -128,9 +132,25 @@ export function LibraryPanel() {
     select(d.id);
   };
 
+  /**
+   * 핀맵 에디터 저장 — 라이브러리와 **현재 도면**에 함께 반영한다.
+   *
+   * 예전에는 `addUsedPart` 하나로 끝냈는데, 그 액션은 계약상 같은 id 를 무시한다.
+   * 그래서 이미 도면에 놓인 부품을 고쳐도 도면은 옛 정의 그대로였다(이름도 핀 수도).
+   * 지금은 planPartSync 로 무엇이 달라지는지 계산해 커넥터 핀까지 맞추고,
+   * 바뀐 내용을 토스트로 알린다 — 되돌릴 길(⌘Z)도 같이 남긴다.
+   */
   const handleSave = (part: PartLibraryItem) => {
     setCustom(upsertCustomPart(part));
-    addUsedPart(part); // 현재 문서에도 스냅샷으로 반영
+
+    const plan = planPartSync(useHarnessStore.getState().doc, part);
+    if (plan.usedPartChanged) syncUsedPart?.(part);
+    else addUsedPart(part); // 처음 쓰는 부품은 스냅샷으로 추가
+    for (const c of plan.connectors) updateConnector(c.connectorId, { pins: c.pins });
+
+    const msg = partSyncMessage(part, plan);
+    if (msg) showToast(msg, plan.steps ? undoSteps(plan.steps) : undefined);
+
     setEditing(null);
     setCreating(false);
   };
@@ -168,7 +188,7 @@ export function LibraryPanel() {
     const f = e.target.files?.[0];
     if (!f) return;
     f.text().then((txt) => {
-      const { parts: incoming, warnings } = parsePartsFile(txt, f.name);
+      const { parts: incoming, warnings, skipped = 0 } = parsePartsFile(txt, f.name);
       if (!incoming.length) {
         setImportNote({
           ok: false,
@@ -184,14 +204,37 @@ export function LibraryPanel() {
         if (i >= 0) merged[i] = p;
         else merged.push(p);
       }
+
+      /*
+       * 이미 라이브러리에 있는 MPN 이 또 들어오는 경우 — 같은 CSV 를 두 번 넣으면
+       * id 가 매번 새로 발급돼 부품이 통째로 두 벌이 된다. 합치지는 않는다(진짜
+       * 다른 부품일 수 있다). 대신 조용히 두 벌이 되지는 않게 알린다.
+       */
+      const known = new Set(
+        custom.map((p) => (p.mpn ?? '').trim().toLowerCase()).filter(Boolean),
+      );
+      const dupMpn = incoming
+        .map((p) => (p.mpn ?? '').trim())
+        .filter((m) => m && known.has(m.toLowerCase()));
+
       saveCustomParts(merged);
       setCustom(merged);
+
+      // "건너뛴 행" 과 "고쳐 읽은 값" 은 다른 이야기다 — 섞어서 세면 안내가 거짓말이 된다.
+      const adjusted = Math.max(0, warnings.length - skipped);
+      const head = [
+        `부품 ${incoming.length}종을 등록했습니다.`,
+        skipped ? `건너뛴 행 ${skipped}건` : '',
+        adjusted ? `확인할 값 ${adjusted}건` : '',
+        dupMpn.length ? `이미 있는 MPN ${dupMpn.length}건(${dupMpn.slice(0, 3).join(', ')})` : '',
+      ].filter(Boolean).join(' · ');
+
       setImportNote({
-        ok: true,
-        text: warnings.length
-          ? `부품 ${incoming.length}종을 등록했습니다. 건너뛴 행 ${warnings.length}건:\n${warnings.slice(0, 5).join('\n')}`
-          : `부품 ${incoming.length}종을 등록했습니다.`,
+        ok: skipped === 0,
+        text: warnings.length ? `${head}\n${warnings.slice(0, 5).join('\n')}` : head,
       });
+      // 패널 밖(캔버스)을 보고 있어도 결과가 눈에 들어와야 한다
+      showToast(head);
     });
     e.target.value = '';
   };

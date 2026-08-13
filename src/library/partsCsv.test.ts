@@ -296,6 +296,96 @@ describe('성별(암수) 열', () => {
   });
 });
 
+/**
+ * 아래 묶음은 실제 부품표에서 나온 입력을 그대로 회귀 시험으로 굳힌 것이다.
+ * 전부 "조용히 틀린 데이터를 받아들이던" 자리다.
+ */
+describe('열·행·핀수가 어긋난 실제 부품표', () => {
+  it('열만 적혀 있고 핀수가 있으면 행을 역산한다 (예전엔 핀 4개를 버렸다)', () => {
+    // `열 2 · 핀수 6` = 2열 3행. 예전에는 행을 1 로 못 박아 2핀 부품이 됐다.
+    const { parts, warnings } = parsePartsCsv(`${H}\n2열6핀,하우징,,,,2,,6,,,`);
+    expect(warnings).toEqual([]);
+    expect(parts[0].pinCount).toBe(6);
+    expect(parts[0].pinLayout).toHaveLength(6);
+    expect(parts[0].pinLayout![5].offset).toEqual({ x: 1, y: 2 });
+  });
+
+  it('열로 딱 나뉘지 않아도 핀은 다 살리고 경고를 남긴다', () => {
+    const { parts, warnings } = parsePartsCsv(`${H}\n4열5핀,하우징,,,,4,,5,,,`);
+    expect(parts[0].pinCount).toBe(5);
+    expect(parts[0].pinLayout![4].offset).toEqual({ x: 0, y: 1 });   // 마지막 줄 첫 칸
+    expect(warnings).toContain('2행: 핀수 5 가 열 4 로 딱 나뉘지 않아 마지막 줄이 덜 찬다');
+  });
+
+  it('행만 적힌 경우도 대칭으로 처리한다', () => {
+    // `행 2 · 핀수 5` → 3열 2행, 마지막 줄은 두 칸만 찬다
+    const { parts, warnings } = parsePartsCsv(`${H}\n2행5핀,하우징,,,,,2,5,,,`);
+    expect(parts[0].pinCount).toBe(5);
+    expect(parts[0].pinLayout![3].offset).toEqual({ x: 0, y: 1 });
+    expect(parts[0].pinLayout![4].offset).toEqual({ x: 1, y: 1 });
+    expect(warnings).toContain('2행: 핀수 5 가 행 2 로 딱 나뉘지 않아 마지막 줄이 덜 찬다');
+  });
+
+  it('0·음수·소수는 "1 이상의 정수가 아니다" 라고 사유를 밝힌다', () => {
+    expect(parsePartsCsv(`${H}\n음수,하우징,,,,-3,1,,,,`).warnings)
+      .toContain("2행: 열 값 '-3' 가 1 이상의 정수가 아니라 무시");
+    expect(parsePartsCsv(`${H}\n소수,하우징,,,,,,2.5,,,`).warnings)
+      .toContain("2행: 핀수 값 '2.5' 가 1 이상의 정수가 아니라 무시");
+  });
+});
+
+describe('망가진 행을 조용히 넘기지 않는다', () => {
+  it('열이 모자라 핀 수를 알 수 없으면 등록하되 반드시 알린다', () => {
+    // 예전에는 아무 말 없이 등록되고, 캔버스에 놓는 순간 기본 2핀이 됐다.
+    const { parts, warnings, skipped } = parsePartsCsv('이름,분류,핀수\n짧은행,하우징');
+    expect(parts).toHaveLength(1);
+    expect(parts[0].pinCount).toBeUndefined();
+    expect(skipped).toBe(0);
+    expect(warnings).toContain(
+      '2행: 핀 수(열·행·핀수)가 없어 핀 배치 없이 등록 — 캔버스에 놓기 전에 채우세요',
+    );
+  });
+
+  it('따옴표가 닫히지 않으면 나머지 줄이 통째로 삼켜진다고 알린다', () => {
+    const csv = `${H}\n"안닫힘,하우징,,,,2,1,2,,,\n정상,하우징,,,,2,1,2,,,`;
+    const { warnings } = parsePartsCsv(csv);
+    expect(warnings.some((w) => w.includes('따옴표'))).toBe(true);
+    expect(warnings.some((w) => w.includes('2줄'))).toBe(true);
+  });
+
+  it('헤더보다 칸이 많고 그 칸에 값이 있으면 알린다 (쉼표가 하나 더 있는 행)', () => {
+    const { parts, warnings } = parsePartsCsv('이름,핀수\n많음,2,쓰레기');
+    expect(parts).toHaveLength(1);
+    expect(warnings.some((w) => w.startsWith('2행: 열이 헤더(2칸)보다 많아'))).toBe(true);
+  });
+
+  it('헤더보다 칸이 많아도 빈 칸(엑셀의 꼬리 쉼표)이면 조용하다', () => {
+    expect(parsePartsCsv('이름,핀수\n꼬리,2,,,').warnings).toEqual([]);
+  });
+
+  it('건너뛴 행 수(skipped)와 고쳐 읽은 경고를 따로 센다', () => {
+    const csv = `${H}\n,하우징,,,,2,1,2,,,\n미지,우주선,,,,2,1,2,,,`;
+    const { parts, warnings, skipped } = parsePartsCsv(csv);
+    expect(parts).toHaveLength(1);
+    expect(skipped).toBe(1);                     // 이름이 빈 한 행만 버렸다
+    expect(warnings).toHaveLength(2);            // 버린 사유 + 분류 보정
+  });
+});
+
+describe('중복 MPN', () => {
+  it('같은 MPN 이 두 번 나오면 어느 행과 겹치는지 알린다 (버리지는 않는다)', () => {
+    const csv = `${H}\nA,하우징,YH,SMH250-04,,4,1,4,,,\nB,하우징,YH,SMH250-04,,4,1,4,,,`;
+    const { parts, warnings } = parsePartsCsv(csv);
+    expect(parts).toHaveLength(2);
+    expect(warnings).toContain("3행: MPN 'SMH250-04' 이 2행과 겹칩니다 — 두 부품으로 등록");
+  });
+
+  it('MPN 이 비어 있으면 겹침으로 보지 않는다', () => {
+    const csv = `${H}\nA,하우징,,,,2,1,2,,,\nB,하우징,,,,2,1,2,,,`;
+    expect(parsePartsCsv(csv).warnings).toEqual([]);
+  });
+});
+
 describe('parsePartsFile — JSON/CSV 판별', () => {
   const jsonPart: PartLibraryItem = {
     id: 'custom-json', category: 'housing', name: 'JSON 부품', pinCount: 1,

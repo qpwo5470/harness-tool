@@ -16,6 +16,12 @@ export type CsvParseResult = {
   parts: PartLibraryItem[];
   /** 사람이 읽는 경고 (건너뛴 행, 보정한 값) */
   warnings: string[];
+  /**
+   * **버린** 행 수 (부품이 하나도 안 나온 행).
+   * 경고 수와 다르다 — 경고에는 "분류를 몰라 하우징으로 처리" 처럼 등록은 된
+   * 보정도 섞여 있다. 안내 문구에서 둘을 뒤섞으면 "건너뛴 행 3건" 이 거짓말이 된다.
+   */
+  skipped?: number;
 };
 
 /** 신호·색 목록 구분자 — 쉼표는 CSV 자체가 쓰므로 파이프를 쓴다 */
@@ -112,8 +118,12 @@ const CATEGORY_LABEL: Record<PartCategory, string> = {
  * RFC4180 풍 CSV 를 레코드 배열로 쪼갠다.
  * 따옴표 안의 쉼표·줄바꿈을 지키고, `""` 는 따옴표 한 개로 푼다.
  * 따옴표 안 줄바꿈은 `\n` 으로 정규화한다.
+ *
+ * `problems` 를 주면 **구조가 깨진 곳**을 담아 준다. 지금은 따옴표가 닫히지 않은
+ * 경우 하나다: 그 뒤 파일 전체가 값 하나로 빨려 들어가 나머지 행이 통째로
+ * 사라지는데, 예전에는 아무 말 없이 부품 한 종만 등록되고 끝났다.
  */
-export function parseCsvRecords(text: string): string[][] {
+export function parseCsvRecords(text: string, problems?: string[]): string[][] {
   const src = text.replace(/^\uFEFF/, '');
   const records: string[][] = [];
   let row: string[] = [];
@@ -149,6 +159,13 @@ export function parseCsvRecords(text: string): string[][] {
   }
 
   if (field.length > 0 || row.length > 0) { row.push(field); records.push(row); }
+  if (inQuotes) {
+    // 마지막 레코드 = 따옴표가 삼킨 덩어리. 몇 줄이 통째로 묶였는지 알려 준다.
+    const swallowed = field.split('\n').length - 1;
+    problems?.push(
+      `따옴표(")가 닫히지 않아 마지막 ${swallowed + 1}줄이 한 칸으로 묶였습니다 — 따옴표 짝을 확인하세요`,
+    );
+  }
   return records;
 }
 
@@ -161,12 +178,13 @@ function isBlankRecord(rec: string[]): boolean {
 export function parsePartsCsv(text: string): CsvParseResult {
   const warnings: string[] = [];
   const parts: PartLibraryItem[] = [];
+  let skipped = 0;
 
-  const records = parseCsvRecords(text ?? '');
+  const records = parseCsvRecords(text ?? '', warnings);
   const headerAt = records.findIndex((r) => !isBlankRecord(r));
   if (headerAt < 0) {
     warnings.push('내용이 없는 CSV 입니다.');
-    return { parts, warnings };
+    return { parts, warnings, skipped };
   }
 
   // 헤더 → 열 번호 (같은 헤더가 여러 번이면 처음 것을 쓴다)
@@ -178,8 +196,12 @@ export function parsePartsCsv(text: string): CsvParseResult {
 
   if (col.name === undefined) {
     warnings.push('이름(name) 열을 찾지 못했습니다. 첫 줄이 헤더인지 확인하세요.');
-    return { parts, warnings };
+    return { parts, warnings, skipped };
   }
+
+  const headerWidth = records[headerAt].length;
+  /** 같은 MPN 이 먼저 나온 행 번호 — 발주 코드가 겹치면 알려야 한다 */
+  const mpnSeen = new Map<string, number>();
 
   for (let i = headerAt + 1; i < records.length; i++) {
     const rec = records[i];
@@ -194,7 +216,15 @@ export function parsePartsCsv(text: string): CsvParseResult {
     const name = get('name');
     if (!name) {
       warnings.push(`${lineNo}행: 이름이 비어 건너뜀`);
+      skipped += 1;
       continue;
+    }
+
+    // 헤더보다 칸이 많고 그 칸에 값이 있으면 열이 밀렸다는 뜻이다 — 읽은 값이 엉뚱할 수 있다.
+    if (rec.length > headerWidth && rec.slice(headerWidth).some((c) => c.trim() !== '')) {
+      warnings.push(
+        `${lineNo}행: 열이 헤더(${headerWidth}칸)보다 많아 ${rec.length - headerWidth}칸을 버림 — 쉼표가 하나 더 있는지 보세요`,
+      );
     }
 
     // 분류
@@ -211,8 +241,13 @@ export function parsePartsCsv(text: string): CsvParseResult {
       const raw = get(f);
       if (!raw) return null;
       const n = Number(raw.replace(/[,\s]/g, ''));
-      if (!Number.isInteger(n) || n <= 0) {
+      // 숫자로 아예 안 읽히는 것과, 읽히지만 쓸 수 없는 값(0·음수·소수)은 사유가 다르다
+      if (!Number.isFinite(n)) {
         warnings.push(`${lineNo}행: ${label} 값 '${raw}' 를 숫자로 읽지 못해 무시`);
+        return null;
+      }
+      if (!Number.isInteger(n) || n <= 0) {
+        warnings.push(`${lineNo}행: ${label} 값 '${raw}' 가 1 이상의 정수가 아니라 무시`);
         return null;
       }
       return n;
@@ -231,19 +266,27 @@ export function parsePartsCsv(text: string): CsvParseResult {
       if (pins !== null && pins !== total) {
         warnings.push(`${lineNo}행: 핀수 ${pins} 와 열×행 ${total} 이 달라 열×행을 따름`);
       }
+    } else if (cols !== null && pins !== null) {
+      /*
+       * 열만 적힌 부품표가 흔하다 (`열 2 · 핀수 6` = 2열 3행).
+       * 예전에는 행을 1 로 못 박고 total = 열 로 잡아 **핀 4개를 버렸다**.
+       * 핀수는 사람이 적은 실제 핀 수이므로 그쪽을 살리고 행을 역산한다.
+       */
+      total = pins;
+      rows = Math.ceil(pins / cols);
+      if (pins % cols !== 0) {
+        warnings.push(`${lineNo}행: 핀수 ${pins} 가 열 ${cols} 로 딱 나뉘지 않아 마지막 줄이 덜 찬다`);
+      }
     } else if (cols !== null) {
       rows = 1;
       total = cols;
-      if (pins !== null && pins !== total) {
-        warnings.push(`${lineNo}행: 핀수 ${pins} 와 열×행 ${total} 이 달라 열×행을 따름`);
-      }
-    } else if (rows !== null && pins !== null && pins % rows === 0) {
-      cols = pins / rows;
+    } else if (rows !== null && pins !== null) {
       total = pins;
-    } else if (pins !== null) {
-      if (rows !== null) {
-        warnings.push(`${lineNo}행: 핀수 ${pins} 가 행 ${rows} 로 나뉘지 않아 1행으로 처리`);
+      cols = Math.ceil(pins / rows);
+      if (pins % rows !== 0) {
+        warnings.push(`${lineNo}행: 핀수 ${pins} 가 행 ${rows} 로 딱 나뉘지 않아 마지막 줄이 덜 찬다`);
       }
+    } else if (pins !== null) {
       cols = pins;
       rows = 1;
       total = pins;
@@ -269,6 +312,17 @@ export function parsePartsCsv(text: string): CsvParseResult {
 
     const manufacturer = get('manufacturer');
     const mpn = get('mpn');
+
+    // 같은 MPN 이 두 번 — 발주 코드가 겹치면 둘 중 무엇을 사야 하는지 알 수 없다.
+    // 버리지는 않는다(둘 다 진짜일 수 있다). 대신 어느 행과 겹치는지 알려 준다.
+    if (mpn) {
+      const first = mpnSeen.get(normKey(mpn));
+      if (first !== undefined) {
+        warnings.push(`${lineNo}행: MPN '${mpn}' 이 ${first}행과 겹칩니다 — 두 부품으로 등록`);
+      } else {
+        mpnSeen.set(normKey(mpn), lineNo);
+      }
+    }
 
     // 성별 — 한글(암/수/보드/—)·영문(receptacle/plug/header/neutral) 둘 다 받는다.
     // 빈 칸은 "미지정", `—` 은 "성별 없음(neutral)" 으로 서로 다르게 본다.
@@ -304,12 +358,19 @@ export function parsePartsCsv(text: string): CsvParseResult {
       part.pinLayout = buildLayout(total, cols || total, signals, colors);
     } else if (signals.length || colors.length) {
       warnings.push(`${lineNo}행: 핀 수를 알 수 없어 신호·색을 버림`);
+    } else {
+      /*
+       * 핀 수를 알 수 없는 하우징 — 열도 행도 핀수도 없다(열이 모자란 행에서 잘 생긴다).
+       * 그대로 두면 캔버스에 놓는 순간 기본 2핀 커넥터가 되어, 부품표에 없던 숫자가
+       * 도면에 조용히 생긴다. 등록은 하되 무엇이 비었는지는 반드시 말해야 한다.
+       */
+      warnings.push(`${lineNo}행: 핀 수(열·행·핀수)가 없어 핀 배치 없이 등록 — 캔버스에 놓기 전에 채우세요`);
     }
 
     parts.push(part);
   }
 
-  return { parts, warnings };
+  return { parts, warnings, skipped };
 }
 
 function splitList(raw: string): string[] {
@@ -354,9 +415,13 @@ export function partsToCsv(parts: PartLibraryItem[]): string {
     if (layout.length) {
       const w = Math.max(...layout.map((s) => (s.offset?.x ?? 0) + 1));
       const h = Math.max(...layout.map((s) => (s.offset?.y ?? 0) + 1));
-      // 격자가 꽉 차지 않으면(구멍 있는 배치) 1행으로 펴서 내보낸다
-      if (w * h === layout.length) { cols = String(w); rows = String(h); }
-      else { cols = String(layout.length); rows = '1'; }
+      /*
+       * 격자가 꽉 차지 않으면(마지막 줄이 덜 찬 5핀 2열 배치 등) 행을 비우고
+       * 열·핀수만 내보낸다 — 되읽을 때 행을 역산하므로 같은 배치가 돌아온다.
+       * 예전처럼 1행으로 펴 버리면 2열 3행 부품이 6열 1행으로 바뀌어 돌아왔다.
+       */
+      cols = String(w);
+      rows = w * h === layout.length ? String(h) : '';
       pins = String(layout.length);
     } else if (p.category !== 'terminal' && p.pinCount) {
       cols = String(p.pinCount);

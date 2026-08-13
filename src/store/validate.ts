@@ -151,7 +151,98 @@ export function validateHarness(doc: HarnessDocument): Issue[] {
     `${wireNo.get(w.id) ?? 'W?'} ${shortEnd(w.from)}→${shortEnd(w.to)}`;
 
   // ================================================================
-  // 11. 하우징 스냅샷 없음 — 먼저 본다. 하우징을 모르면 핀 범위도 규격 색도 못 따진다.
+  // 12. 같은 id 를 두 개가 쓴다
+  //     id 는 배선이 커넥터를 가리키는 유일한 손잡이다. 겹치면 접속표·도면·
+  //     삭제가 전부 "첫 번째 것"만 보고 돌아 화면과 발주가 갈린다.
+  //     고쳐 줄 수 없다 — 어느 쪽이 진짜인지는 사람만 안다.
+  // ================================================================
+  {
+    const seen = new Map<Id, string>();   // id → 무엇으로 처음 쓰였는지
+    const dup = new Map<Id, string[]>();
+    const claim = (id: Id, what: string) => {
+      const first = seen.get(id);
+      if (first == null) { seen.set(id, what); return; }
+      push(dup, id, what);
+    };
+    for (const c of doc.connectors) claim(c.id, '커넥터');
+    for (const d of doc.devices) claim(d.id, '장치');
+    for (const w of doc.wires) claim(w.id, '배선');
+    for (const cb of doc.cables ?? []) claim(cb.id, '케이블');
+    for (const [id, kinds] of dup) {
+      out.push({
+        id: 'duplicate-id',
+        level: 'error',
+        title: `id 중복 — ${id}`,
+        detail: `${seen.get(id)}·${kinds.join('·')} 가 같은 id 를 쓴다 — 배선이 어느 쪽을 가리키는지 정할 수 없어 접속표와 도면이 서로 다른 것을 보게 되고, 하나를 지우면 둘 다 사라진다.`,
+        targetId: id,
+        where: `${refs.get(id) ?? '?'} ${id}`,
+      });
+    }
+  }
+
+  // ================================================================
+  // 13. 끊어진 참조 — 배선이 문서에 없는 커넥터·핀·장치를 가리킨다
+  //     남이 보낸 파일이나 손으로 고친 JSON 에서 나온다. 화면에는 선이 아예
+  //     그려지지 않고 접속표에는 raw id 가 찍혀, 아무 경고 없이 한 본이 증발한다.
+  // ================================================================
+  const deviceIds = new Set<Id>(doc.devices.map((d) => d.id));
+  for (const w of doc.wires) {
+    for (const e of [w.from, w.to]) {
+      if (e.type === 'device') {
+        if (deviceIds.has(e.deviceId)) continue;
+        out.push({
+          id: 'endpoint-missing',
+          level: 'error',
+          title: `없는 장치에 연결 — ${e.deviceId}`,
+          detail: '이 배선이 가리키는 장치가 문서에 없다 — 도면에는 선이 그려지지 않고 접속표에는 이름 대신 내부 id 가 찍히므로, 장치를 다시 만들거나 이 배선을 지워야 한다.',
+          targetId: w.id,
+          where: whereWire(w),
+        });
+        continue;
+      }
+      const c = connById.get(e.connectorId);
+      if (!c) {
+        out.push({
+          id: 'endpoint-missing',
+          level: 'error',
+          title: `없는 커넥터에 연결 — ${e.connectorId}`,
+          detail: '이 배선이 가리키는 커넥터가 문서에 없다 — 도면에 선이 그려지지 않고 파트리스트에서도 빠지므로, 커넥터를 다시 놓거나 이 배선을 지워야 한다.',
+          targetId: w.id,
+          where: whereWire(w),
+        });
+        continue;
+      }
+      if (pinOf.has(`${e.connectorId}:${e.pinId}`)) continue;
+      out.push({
+        id: 'endpoint-missing',
+        level: 'error',
+        title: `없는 핀에 연결 — ${housingName(c)} (${e.pinId})`,
+        detail: '커넥터는 있지만 그 핀이 없다 — 핀 수가 더 적은 하우징으로 바꿨을 때 남는 흔적이다. 배선을 남아 있는 핀으로 옮기거나 지워야 한다.',
+        targetId: w.id,
+        where: whereWire(w),
+      });
+    }
+  }
+
+  // ================================================================
+  // 14. 브리지가 없는 핀을 묶는다 — 스플라이스 내부 결선이 헛돈다
+  // ================================================================
+  for (const c of doc.connectors) {
+    const own = new Set(c.pins.map((p) => p.id));
+    const ghosts = (c.bridges ?? []).flat().filter((pid) => !own.has(pid));
+    if (ghosts.length === 0) continue;
+    out.push({
+      id: 'bridge-missing-pin',
+      level: 'error',
+      title: `내부 결선이 없는 핀을 가리킴 — ${ghosts.slice(0, 3).join(' ')}`,
+      detail: '내부 결선(브리지)에 적힌 핀이 이 커넥터에 없다 — 네트가 실제보다 잘게 쪼개져 접속표의 네트 번호가 도면과 어긋난다.',
+      targetId: c.id,
+      where: whereConn(c),
+    });
+  }
+
+  // ================================================================
+  // 11. 하우징 스냅샷 없음 — 하우징을 모르면 핀 범위도 규격 색도 못 따진다.
   // ================================================================
   for (const c of doc.connectors) {
     if (partById.has(c.housingId)) continue;

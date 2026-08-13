@@ -7,7 +7,7 @@ import { computeNets } from '../store/netlist';
 import { lengthResolver } from '../store/wireLength';
 import {
   pinAnchor, pinAnchorPhysical, deviceAnchor, isHorizontalSide,
-  connectorBox, deviceBox, type NodeBox,
+  connectorBox, deviceBox, layoutCells, type NodeBox,
 } from './geometry';
 
 function endpointNodeId(e: Endpoint): string {
@@ -263,7 +263,8 @@ export function endpointAnchor(
     if (!c) return { x: p.x, y: p.y, side: Position.Right };
     const housing = doc.usedParts.find((x) => x.id === c.housingId);
     const index = c.pins.find((x) => x.id === e.pinId)?.index ?? 1;
-    return view === 'physical' && housing?.pinLayout?.length
+    // 물리 뷰 판정은 layoutCells 로 — 렌더(nodes.tsx)·경계상자(connectorBox)와 같은 기준
+    return view === 'physical' && layoutCells(housing?.pinLayout)
       ? pinAnchorPhysical(c, housing, index, p)
       : pinAnchor(c, housing, index, p);
   }
