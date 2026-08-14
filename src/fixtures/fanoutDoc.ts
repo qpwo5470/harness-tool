@@ -68,3 +68,37 @@ export function fanoutDoc(): HarnessDocument {
     connectors: [A, B, C, D], devices: [], wires, cables: [], usedParts: [h10],
   };
 }
+
+/**
+ * 이름표 가림 시험용 픽스처 — **되돌아오는(backhaul) 배치** 10본.
+ *
+ * 왜 fanoutDoc 으로는 못 잡나: 거기서는 두 커넥터가 서로를 마주 본다(왼쪽 것이
+ * 오른쪽으로, 오른쪽 것이 왼쪽으로 나간다). 경로가 곧장 가로질러 가므로 이름표
+ * 띠(하우징 위 17px)를 지날 일이 없다.
+ *
+ * 여기서는 반대로 **서로 등을 지게** 둔다:
+ *   J-L(o=0, 핸들이 왼쪽 변)  ← 왼쪽으로 나갔다가 오른쪽 상대에게 되돌아온다
+ *   J-R(o=180, 핸들이 오른쪽 변) → 오른쪽으로 나갔다가 왼쪽 상대에게 되돌아온다
+ * 그러면 두 스텁이 제 하우징 **옆구리를 스치며 위아래로** 달린다. 그 세로 간선이
+ * 지나는 x 가 바로 이름표가 삐져나오던 자리다 — 예전 그림에서 J-R 의 이름표는
+ * 하우징 오른쪽으로 100px 넘게 나와 있었고, 그 뒤로 배선이 사라졌다.
+ *
+ * 하우징에 mpn 을 붙여 캡션(하우징 아래 흰 띠)까지 함께 잰다.
+ */
+export function labelOverhangDoc(): HarnessDocument {
+  const h10: PartLibraryItem = { ...strip('lib-strip-10', 10), mpn: 'SMH250-10-K' };
+  const L = conn('J-L', h10.id, 10, 0, 40, 40);
+  const R = conn('J-R', h10.id, 10, 180, 600, 40);
+  const wires: Wire[] = Array.from({ length: 10 }, (_, k) => ({
+    id: `lr${k}`,
+    from: { type: 'pin', connectorId: R.id, pinId: R.pins[k].id },
+    to: { type: 'pin', connectorId: L.id, pinId: L.pins[9 - k].id },
+    color: { base: 'red' },
+    gauge: { system: 'awg', value: 22 },
+  }));
+  return {
+    schemaVersion: 1, id: 'labels', name: '이름표 가림',
+    createdAt: '2026-08-13T00:00:00Z', updatedAt: '2026-08-13T00:00:00Z',
+    connectors: [L, R], devices: [], wires, cables: [], usedParts: [h10],
+  };
+}

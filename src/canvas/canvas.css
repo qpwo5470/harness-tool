@@ -39,8 +39,19 @@
    ============================================================ */
 .hz-node { font-family: var(--font-ui); }
 
+/* 이름표·MPN 캡션 슬롯.
+   폭·높이는 nodes.tsx 가 하우징과 똑같이 인라인으로 준다(geometry 의 boxW ·
+   REF_BLOCK_H · MPN_CAPTION_H). 글자는 이 안에서 absolute 로 떠 슬롯 밖으로
+   넘치되 **노드 폭은 늘리지 않는다** — 노드 폭이 늘면 하우징이 밀려
+   "노드 좌상단 x == 하우징 x" 전제가 깨진다(geometry.connectorBox 가 그걸 쓴다). */
+.hz-label-slot { position: relative; }
+
 /* 레퍼런스 라벨. 흰 배경 inline-block 이 필수 —
-   배선 레인이 글자를 관통하지 않게 한다. */
+   배선 레인이 글자를 관통하지 않게 한다.
+   넘치는 방향(왼쪽/오른쪽)은 nodes.tsx 가 left/right 로 정한다 —
+   배선이 나가는 변 반대쪽으로 몬다(geometry.labelsAlignRight). */
+/* margin 은 장치 노드(흐름 배치) 때문에 남겨 둔다 — 커넥터는 슬롯 안에서
+   absolute 라 margin-bottom 이 자리를 바꾸지 않는다. */
 .hz-ref {
   display: inline-flex; align-items: baseline; gap: 4px;
   background: #fff; padding: 0 2px; margin-bottom: 2px; white-space: nowrap;

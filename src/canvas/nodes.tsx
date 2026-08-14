@@ -12,6 +12,12 @@
  *      source 만 있으면 엣지가 노드 중심으로 폴백해 선이 엉뚱한 데서 나온다.
  *  (3) 핀 배치 축과 핸들 방향은 **함께** 바뀌어야 한다.
  *  (4) 배선이 나가는 변에는 글자를 두지 않는다. 선이 글자를 뚫고 지나간다.
+ *      세로(위/아래)뿐 아니라 **가로**도 마찬가지다: 이름표는 하우징보다 넓어
+ *      반드시 한쪽으로 삐져나오는데, 흰 배경이라 그 자리의 배선을 덮는다.
+ *      그래서 넘치는 방향을 핸들 반대쪽으로 몰고(labelsAlignRight),
+ *      그만큼을 경계 상자에 넣어 라우터가 피하게 한다(geometry.connectorBox).
+ *  (5) 노드 폭은 **하우징 폭**으로 고정한다. 라벨이 노드 폭을 늘리면 하우징이
+ *      밀려 "노드 좌상단 x == 하우징 x" 전제가 깨진다 — geometry 가 그걸 쓴다.
  */
 import type { CSSProperties } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
@@ -20,7 +26,10 @@ import type { Connector, Device, PartLibraryItem, ViewMode, Orientation } from '
  * 기하 상수·계산은 전부 geometry.ts 한 곳에만 둔다.
  * 배선 계획(docToFlow)이 같은 숫자를 써야 레인 배정이 화면과 어긋나지 않는다.
  */
-import { PITCH, INSET, PIN_PHYS, PIN_PHYS_PITCH, connectorLayout, layoutCells } from './geometry';
+import {
+  PITCH, INSET, PIN_PHYS, PIN_PHYS_PITCH, REF_BLOCK_H, MPN_CAPTION_H,
+  connectorLayout, connectorRefParts, labelsAlignRight, layoutCells,
+} from './geometry';
 
 export type ConnectorNodeData = {
   connector: Connector;
@@ -142,8 +151,9 @@ export function ConnectorNode({ data, selected }: NodeProps) {
   const geo = connectorLayout(connector, housing);
   const { layout, boxW, boxH, side, orderedPins } = geo;
 
-  const arrow = o === 0 ? '←' : o === 90 ? '↑' : o === 180 ? '→' : '↓';
-  const dirWord = o === 0 ? '왼쪽' : o === 90 ? '위쪽' : o === 180 ? '오른쪽' : '아래쪽';
+  // 이름표 글자는 geometry 가 만든다 — 경계 상자의 폭을 그 글자로 재기 때문에
+  // 여기서 따로 조립하면 상자와 화면이 조용히 갈린다(PDF 도 같은 함수를 쓴다).
+  const refParts = connectorRefParts(connector, housing, refLabel);
 
   /** 핸들 위치 — 노드 **가장자리**에 절대 위치 (핀 셀에 붙이면 선이 도형 중간에서 시작한다) */
   const handleStyle = (index: number): CSSProperties => {
@@ -164,11 +174,36 @@ export function ConnectorNode({ data, selected }: NodeProps) {
   const nodeColor = isSplice ? 'var(--wire-splice, #a16207)' : 'var(--line-strong)';
   const boxColor = selected ? 'var(--accent)' : nodeColor;
 
+  /**
+   * 이름표·캡션을 어느 변에 맞출지 — **핸들이 없는 쪽으로 넘치게** 한다.
+   * 배선이 오른쪽으로 나가는 커넥터(o=180)는 오른쪽 정렬이라 글자가 왼쪽으로 넘친다.
+   * 근거와 다른 방향의 처리는 geometry.labelsAlignRight 에 적어 뒀다.
+   */
+  const alignRight = labelsAlignRight(o);
+
+  /**
+   * 라벨 슬롯 — **폭은 하우징과 똑같이** 두고 글자는 그 안에서 absolute 로 띄운다.
+   *
+   * 왜 이렇게까지 하나: 이름표는 하우징보다 넓다. 흐름에 그냥 두면 **노드 폭을
+   * 이름표가 정하고**, 오른쪽 정렬을 주자고 `align-items: flex-end` 를 걸면
+   * 하우징이 오른쪽으로 밀린다. 그러면 geometry 가 전제로 쓰는
+   * "노드 좌상단 x == 하우징 x" 가 깨져 핸들·패드 좌표가 통째로 어긋난다.
+   * absolute 로 띄우면 글자는 슬롯 밖으로 넘치되 레이아웃 폭은 boxW 로 남는다.
+   */
+  const labelSlot = (h: number): CSSProperties => ({ position: 'relative', width: boxW, height: h });
+  const labelAt: CSSProperties = { position: 'absolute', top: 0, ...(alignRight ? { right: 0 } : { left: 0 }) };
+
   const refBlock = (
-    <div className="hz-ref" title={`${housing?.name ?? connector.kind} · 방향 ${o}° (배선 ${dirWord})`}>
-      <b className="num">{refLabel ?? (isSplice ? 'SP' : 'J')}</b>
-      <span className="hz-ref-name">{isSplice ? '⑂ ' : ''}{housing?.name ?? connector.kind}</span>
-      <span className="hz-ref-dir num">{arrow} {o}° {dirWord}</span>
+    <div className="hz-label-slot" style={labelSlot(REF_BLOCK_H)}>
+      <div
+        className="hz-ref"
+        style={labelAt}
+        title={`${refParts.name} · 방향 ${refParts.dir}`}
+      >
+        <b className="num">{refParts.ref}</b>
+        <span className="hz-ref-name">{refParts.name}</span>
+        <span className="hz-ref-dir num">{refParts.dir}</span>
+      </div>
     </div>
   );
 
@@ -213,7 +248,11 @@ export function ConnectorNode({ data, selected }: NodeProps) {
         ))}
       </div>
 
-      {housing?.mpn && <div className="hz-mpn num">{housing.mpn}</div>}
+      {housing?.mpn && (
+        <div className="hz-label-slot" style={labelSlot(MPN_CAPTION_H)}>
+          <div className="hz-mpn num" style={labelAt}>{housing.mpn}</div>
+        </div>
+      )}
       {!labelFirst && refBlock}
     </div>
   );

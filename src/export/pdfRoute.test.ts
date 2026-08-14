@@ -20,8 +20,9 @@
  */
 import { describe, it, expect } from 'vitest';
 import { sampleDoc } from '../fixtures/sampleDoc';
-import { fanoutDoc } from '../fixtures/fanoutDoc';
-import { assignLanes, docToEdges } from '../canvas/docToFlow';
+import { fanoutDoc, labelOverhangDoc } from '../fixtures/fanoutDoc';
+import { assignLanes, docToEdges, nodePositions, refLabels } from '../canvas/docToFlow';
+import { connectorLabelRects } from '../canvas/geometry';
 import { routeWire, planWires } from '../canvas/wirePlan';
 import type { OrthoEdgeData } from '../canvas/OrthogonalEdge';
 import type { HarnessDocument } from '../types';
@@ -323,6 +324,62 @@ describe('PDF 밀도 — 20본 팬아웃', () => {
     const { horiz, vert } = splitSegments(flat);
     expect(overlapPairs(horiz)).toBeGreaterThan(50);
     expect(overlapPairs(vert)).toBeGreaterThan(50);
+  });
+});
+
+// ============================================================
+/**
+ * 이름표·MPN 캡션 자리도 화면과 같은 출처여야 한다.
+ *
+ * 라벨은 하우징보다 넓어 한쪽으로 삐져나오고, 그 삐져나온 폭이 **경계 상자**를
+ * 정한다(geometry.connectorBox). 화면은 오른쪽 정렬인데 PDF 만 왼쪽에서 그리면
+ * 같은 문서에서 두 그림이 갈린다 — 예전에 경로가 갈렸던 것과 같은 종류의 사고다.
+ */
+describe('PDF 라벨 자리 = 화면 라벨 자리', () => {
+  const docs: [string, HarnessDocument][] = [
+    ['샘플 문서', sampleDoc],
+    ['이름표 overhang', labelOverhangDoc()],
+  ];
+
+  it.each(docs)('%s: 커넥터 이름표·캡션 사각형이 geometry 와 완전히 같다', (_name, doc) => {
+    const dr = buildDrawing(doc);
+    const at = nodePositions(doc, 'logical');
+    const refs = refLabels(doc);
+    for (const c of doc.connectors) {
+      const housing = doc.usedParts.find((p) => p.id === c.housingId);
+      const g = connectorLabelRects(c, housing, at.get(c.id)!, refs.get(c.id));
+      const n = dr.nodes.find((x) => x.id === c.id)!;
+      expect(n.labelRects[0], `${c.id} 이름표`).toEqual(g.ref);
+      if (g.mpn) expect(n.labelRects[1], `${c.id} 캡션`).toEqual(g.mpn);
+    }
+  });
+
+  it.each(docs)('%s: PDF 배선이 라벨 사각형을 지나지 않는다', (_name, doc) => {
+    const dr = buildDrawing(doc);
+    const rects = dr.nodes.filter((n) => n.kind !== 'device').flatMap((n) => n.labelRects);
+    let hits = 0;
+    for (const w of dr.wires) {
+      for (const r of rects) {
+        for (let k = 1; k < w.points.length; k++) {
+          if (segHitsBox(w.points[k - 1], w.points[k], r)) hits++;
+        }
+      }
+    }
+    expect(hits).toBe(0);
+  });
+
+  /**
+   * 도면 경계가 라벨을 잘라내지 않는다. o=180 은 라벨이 **왼쪽으로** 넘치는데,
+   * 예전 boundsOf 는 `박스 x + 라벨 폭` 만 세어(오른쪽만) 왼쪽 글자를 잘랐다.
+   */
+  it('이름표 overhang: 도면 경계가 라벨 사각형을 전부 담는다', () => {
+    const dr = buildDrawing(labelOverhangDoc());
+    for (const n of dr.nodes) {
+      for (const r of n.labelRects) {
+        expect(r.x).toBeGreaterThanOrEqual(dr.bounds.x - 1e-6);
+        expect(r.x + r.w).toBeLessThanOrEqual(dr.bounds.x + dr.bounds.w + 1e-6);
+      }
+    }
   });
 });
 

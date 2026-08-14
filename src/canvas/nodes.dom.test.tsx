@@ -184,6 +184,85 @@ describe('논리 뷰 하우징 심볼 (핀 패드 격자)', () => {
   });
 });
 
+/**
+ * 이름표 overhang — 실제 화면에서 붙잡은 결함.
+ *
+ * 이름표는 하우징보다 훨씬 넓다(1행 10P 를 좌우로 두면 하우징 38px 대 이름표
+ * 140px+). 흰 배경이라 그 삐져나온 자리가 배선을 덮는다. 고치는 방법은 둘이다.
+ *   (1) 넘치는 방향을 **핸들 반대쪽**으로 몬다 — 여기(렌더)
+ *   (2) 그만큼 경계 상자를 넓혀 라우터가 피하게 한다 — geometry.connectorBox
+ * 이 describe 는 (1)과, (1)이 하우징 자리를 건드리지 않는다는 것을 잰다.
+ */
+describe('이름표 정렬 — overhang 을 핸들 없는 쪽으로 몬다', () => {
+  const mpnHousing: PartLibraryItem = { ...housing, mpn: 'SMH250-04' };
+  const renderWithMpn = (orientation: 0 | 90 | 180 | 270) =>
+    render(
+      <ReactFlowProvider>
+        <ConnectorNode
+          id="c1" type="connector" dragging={false} zIndex={1}
+          selectable selected={false} draggable deletable isConnectable
+          positionAbsoluteX={0} positionAbsoluteY={0}
+          data={{ connector: conn(orientation), housing: mpnHousing, view: 'logical' } as never}
+        />
+      </ReactFlowProvider>,
+    );
+
+  it('배선이 오른쪽으로 나가면(180°) 이름표를 오른쪽 변에 맞춘다', () => {
+    const { container } = renderNode(180, 'logical');
+    const ref = container.querySelector('.hz-ref') as HTMLElement;
+    expect(ref.style.position).toBe('absolute');
+    expect(ref.style.right).toBe('0px');   // 오른쪽 변에 맞춤 → 왼쪽으로 넘친다
+    expect(ref.style.left).toBe('');
+  });
+
+  it('나머지 방향은 왼쪽 정렬 — 핸들이 왼쪽 변(0°)이거나 위·아래 변이라 안전하다', () => {
+    for (const o of [0, 90, 270] as const) {
+      const { container } = renderNode(o, 'logical');
+      const ref = container.querySelector('.hz-ref') as HTMLElement;
+      expect(ref.style.left, `${o}°`).toBe('0px');
+      expect(ref.style.right, `${o}°`).toBe('');
+      cleanup();
+    }
+  });
+
+  it('MPN 캡션도 이름표와 같은 변에 맞춘다 (같은 방향으로 넘쳐야 상자가 하나로 덮인다)', () => {
+    const { container } = renderWithMpn(180);
+    const mpn = container.querySelector('.hz-mpn') as HTMLElement;
+    expect(mpn.style.position).toBe('absolute');
+    expect(mpn.style.right).toBe('0px');
+    cleanup();
+    const left = renderWithMpn(0).container.querySelector('.hz-mpn') as HTMLElement;
+    expect(left.style.left).toBe('0px');
+  });
+
+  /**
+   * 하우징 자리 불변 — geometry 는 **노드 좌상단 x == 하우징 x** 를 전제로
+   * 핸들·패드 좌표를 계산한다(housingOrigin().x === 0). 이름표를 오른쪽으로
+   * 맞추자고 `align-items: flex-end` 같은 걸 걸면 하우징이 밀려 그 전제가 깨진다.
+   *
+   * jsdom 에는 레이아웃이 없어 실제 x 를 잴 수 없다. 대신 **깨질 수 없게 만든
+   * 구조**를 잰다: 노드의 직계 자식은 전부 하우징과 같은 폭이고(=노드 폭이 곧
+   * 하우징 폭), 글자는 그 안에서 absolute 라 흐름 폭을 못 늘린다.
+   */
+  it('네 방향 모두 하우징이 노드 왼쪽 끝에 남는다 (라벨이 노드 폭을 늘리지 않는다)', () => {
+    for (const o of [0, 90, 180, 270] as const) {
+      const { container } = renderWithMpn(o);
+      const node = container.querySelector('.hz-node-logical') as HTMLElement;
+      const box = container.querySelector('.hz-housing') as HTMLElement;
+      expect(box.style.width, `${o}°`).toMatch(/^\d+px$/);
+      for (const kid of [...node.children] as HTMLElement[]) {
+        // 하우징도 슬롯도 폭이 같다 → 흐름 폭 = 하우징 폭 → 하우징 x = 노드 x
+        expect(kid.style.width, `${o}° 자식 ${kid.className}`).toBe(box.style.width);
+      }
+      // 글자는 흐름에서 빠져 있다 — 넘치더라도 노드 폭에 영향이 없다
+      for (const label of [...node.querySelectorAll('.hz-ref, .hz-mpn')] as HTMLElement[]) {
+        expect(label.style.position, `${o}°`).toBe('absolute');
+      }
+      cleanup();
+    }
+  });
+});
+
 describe('물리 뷰 회전 시 핸들 방향', () => {
   it('회전각에 따라 핸들 방향도 함께 돈다', () => {
     // 하우징 박스가 CSS 회전하므로 핸들도 같이 돌아야 배선이 맞는 쪽에서 나옴
@@ -335,20 +414,33 @@ describe('텍스트 가림 — 배선이 글자를 지나지 않는가', () => {
     expect(t.indexOf('테스트 4P')).toBeLessThan(t.indexOf('4'));
   });
 
+  /**
+   * 이름표는 이제 하우징 폭 슬롯(.hz-label-slot) **안에** absolute 로 뜬다 —
+   * 라벨이 노드 폭을 늘려 하우징을 밀지 않게 하려는 것이다(nodes.tsx 주석).
+   * 그래서 `.hz-ref` 는 더 이상 노드의 직계 자식이 아니다. 찾는 방법만 바꾸고
+   * 판정("하우징과 라벨 중 무엇이 먼저 오는가")은 그대로 둔다.
+   *
+   * 예전 식(`classList.contains('hz-ref')`)을 그냥 두면 refIdx 가 -1 이 되어
+   * 0° 시험은 `-1 < 0` 으로 **조용히 통과**한다 — 그래서 반드시 고쳐야 한다.
+   */
+  const childIndexOf = (container: HTMLElement, sel: string) => {
+    const kids = [...container.querySelector('.hz-node-logical')!.children];
+    const i = kids.findIndex((k) => k.matches(sel) || k.querySelector(sel));
+    expect(i, `${sel} 를 노드에서 못 찾았다`).toBeGreaterThanOrEqual(0);
+    return i;
+  };
+
   it('90°(위로 나감)는 레퍼런스 라벨이 하우징보다 뒤에 온다', () => {
     const { container } = renderNode(90, 'logical');
-    const kids = [...container.querySelector('.hz-node-logical')!.children];
-    const housingIdx = kids.findIndex((k) => k.classList.contains('hz-housing'));
-    const refIdx = kids.findIndex((k) => k.classList.contains('hz-ref'));
-    expect(housingIdx).toBeLessThan(refIdx); // 하우징이 먼저 = 라벨이 아래
+    // 하우징이 먼저 = 라벨이 아래
+    expect(childIndexOf(container, '.hz-housing'))
+      .toBeLessThan(childIndexOf(container, '.hz-ref'));
   });
 
   it('0°(옆으로 나감)는 레퍼런스 라벨이 하우징보다 앞에 온다', () => {
     const { container } = renderNode(0, 'logical');
-    const kids = [...container.querySelector('.hz-node-logical')!.children];
-    const housingIdx = kids.findIndex((k) => k.classList.contains('hz-housing'));
-    const refIdx = kids.findIndex((k) => k.classList.contains('hz-ref'));
-    expect(refIdx).toBeLessThan(housingIdx);
+    expect(childIndexOf(container, '.hz-ref'))
+      .toBeLessThan(childIndexOf(container, '.hz-housing'));
   });
 
   it('부품명이 항상 완전히 렌더된다', () => {

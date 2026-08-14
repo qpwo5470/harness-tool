@@ -37,6 +37,111 @@ export const REF_BLOCK_H = 17;
  */
 export const MPN_CAPTION_H = 14;
 
+/* ── 이름표·MPN 캡션의 **폭** ──────────────────────────────────────────────────
+ *
+ * 왜 높이만으로는 모자랐나 (실측):
+ * 예전 connectorBox 는 이름표·캡션의 높이만 상자에 넣고 폭은 하우징 폭 그대로
+ * 뒀다. 그런데 이름표는 하우징보다 훨씬 넓다 — 1행 10P 를 좌우로 두면 하우징은
+ * 38px 인데 이름표("J1 10P 스트립 → 180° 오른쪽")는 140px 을 넘는다. 라벨은 흰
+ * 배경이고 배선은 노드보다 아래층(zIndex 0)이라, 라우터가 모르는 그 140px 뒤로
+ * 배선이 들어가면 화면에서 통째로 사라진다. 20본 문서를 띄워 경로를 4px 간격으로
+ * 훑은 결과 실제로 한 가닥이 세 지점에서 이름표에 가려져 있었다.
+ *
+ * 그래서 폭도 여기서 계산해 상자에 넣는다. 글꼴 크기·padding·gap 은 canvas.css 의
+ * .hz-ref / .hz-mpn 값을 그대로 옮겨 적은 것이고, PDF(pdfDraw)도 같은 숫자를 쓴다.
+ */
+
+/** .hz-ref 조각별 글꼴 크기 (b · .hz-ref-name · .hz-ref-dir) */
+const REF_FS = { ref: 11, name: 11.5, dir: 10 };
+/** .hz-ref 의 조각 사이 gap */
+const REF_GAP = 4;
+/** .hz-mpn 글꼴 크기 */
+const MPN_FS = 10;
+/** .hz-ref · .hz-mpn 의 좌우 padding (한쪽) */
+export const LABEL_PAD_X = 2;
+
+/**
+ * 글자 폭 어림. 한글·CJK 는 전각(1em), ASCII 는 절반쯤이다.
+ *
+ * 왜 geometry 에 있나: 이 값이 **경계 상자의 폭**을 정한다. 화면과 PDF 가 다른
+ * 어림을 쓰면 두 그림이 갈린다. 원래 export/pdfDraw.ts 에 있었고(글자 잘라내기
+ * 판단용) 지금은 그쪽이 여기서 다시 내보낸다.
+ *
+ * 실제 글꼴을 재지 않는 어림이라 몇 px 어긋난다. 위험한 쪽은 **좁게** 잡는 것인데
+ * (라벨이 상자 밖으로 나가 다시 배선을 덮는다), 라우터가 상자에서 12px
+ * (route.DEFAULT_CLEARANCE) 더 띄우므로 그만큼이 완충이다.
+ */
+export function estimateTextWidth(text: string, size: number): number {
+  let w = 0;
+  for (const ch of text) {
+    const c = ch.codePointAt(0) ?? 32;
+    if (c >= 0x1100) w += 1.0;                      // 한글·CJK 전각
+    else if (c >= 0x0080) w += 0.62;                // 기호·화살표
+    else if ('iIl.,:;\'`|! '.includes(ch)) w += 0.30;
+    else if ('mwMW'.includes(ch)) w += 0.80;
+    else w += 0.52;
+  }
+  return w * size;
+}
+
+/** 방향 화살표·낱말 — 화면(.hz-ref-dir)과 PDF 가 **같은 글자**를 그린다 */
+const ARROW: Record<Orientation, string> = { 0: '←', 90: '↑', 180: '→', 270: '↓' };
+const DIRWORD: Record<Orientation, string> = { 0: '왼쪽', 90: '위쪽', 180: '오른쪽', 270: '아래쪽' };
+
+/** 이름표(.hz-ref) 조각. 화면도 PDF 도 이 셋을 이 순서로 그린다. */
+export type RefLabelParts = { ref: string; name: string; dir: string };
+
+/**
+ * 커넥터 이름표 글자.
+ * 폭 계산과 실제 렌더가 **같은 문자열**을 봐야 상자가 라벨을 정확히 덮는다 —
+ * 그래서 글자를 만드는 자리도 여기 하나뿐이다.
+ */
+export function connectorRefParts(
+  connector: Connector,
+  housing?: PartLibraryItem,
+  ref?: string,
+): RefLabelParts {
+  const isSplice = connector.kind === 'splice';
+  const o = connector.orientation;
+  return {
+    ref: ref ?? (isSplice ? 'SP' : 'J'),
+    name: (isSplice ? '⑂ ' : '') + (housing?.name ?? connector.kind),
+    dir: `${ARROW[o]} ${o}° ${DIRWORD[o]}`,
+  };
+}
+
+/** 이름표 상자 폭 — padding + [ref] + gap + [name] + gap + [dir] + padding */
+export function refLabelWidth(p: RefLabelParts): number {
+  const w = estimateTextWidth(p.ref, REF_FS.ref)
+    + (p.name ? REF_GAP + estimateTextWidth(p.name, REF_FS.name) : 0)
+    + (p.dir ? REF_GAP + estimateTextWidth(p.dir, REF_FS.dir) : 0);
+  return w + LABEL_PAD_X * 2;
+}
+
+/** MPN 캡션 상자 폭 */
+export function mpnCaptionWidth(mpn: string): number {
+  return estimateTextWidth(mpn, MPN_FS) + LABEL_PAD_X * 2;
+}
+
+/**
+ * 이름표·캡션을 하우징 **오른쪽 변에 맞춰** 붙이는가 (= 왼쪽으로 넘치게 하는가).
+ *
+ * 라벨은 하우징보다 넓어 반드시 한쪽으로 삐져나온다. 삐져나온 자리는 흰 배경이라
+ * 경계 상자에 넣어야 하는데, 상자를 **핸들이 있는 쪽으로** 넓히면 핸들이 상자
+ * 속으로 들어가 스텁부터 회피 대상이 된다 — 그러면 "핸들 방향으로 stub 만큼 곧게
+ * 나온다"는 약속이 깨지고 경로가 망가진다(route.ts 머리말).
+ *
+ * 그래서 overhang 은 언제나 **핸들이 없는 쪽**으로 몬다:
+ *   o=180 — 핸들이 오른쪽 변  → 오른쪽 정렬(왼쪽으로 넘침)
+ *   o=0   — 핸들이 왼쪽 변    → 왼쪽 정렬(오른쪽으로 넘침)
+ *   o=90·270 — 핸들이 위·아래 변이라 좌우 어느 쪽으로 넘쳐도 걸리지 않는다.
+ *              게다가 이 둘은 격자가 눕도록 서서(drawGrid) 박스가 이미 넓으니
+ *              overhang 자체가 작다. 0° 와 같이 왼쪽 정렬로 둔다.
+ */
+export function labelsAlignRight(o: Orientation): boolean {
+  return o === 180;
+}
+
 /** 배선이 나가는 변 → React Flow Position */
 export function handleSideOf(o: Orientation): Position {
   return o === 0 ? Position.Left
@@ -281,27 +386,71 @@ export function housingOrigin(o: Orientation): Vec2 {
 export type NodeBox = { x: number; y: number; w: number; h: number };
 
 /**
+ * 논리 뷰에서 이름표·MPN 캡션이 실제로 차지하는 사각형 (절대 좌표).
+ *
+ * 화면(nodes.tsx)은 이 자리를 CSS 로, PDF(pdfDraw)는 같은 좌표를 글자 시작점으로
+ * 쓴다. 경계 상자(connectorBox)도 이 사각형들을 그대로 합쳐 만든다 — 세 곳이
+ * 같은 함수를 봐야 "라우터가 아는 상자"와 "화면에 그려진 글자"가 어긋나지 않는다.
+ *
+ * 세로 순서는 방향에 따라 바뀐다:
+ *   o≠90 — [이름표] [하우징] [MPN]
+ *   o=90 — [하우징] [MPN] [이름표]  (배선이 위로 나가므로 글자를 아래로 내린다)
+ * 어느 쪽이든 합계 높이는 REF_BLOCK_H + boxH + (MPN 있으면 MPN_CAPTION_H) 로 같다.
+ */
+export function connectorLabelRects(
+  connector: Connector,
+  housing: PartLibraryItem | undefined,
+  nodePos: Vec2,
+  ref?: string,
+): { ref: NodeBox; mpn?: NodeBox } {
+  const g = connectorLayout(connector, housing);
+  const o = connector.orientation;
+  const org = housingOrigin(o);
+  const boxX = nodePos.x + org.x;
+  const boxY = nodePos.y + org.y;
+  const alignRight = labelsAlignRight(o);
+  /** 하우징 폭 슬롯 안에서 한쪽 변에 맞춘다 — 넘치는 쪽이 곧 overhang 방향이다 */
+  const place = (w: number, y: number, h: number): NodeBox => ({
+    x: alignRight ? boxX + g.boxW - w : boxX,
+    y, w, h,
+  });
+
+  const mpnH = housing?.mpn ? MPN_CAPTION_H : 0;
+  const mpnY = boxY + g.boxH;
+  return {
+    ref: place(
+      refLabelWidth(connectorRefParts(connector, housing, ref)),
+      o === 90 ? mpnY + mpnH : nodePos.y,
+      REF_BLOCK_H,
+    ),
+    mpn: housing?.mpn ? place(mpnCaptionWidth(housing.mpn), mpnY, MPN_CAPTION_H) : undefined,
+  };
+}
+
+/**
  * 커넥터 노드의 경계 상자.
  *
- * **이름표(.hz-ref)와 MPN 캡션(.hz-mpn)까지 포함한다.** 둘 다 흰 배경이라
- * 아래층(zIndex 0)에 그려지는 배선을 가린다 — 실제로 SP1 이름표 뒤로 주행 구간이
- * 사라지는 걸 화면에서 확인했다. 세 조각의 세로 순서는 방향(o)에 따라 바뀌지만
- * (90° 는 이름표가 아래) 합계 높이는 같으므로 순서는 따지지 않는다.
+ * **이름표(.hz-ref)와 MPN 캡션(.hz-mpn)까지 포함한다** — 높이도 폭도. 둘 다 흰
+ * 배경이라 아래층(zIndex 0)에 그려지는 배선을 가린다. 실제로 SP1 이름표 뒤로
+ * 주행 구간이 사라지는 걸 화면에서 확인했고, 폭을 안 넣던 시절에는 1행 10P 를
+ * 좌우로 둔 커넥터의 이름표(140px+)가 하우징(38px) 밖으로 100px 넘게 삐져나와
+ * 그 뒤로 배선이 들어갔다.
  *
- * 폭은 **하우징 박스 폭 그대로** 둔다. 이름표가 좁은 커넥터(스플라이스 등)에서
- * 박스보다 오른쪽으로 삐져나오지만, 폭을 늘리면 변에 붙어 있어야 할 핸들이
- * 상자 **안쪽**으로 들어가 스텁부터 회피 대상이 돼 버린다. 글자 폭은 CSS 가
- * 정하는 값이라 여기서 정확히 알 수도 없다. → 남은 한계로 적어 둔다.
+ * 넓히는 방향은 **핸들이 없는 쪽 하나뿐**이다(labelsAlignRight 참고). 그래서
+ * 핸들은 어느 방향에서도 상자 **변 위**에 남는다 — 상자 속으로 들어가면 스텁부터
+ * 회피 대상이 돼 경로가 망가진다.
  */
 export function connectorBox(
   connector: Connector,
   housing: PartLibraryItem | undefined,
   nodePos: Vec2,
   view: ViewMode = 'logical',
+  ref?: string,
 ): NodeBox {
   const layout = layoutCells(housing?.pinLayout);
   if (view === 'physical' && layout) {
     // 물리 뷰는 박스를 통째로 rotate 한다 — 90°/270° 는 중심을 축으로 가로·세로가 바뀐다.
+    // (물리 뷰 노드에는 이름표·캡션이 없다 — nodes.tsx 의 물리 분기 참고)
     const w = (Math.max(...layout.map((s) => s.offset.x)) + 1) * PIN_PHYS_PITCH;
     const h = (Math.max(...layout.map((s) => s.offset.y)) + 1) * PIN_PHYS_PITCH;
     const swap = connector.orientation === 90 || connector.orientation === 270;
@@ -310,10 +459,20 @@ export function connectorBox(
     return { x: nodePos.x + (w - bw) / 2, y: nodePos.y + (h - bh) / 2, w: bw, h: bh };
   }
   const g = connectorLayout(connector, housing);
+  const org = housingOrigin(connector.orientation);
+  const rects = connectorLabelRects(connector, housing, nodePos, ref);
+  // 하우징 + 라벨 사각형들의 합집합. 라벨은 한쪽으로만 넘치므로 반대쪽 변은 그대로다.
+  const parts = [
+    { x: nodePos.x + org.x, w: g.boxW },
+    rects.ref,
+    ...(rects.mpn ? [rects.mpn] : []),
+  ];
+  const x = Math.min(...parts.map((p) => p.x));
+  const right = Math.max(...parts.map((p) => p.x + p.w));
   return {
-    x: nodePos.x,
+    x,
     y: nodePos.y,
-    w: g.boxW,
+    w: right - x,
     h: REF_BLOCK_H + g.boxH + (housing?.mpn ? MPN_CAPTION_H : 0),
   };
 }
@@ -401,6 +560,12 @@ export function deviceAnchor(
 /**
  * 장치 노드의 경계 상자 — 커넥터와 같은 이유로 이름표·캡션 높이를 포함한다.
  * DeviceNode 는 캡션("장치 · 단자 N")을 항상 그리므로 조건 없이 더한다.
+ *
+ * 폭은 커넥터와 달리 **넓히지 않는다**. 장치 블록은 단자 핸들이 오른쪽 변에,
+ * 단자 없을 때의 기본 핸들(`__node`)이 왼쪽 변에 있어 **양쪽 다 핸들이 있다** —
+ * 어느 쪽으로 넓혀도 핸들이 상자 속으로 들어가 스텁부터 회피 대상이 된다
+ * (labelsAlignRight 의 근거와 같다). 이름표가 상자보다 길면 그만큼은 여전히
+ * 배선을 덮을 수 있다. 남은 한계.
  */
 export function deviceBox(device: Device, nodePos: Vec2): NodeBox {
   const { w, h } = deviceSize(device);
