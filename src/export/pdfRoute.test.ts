@@ -21,6 +21,7 @@
 import { describe, it, expect } from 'vitest';
 import { sampleDoc } from '../fixtures/sampleDoc';
 import { fanoutDoc, labelOverhangDoc } from '../fixtures/fanoutDoc';
+import { rowOfConnectorsDoc } from '../fixtures/rowOfConnectors';
 import { assignLanes, docToEdges, nodePositions, refLabels } from '../canvas/docToFlow';
 import { connectorLabelRects } from '../canvas/geometry';
 import { routeWire, planWires } from '../canvas/wirePlan';
@@ -149,6 +150,9 @@ describe('PDF 배선 = 화면 배선 (같은 문서 → 같은 꺾임점)', () =
   const docs: [string, HarnessDocument][] = [
     ['샘플 문서', sampleDoc],
     ['20본 팬아웃', fanoutDoc()],
+    // 제3의 노드 회피가 들어간 배치 — 회피 결과가 화면에만 반영되고 PDF 는
+    // 예전 경로를 그리면 여기서 깨진다(예전에 실제로 그런 사고가 있었다).
+    ['한 줄 배치', rowOfConnectorsDoc()],
   ];
 
   it.each(docs)('%s: buildDrawing 의 꺾임점이 화면 경로와 완전히 같다', (_name, doc) => {

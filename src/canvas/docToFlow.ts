@@ -9,6 +9,9 @@ import {
   pinAnchor, pinAnchorPhysical, deviceAnchor, isHorizontalSide,
   connectorBox, deviceBox, layoutCells, type NodeBox,
 } from './geometry';
+// 세로 간선이 어디까지 뻗는지는 **상자를 비켜 간 뒤에야** 알 수 있다.
+// 그래서 레인을 정하기 전에 라우터를 한 번 돌려 본다(assignLanes 주석 참고).
+import { routeOrthogonal } from './route';
 
 function endpointNodeId(e: Endpoint): string {
   return e.type === 'pin' ? e.connectorId : e.deviceId;
@@ -143,13 +146,26 @@ export function highlightedWires(doc: HarnessDocument, selection: string | null)
 }
 
 /**
- * 레인 인덱스 → 화면 오프셋(px). 중앙 기준 대칭: 0, +step, -step, +2step …
- * 도면 중앙에서 한쪽으로 쏠리지 않게 한다.
+ * 레인 인덱스 → 화면 오프셋(px). 중앙 기준으로 위아래 번갈아 벌린다:
+ * 0, +step, -1.5step, +2step, -2.5step …  도면 중앙에서 한쪽으로 쏠리지 않게 한다.
+ *
+ * ── 왜 음수 쪽만 반 칸 더 미나 (실측한 결함)
+ * 예전에는 완전 대칭(0, +step, -step, +2step, -2step)이었다. 그런데 라우터가
+ * 노드 상자를 돌아 나갈 때는 **부호를 접어 |laneY| 만** 쓴다(route.pushAside —
+ * 안쪽으로 되돌아가면 그 상자를 다시 관통하므로 밀어내기는 언제나 바깥쪽이다).
+ * 그래서 크기까지 같은 ±k 두 가닥이 우회 구간에서 **같은 자리에 포개졌다**.
+ * 커넥터를 한 줄로 늘어놓고 양 끝을 네 본으로 이으면 네 본 중 두 본이 겹쳤다
+ * (제3의 노드 회피가 들어오면서 우회하는 배선이 크게 늘어 눈에 띄었다).
+ *
+ * 반 칸을 더하면 접은 뒤 크기가 0 · step · 1.5step · 2step · 2.5step … 로 전부
+ * 달라지고, 접기 전 간격도 여전히 step 이상이다(가장 좁은 쌍이 0 ↔ +step).
+ * 레인 번호가 커질수록 |오프셋| 도 커지므로 접어도 **순서가 뒤집히지 않는다** —
+ * 우회 구간에서 가닥끼리 서로 넘나들지 않는다.
  */
 export function laneOffset(lane: number, step = 12): number {
   const k = Math.ceil(lane / 2);
   if (k === 0) return 0;              // -0 이 나오지 않게 먼저 처리
-  return (lane % 2 === 1 ? 1 : -1) * k * step;
+  return lane % 2 === 1 ? k * step : -(k * step + step / 2);
 }
 
 /**
@@ -304,6 +320,39 @@ export function endpointBox(
   return d ? deviceBox(d, p) : undefined;
 }
 
+/**
+ * 문서의 **모든** 노드 경계 상자 — 배선이 제3의 노드 뒤로 숨지 않게 라우터에 넘긴다.
+ *
+ * 왜 한 번만 만드나: 배선 N본 × 노드 M개다. 배선마다 목록을 다시 만들면 같은
+ * 사각형을 N번씩 다시 계산한다(이름표 글자 폭까지 재는 계산이라 싸지 않다).
+ * `assignLanes` 가 문서당 한 번 만들어 모든 배선이 **같은 배열**을 나눠 쓴다.
+ *
+ * 상자만이 아니라 id 까지 돌려주는 이유: 검증 규칙(`wire-crosses-part`)이
+ * "어느 부품을 지나는지" 를 사람이 읽을 수 있게 짚어 줘야 한다. 라우터는 id 를
+ * 쓰지 않으므로 그쪽에는 `.map((n) => n.box)` 로 상자만 넘긴다.
+ */
+export function nodeBoxes(
+  doc: HarnessDocument,
+  view: ViewMode,
+  at: Map<string, Vec2> = nodePositions(doc, view),
+  refs: Map<string, string> = refLabels(doc),
+): { id: string; box: NodeBox }[] {
+  const out: { id: string; box: NodeBox }[] = [];
+  for (const c of doc.connectors) {
+    const p = at.get(c.id);
+    if (!p) continue;
+    out.push({
+      id: c.id,
+      box: connectorBox(c, doc.usedParts.find((x) => x.id === c.housingId), p, view, refs.get(c.id)),
+    });
+  }
+  for (const d of doc.devices) {
+    const p = at.get(d.id);
+    if (p) out.push({ id: d.id, box: deviceBox(d, p) });
+  }
+  return out;
+}
+
 export type WireLanes = {
   /** 배선별 가로 주행 구간 y 오프셋 */
   laneY: number[];
@@ -315,6 +364,12 @@ export type WireLanes = {
   /** 배선별 양 끝 노드 경계 상자 — 라우터가 이 상자를 피해 간다 */
   fromBox: (NodeBox | undefined)[];
   toBox: (NodeBox | undefined)[];
+  /**
+   * 문서의 모든 노드 상자 — **배선 전체가 같은 배열을 나눠 쓴다**.
+   * 자기 두 끝도 여기 들어 있지만 fromBox/toBox 와 같은 사각형이라 결과가
+   * 달라지지 않는다(route.ts 머리말).
+   */
+  obstacles: NodeBox[];
 };
 
 /**
@@ -328,33 +383,82 @@ export function assignLanes(doc: HarnessDocument, view: ViewMode = 'logical'): W
   const from = doc.wires.map((w) => endpointAnchor(doc, w.from, view, at));
   const to = doc.wires.map((w) => endpointAnchor(doc, w.to, view, at));
 
-  // 1) 가로 주행 구간 — x 로 겹치는 배선끼리 y 를 달리한다.
-  const spans = doc.wires.map((_, i) => [from[i].x, to[i].x] as [number, number]);
-  const laneY = colorLanes(spans).map((k) => laneOffset(k, LANE_Y_STEP));
-
-  // 2) 세로 간선 — 같은 노드·같은 변에서 나온 세로 구간이 y 로 겹치면 x 를 벌린다.
-  //    (겹침 판정 구간은 패드 y 에서 주행 구간 y 까지)
-  const runs: LaneRun[] = [];
-  doc.wires.forEach((w, i) => {
-    const s = from[i];
-    const t = to[i];
-    const midY = (s.y + t.y) / 2 + laneY[i];
-    if (isHorizontalSide(s.side)) {
-      runs.push({ item: i, key: `${endpointNodeId(w.from)}:${s.side}`, a: s.y, b: midY });
-    }
-    if (isHorizontalSide(t.side)) {
-      runs.push({ item: i, key: `${endpointNodeId(w.to)}:${t.side}`, a: t.y, b: midY });
-    }
-  });
-  const laneX = colorRuns(doc.wires.length, runs).map((k) => k * LANE_X_STEP);
-
   // 레퍼런스는 한 번만 매긴다 — 상자 폭에 이름표 글자가 들어가므로 배선마다
   // 다시 세면 같은 문서에서 O(n²) 이 된다(결과는 같다).
   const refs = refLabels(doc);
   const fromBox = doc.wires.map((w) => endpointBox(doc, w.from, view, at, refs));
   const toBox = doc.wires.map((w) => endpointBox(doc, w.to, view, at, refs));
+  // 제3의 노드 회피용. 문서당 한 번만 만들어 배선 전체가 같은 배열을 나눠 쓴다.
+  const obstacles = nodeBoxes(doc, view, at, refs).map((n) => n.box);
 
-  return { laneY, laneX, from, to, fromBox, toBox };
+  // 1) 가로 주행 구간 — x 로 겹치는 배선끼리 y 를 달리한다.
+  const spans = doc.wires.map((_, i) => [from[i].x, to[i].x] as [number, number]);
+  const laneY = colorLanes(spans).map((k) => laneOffset(k, LANE_Y_STEP));
+
+  // 2) 세로 간선 — 같은 노드·같은 변에서 나온 세로 구간이 y 로 겹치면 x 를 벌린다.
+  //
+  //    겹침 판정 구간은 "패드 y ~ 세로 간선이 꺾이는 y" 다. 예전에는 그 끝을
+  //    **두 패드의 중점**(+laneY)으로 어림했다. 상자를 비켜 갈 일이 없던 시절에는
+  //    맞았지만, 지금은 주행 구간이 상자 무리 바깥까지 밀리므로 세로 간선이 그만큼
+  //    더 길어진다 — 늘어난 그 부분의 겹침을 통째로 놓쳤다(한 줄 배치에서 커넥터
+  //    바로 옆 스텁 두 가닥이 8px 겹치는 것을 실측).
+  //
+  //    그래서 **laneX 를 0 으로 두고 한 번 그려 본 뒤** 그 꺾임 y 를 쓴다.
+  //    닭-달걀(세로 간선 x 를 정하려면 y 범위를 알아야 하고, y 범위는 경로를
+  //    그려 봐야 안다)을 한 번만 풀고 멈춘다: laneX 는 스텁을 옆으로 밀 뿐이라
+  //    꺾임 y 를 거의 바꾸지 않는다. 완전한 동시 해는 범위 밖이다.
+  const runs: LaneRun[] = [];
+  doc.wires.forEach((w, i) => {
+    const s = from[i];
+    const t = to[i];
+    const probe = routeOrthogonal({
+      sourceX: s.x, sourceY: s.y, targetX: t.x, targetY: t.y,
+      sourcePosition: s.side, targetPosition: t.side,
+      laneY: laneY[i], laneX: 0,
+      sourceBox: fromBox[i], targetBox: toBox[i], obstacles,
+    });
+    if (isHorizontalSide(s.side)) {
+      runs.push({
+        item: i, key: `${endpointNodeId(w.from)}:${s.side}`,
+        a: s.y, b: turnY(probe.points, 'start'),
+      });
+    }
+    if (isHorizontalSide(t.side)) {
+      runs.push({
+        item: i, key: `${endpointNodeId(w.to)}:${t.side}`,
+        a: t.y, b: turnY(probe.points, 'end'),
+      });
+    }
+  });
+  const laneX = colorRuns(doc.wires.length, runs).map((k) => k * LANE_X_STEP);
+
+  return { laneY, laneX, from, to, fromBox, toBox, obstacles };
+}
+
+/**
+ * 경로에서 **끝에 가장 가까운 세로 간선**이 닿는 y.
+ *
+ * 가로 스텁 바로 다음(또는 직전)에 오는 세로 선분이 곧 그 커넥터 옆구리를
+ * 오르내리는 구간이고, 레인(laneX)이 벌려야 하는 것도 그 선분이다.
+ * 꺾임점 배열은 `simplify` 를 거쳐 길이가 배치마다 다르므로 자리(index)로 집지
+ * 않고 **찾아서** 쓴다. 세로 선분이 아예 없으면(완전히 곧은 배선) 끝 y 를 준다.
+ */
+function turnY(points: { x: number; y: number }[], side: 'start' | 'end'): number {
+  const eps = 1e-6;
+  if (side === 'start') {
+    for (let k = 1; k < points.length; k++) {
+      if (Math.abs(points[k].x - points[k - 1].x) < eps && Math.abs(points[k].y - points[k - 1].y) > eps) {
+        return points[k].y;
+      }
+    }
+    return points[0].y;
+  }
+  for (let k = points.length - 1; k > 0; k--) {
+    if (Math.abs(points[k].x - points[k - 1].x) < eps && Math.abs(points[k].y - points[k - 1].y) > eps) {
+      return points[k - 1].y;
+    }
+  }
+  return points[points.length - 1].y;
 }
 
 /**
@@ -411,6 +515,10 @@ export function docToEdges(
         // 노드보다 아래층에 그려지므로 두 끝 노드 박스를 피해 가야 한다
         sourceBox: lanes.fromBox[i],
         targetBox: lanes.toBox[i],
+        // 제3의 노드도 마찬가지다(한 줄로 늘어선 커넥터 사이를 지나는 배선).
+        // 배열은 배선 전체가 나눠 쓰는 **같은 참조**다 — 배선마다 새로 만들면
+        // 엣지 data 가 매번 달라져 React Flow 가 전부 다시 그린다.
+        obstacles: lanes.obstacles,
         abbr: colorAbbr(w.color.base, w.color.stripe),
         signal: signalAt(w.to) ?? signalAt(w.from),
         on,

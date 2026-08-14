@@ -52,6 +52,11 @@ export type WireGeometry = {
   sourceBox?: Box;
   /** 도착 노드 경계 상자 */
   targetBox?: Box;
+  /**
+   * 제3의 노드 상자들 — 한 줄로 늘어선 커넥터 사이를 지나는 배선이 가운데
+   * 하우징을 관통하지 않게 한다. 배선 전체가 **같은 배열**을 나눠 쓴다.
+   */
+  obstacles?: Box[];
 };
 
 /**
@@ -68,6 +73,7 @@ export function routeWire(ends: EdgeEnds, g: WireGeometry = {}): Route {
     stub: DEFAULT_STUB,
     sourceBox: g.sourceBox,
     targetBox: g.targetBox,
+    obstacles: g.obstacles,
   });
 }
 
@@ -108,6 +114,7 @@ export function planWires(doc: HarnessDocument, view: ViewMode = 'logical'): Pla
         laneX: lanes.laneX[i],
         sourceBox: lanes.fromBox[i],
         targetBox: lanes.toBox[i],
+        obstacles: lanes.obstacles,
       },
     );
     return { id: w.id, d: r.d, points: r.points, labelX: r.labelX, labelY: r.labelY };

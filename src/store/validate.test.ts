@@ -9,6 +9,7 @@ import type { HarnessDocument, PartLibraryItem, Wire } from '../types';
 import { validateHarness } from './validate';
 import { statsOf } from './kit';
 import { sampleDoc } from '../fixtures/sampleDoc';
+import { rowOfConnectorsDoc } from '../fixtures/rowOfConnectors';
 import { buildPhysicalModel } from '../physical/segments';
 
 // ================================================================
@@ -563,6 +564,55 @@ describe('16. 쓰이지 않는 구간 길이', () => {
     const doc = clean();
     doc.segmentLengths = { [buildPhysicalModel(clean()).segments[0].key]: 200 };
     expect(only(doc, 'segment-length-orphan')).toHaveLength(0);
+  });
+});
+
+// ================================================================
+// 17. 배선이 부품을 지난다
+// ================================================================
+
+describe('배선이 부품을 지난다', () => {
+  /**
+   * 커넥터를 다른 커넥터의 패드 **바로 앞**에 겹쳐 놓는다.
+   *
+   * 왜 이렇게 만드나: 라우터는 주행 구간과 스텁 길이를 밀어 상자를 비켜 가지만
+   * **스텁이 나가는 방향 자체**는 못 바꾼다(패드에서 핸들 방향으로 곧게 나가야
+   * 어느 핀에서 나온 선인지 읽힌다 — route.ts 머리말). 그 자리를 다른 부품이
+   * 덮고 있으면 어떤 회피로도 못 피한다. 그때 조용히 그리기만 하지 않고
+   * 알리는지를 보는 자리다.
+   *
+   * c1(o=0)의 핸들은 왼쪽 변(x=0)에 있고 스텁은 왼쪽으로 나간다. c3 을 그 왼쪽에
+   * 겹쳐 두면 스텁이 c3 의 상자 속을 지난다.
+   */
+  const overlapped = (): HarnessDocument => {
+    const doc = clean();
+    doc.connectors.push({
+      id: 'c3', kind: 'connector', housingId: 'h4', orientation: 180,
+      positions: { logical: { x: -20, y: 20 } },
+      pins: [1, 2, 3, 4].map((i) => ({ id: `r${i}`, index: i, label: String(i), terminalId: 't1' })),
+    });
+    return doc;
+  };
+
+  it('피할 수 없게 겹쳐 놓으면 어느 부품을 지나는지 짚어 준다', () => {
+    const found = only(overlapped(), 'wire-crosses-part');
+    expect(found.length).toBeGreaterThan(0);
+    expect(found[0].level).toBe('warn');
+    expect(found[0].title).toContain('J3');       // 도면 레퍼런스로 짚는다
+    expect(found[0].targetId).toBeDefined();
+  });
+
+  it('정상 문서에서는 아무 말도 하지 않는다 (제 끝 노드는 세지 않는다)', () => {
+    expect(only(clean(), 'wire-crosses-part')).toHaveLength(0);
+  });
+
+  /**
+   * 대조군의 반대편 — 라우터가 **비켜 갈 수 있는** 배치에서는 뜨면 안 된다.
+   * 한 줄로 늘어선 커넥터 사이를 지나는 배선이 그 배치다(canvas/thirdNode.test.ts).
+   * 여기서 뜨기 시작하면 오탐이라 사람이 목록 전체를 무시하게 된다.
+   */
+  it('한 줄로 늘어선 커넥터 배치에서는 뜨지 않는다', () => {
+    expect(only(rowOfConnectorsDoc(), 'wire-crosses-part')).toHaveLength(0);
   });
 });
 

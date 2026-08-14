@@ -36,6 +36,11 @@ export type OrthoEdgeData = {
   sourceBox?: Box;
   /** 도착 노드 경계 상자 */
   targetBox?: Box;
+  /**
+   * 제3의 노드 상자들 — 이 배선의 끝이 아닌 부품 뒤로도 선이 숨지 않게.
+   * 문서의 모든 노드가 들어 있고, 엣지 전체가 **같은 배열 참조**를 나눠 쓴다.
+   */
+  obstacles?: Box[];
   /** 스텁 라벨: 색 약호 (R, B, W/O …) */
   abbr?: string;
   /** 스텁 라벨: 신호명 */

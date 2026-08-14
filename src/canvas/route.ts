@@ -29,16 +29,33 @@
  * 부호를 무시한다 — 부호를 그대로 쓰면 스텁이 패드 안으로 파고들어
  * "핸들 방향으로 stub 만큼 곧게" 라는 약속이 깨진다.
  *
- * ── 노드 상자 비켜가기 (sourceBox / targetBox)
+ * ── 노드 상자 비켜가기 (sourceBox / targetBox / obstacles)
  * 핸들 방향이 목적지 반대면(예: o=0 커넥터에서 오른쪽으로 가는 배선) 경로가
  * 패드 밖으로 나왔다가 되돌아 들어와야 한다. 그때 주행 구간이 **자기 노드 박스
  * 한가운데를 관통**했다. 엣지는 노드보다 아래층(zIndex 0)이라 화면에서는 선이
  * 박스 반대편 변에서 난데없이 튀어나오는 것처럼 보였다(J1→SP1, SP1→J2 실측).
  *
  * 그래서 출발·도착 노드의 경계 상자를 받아 주행 구간과 스텁을 그 바깥으로 민다.
- * **두 상자만 피한다** — 제3의 노드를 지나는 건 이번 범위 밖이다(그건 레인 배정과
- * 경로 계획을 함께 푸는 문제라 A* 같은 진짜 회피기가 필요하다).
- * 상자는 **선택 입력**이다. 안 넘기면 예전과 완전히 같은 경로가 나온다.
+ *
+ * ── 제3의 노드도 피한다 (obstacles) — 왜 A* 를 안 썼나
+ * 예전에는 **자기 두 상자만** 피했다. 커넥터를 한 줄로 늘어놓고(하네스 도면에서
+ * 가장 흔한 배치) 양 끝을 이으면 주행 구간이 가운데 커넥터들을 통째로 관통했다.
+ * 실측: 커넥터 5개(x = 0/260/520/780/1040) · 배선 8본에서 **3본이 가운데 셋을
+ * 관통**(w2·w3·w4 → cB·cC·cD). 하우징은 흰색으로 채워지므로 화면·PDF 모두에서
+ * 선이 그 구간만 사라진다.
+ *
+ * 고친 방법은 회피기를 새로 만드는 게 아니라 **이미 있던 두 손잡이의 대상을
+ * 넓힌 것**이다: `pushAside`(주행 구간을 상자 밖으로) · `pushOut`(스텁 연장)이
+ * 자기 두 상자에 하던 일을 **막고 있는 모든 상자**에 한다. 일반 경로 탐색기(A*)는
+ * 이 문제에 과할 뿐 아니라, 지금 코드가 지키는 성질(직교 · 스텁 불변 · 레인 분리 ·
+ * 결정론)을 전부 다시 증명해야 한다. 여기서 필요한 건 "가로 띠 하나를 어디에
+ * 놓을까" 뿐이고 그건 1차원 문제다.
+ *
+ * 끝 상자(sourceBox/targetBox)와 장애물을 **같은 목록**으로 다룬다. 끝 상자는
+ * 핸들이 변 위에 붙어 있다는 점만 다른데, `crosses` 가 변에 닿기만 하는 것을
+ * 통과로 보므로(스텁 첫 점이 제 상자에 걸리지 않게) 취급을 나눌 필요가 없다.
+ *
+ * 상자는 전부 **선택 입력**이다. 안 넘기면 예전과 완전히 같은 경로가 나온다.
  */
 import { Position } from '@xyflow/react';
 
@@ -66,6 +83,13 @@ export type RouteInput = {
   sourceBox?: Box;
   /** 도착 노드 경계 상자 — 없으면 회피를 건너뛴다 */
   targetBox?: Box;
+  /**
+   * 제3의 노드 상자들 — 없거나 비면 회피를 건너뛴다(예전 경로 그대로).
+   * 문서의 모든 노드를 그대로 넘겨도 된다: 자기 두 끝이 여기 또 들어와도 같은
+   * 사각형이라 결과가 바뀌지 않는다. 배선마다 목록을 다시 만들지 말고
+   * 문서당 한 번 만든 **같은 배열**을 나눠 쓴다(docToFlow.nodeBoxes).
+   */
+  obstacles?: Box[];
   /** 상자에서 띄울 여백 */
   clearance?: number;
 };
@@ -86,6 +110,12 @@ export const DEFAULT_STUB = 14;
 export const DEFAULT_LABEL_BACKOFF = 22;
 /** 노드 상자에서 띄울 기본 여백 — 선이 테두리에 붙어 보이지 않을 만큼만 */
 export const DEFAULT_CLEARANCE = 12;
+/**
+ * 주행 구간 ↔ 스텁 맞물림을 푸는 되풀이 **상한**.
+ * 대부분 두 바퀴에서 값이 같아져 그 자리에서 멈춘다(settle). 상한은 서로 물고
+ * 도는 병적인 배치에서 계산이 끝난다는 것만 보장한다 — 결정론을 위해 상수다.
+ */
+export const MAX_AVOID_PASSES = 4;
 
 const EPS = 1e-6;
 
@@ -179,38 +209,77 @@ function crosses(at: number, from: number, to: number, across: Span, along: Span
  * 스텁에서 뻗어 나온 선분을 상자 밖으로 **더 밀어낸다**.
  * 미는 방향은 핸들 방향(dir) 하나뿐이다 — 반대로 당기면 "핸들 방향으로 stub 만큼
  * 곧게 나온다"는 약속이 깨진다. 스텁이 길어질 뿐이라 모양은 유지된다.
+ *
+ * 한 상자를 넘어가다 다른 상자에 걸릴 수 있어 되풀이한다. **끝난다는 근거**:
+ * v 는 dir 한 방향으로만 움직이므로 한 번 넘어간 상자는 다시 걸리지 않는다.
+ * 따라서 한 바퀴마다 상자를 최소 하나씩 영구히 털어 낸다 → 상자 수만큼이면 끝.
  */
 function pushOut(at: number, from: number, to: number, dir: number, boxes: Box[], c: number, axis: Axis): number {
   let v = at;
-  // 한 상자를 넘어가다 다른 상자에 걸릴 수 있으니 두 번 훑는다(상자는 최대 둘).
-  for (let pass = 0; pass < 2; pass++) {
+  for (let pass = 0; pass <= boxes.length; pass++) {
+    let moved = false;
     for (const b of boxes) {
       const { across, along } = ranges(b, c, axis);
       if (!crosses(v, from, to, across, along)) continue;
       v = dir < 0 ? Math.min(v, across.lo) : Math.max(v, across.hi);
+      moved = true;
     }
+    if (!moved) break;
   }
   return v;
 }
 
 /**
  * 주행 구간을 상자 밖으로 비킨다. 스텁과 달리 **양쪽 다** 갈 수 있으므로
- * 더 가까운 쪽(위/아래 또는 좌/우)을 고른다.
+ * 더 가까운 쪽(위/아래 또는 좌/우)을 고른다. 여러 상자가 걸리면 **합집합** 기준으로
+ * 한 번에 넘긴다 — 상자 사이 틈으로 비집고 들어가면 다음 상자에 또 걸린다.
+ *
+ * 넘어간 자리에서 **다른** 상자에 새로 걸릴 수 있으므로 되풀이한다. 그때 방향은
+ * 처음 고른 것을 **끝까지 유지한다**. 매번 가까운 쪽을 다시 고르면 두 무리 사이를
+ * 오락가락하다 상한에 걸린다. 한 방향으로만 가면 이미 넘은 상자는 다시 걸리지
+ * 않으므로(v 가 그 상자의 바깥 변을 지나 단조로 멀어진다) 상자 수만큼이면 끝난다.
  *
  * 레인은 그 바깥쪽으로 얹는다 — 여러 가닥이 같은 상자를 돌아 나가도 서로 벌어진다.
- * 다만 부호를 접으므로 ±k 레인은 같은 자리로 겹친다. 레인 배정(docToFlow)은
- * 우회 사정을 모르는 상류 단계라 여기서 더 풀 수 없다. 남은 한계.
+ * **부호는 접는다**(|lane|): 안쪽으로 되돌아가면 방금 넘은 상자를 다시 관통한다.
+ * 그래서 레인 값은 접어도 크기가 겹치지 않아야 한다 — 그 성질은 값을 만드는
+ * 쪽(docToFlow.laneOffset)이 지킨다. 예전 완전 대칭(±k·step)에서는 ±k 두 가닥이
+ * 우회 구간에서 한 자리에 포개졌다.
  */
 function pushAside(at: number, from: number, to: number, lane: number, boxes: Box[], c: number, axis: Axis): number {
-  const hit = boxes.filter((b) => {
-    const { across, along } = ranges(b, c, axis);
-    return crosses(at, from, to, across, along);
-  });
-  if (!hit.length) return at;
-  const lo = Math.min(...hit.map((b) => (axis === 'x' ? b.x : b.y))) - c;
-  const hi = Math.max(...hit.map((b) => (axis === 'x' ? b.x + b.w : b.y + b.h))) + c;
   const k = Math.abs(lane);
-  return at - lo <= hi - at ? lo - k : hi + k;
+  let v = at;
+  let dir = 0;                                  // 0=아직 안 정함 · -1=낮은 쪽 · +1=높은 쪽
+  for (let pass = 0; pass <= boxes.length; pass++) {
+    const hit = boxes.filter((b) => {
+      const { across, along } = ranges(b, c, axis);
+      return crosses(v, from, to, across, along);
+    });
+    if (!hit.length) break;
+    const lo = Math.min(...hit.map((b) => (axis === 'x' ? b.x : b.y))) - c;
+    const hi = Math.max(...hit.map((b) => (axis === 'x' ? b.x + b.w : b.y + b.h))) + c;
+    if (dir === 0) dir = v - lo <= hi - v ? -1 : 1;
+    v = dir < 0 ? lo - k : hi + k;
+  }
+  return v;
+}
+
+/**
+ * 값이 더 움직이지 않을 때까지 되풀이하되 **상한에서 멈춘다**.
+ *
+ * 주행 구간과 스텁은 서로 물린다: 주행 구간을 밀면 스텁(세로 간선)이 길어지고,
+ * 스텁을 밀면 주행 구간의 진행 범위가 넓어져 다른 상자에 새로 걸린다. 그래서
+ * 한 번으로는 안 끝난다. 되풀이는 **값이 같아지면 즉시** 멈추므로(대부분 두 바퀴)
+ * 상한은 병적인 배치에서만 쓰인다. 상한에 걸리면 남은 관통은 그대로 그린다 —
+ * 선이 아예 사라지는 것보다 낫고, 그 사실은 검증 규칙 `wire-crosses-part` 가
+ * **최종 경로를 직접 다시 재서** 알린다(라우터의 자기 신고를 믿지 않는다).
+ */
+function settle(step: () => number[], max: number): void {
+  let prev: number[] = [];
+  for (let p = 0; p < max; p++) {
+    const now = step();
+    if (prev.length === now.length && prev.every((v, k) => Math.abs(v - now[k]) < EPS)) return;
+    prev = now;
+  }
 }
 
 export function routeOrthogonal(i: RouteInput): Route {
@@ -231,53 +300,57 @@ export function routeOrthogonal(i: RouteInput): Route {
   const A: Pt = { x: S.x + ds.x * (stub + pushS), y: S.y + ds.y * (stub + pushS) };
   const B: Pt = { x: T.x + dt.x * (stub + pushT), y: T.y + dt.y * (stub + pushT) };
 
-  // 피할 상자 — 둘 다 없으면(정보 부족) 예전 경로 그대로다.
+  // 피할 상자 — 하나도 없으면(정보 부족) 예전 경로 그대로다.
+  // 끝 상자와 제3의 노드를 한 목록에 담는다(머리말 참고). 자기 두 끝이 obstacles
+  // 에 또 들어와도 같은 사각형이라 결과가 달라지지 않는다.
   const boxes: Box[] = [];
   if (i.sourceBox) boxes.push(i.sourceBox);
   if (i.targetBox) boxes.push(i.targetBox);
+  if (i.obstacles?.length) boxes.push(...i.obstacles);
   const cl = i.clearance ?? DEFAULT_CLEARANCE;
-  // 주행 구간과 스텁은 서로 물린다: 주행 구간을 밀면 스텁(세로 간선)이 길어지고,
-  // 스텁을 밀면 주행 구간의 가로 범위가 넓어져 다른 상자에 새로 걸릴 수 있다.
-  // 상자가 둘뿐이라 두 번 맞추면 실질적으로 수렴한다(완전 수렴 보장은 범위 밖).
-  const passes = boxes.length ? 2 : 0;
+  const passes = boxes.length ? MAX_AVOID_PASSES : 0;
 
   let raw: Pt[];
   if (hS && hT) {
     // 가로-가로: 가운데에 가로 주행 구간을 깔고 양쪽에서 세로로 붙는다.
     const baseY = (A.y + B.y) / 2 + laneY;
     let ax = A.x, bx = B.x, my = baseY;
-    for (let p = 0; p < passes; p++) {
+    settle(() => {
       my = pushAside(baseY, Math.min(ax, bx), Math.max(ax, bx), laneY, boxes, cl, 'y');
       ax = pushOut(A.x, S.y, my, ds.x, boxes, cl, 'x');
       bx = pushOut(B.x, T.y, my, dt.x, boxes, cl, 'x');
-    }
+      return [my, ax, bx];
+    }, passes);
     raw = [S, { x: ax, y: S.y }, { x: ax, y: my }, { x: bx, y: my }, { x: bx, y: T.y }, T];
   } else if (!hS && !hT) {
     // 세로-세로: 가운데 세로 주행 구간.
     const baseX = (A.x + B.x) / 2 + laneX;
     let ay = A.y, by = B.y, mx = baseX;
-    for (let p = 0; p < passes; p++) {
+    settle(() => {
       mx = pushAside(baseX, Math.min(ay, by), Math.max(ay, by), laneX, boxes, cl, 'x');
       ay = pushOut(A.y, S.x, mx, ds.y, boxes, cl, 'y');
       by = pushOut(B.y, T.x, mx, dt.y, boxes, cl, 'y');
-    }
+      return [mx, ay, by];
+    }, passes);
     raw = [S, { x: S.x, y: ay }, { x: mx, y: ay }, { x: mx, y: by }, { x: T.x, y: by }, T];
   } else if (hS) {
     // 가로 → 세로: ㄱ자 한 번. 세로 간선 x 는 A.x(=laneX), 가로 간선 y 는 B.y(=laneY).
     // 여기서 움직일 수 있는 건 두 스텁 길이뿐이라 밀어내기도 그 둘로만 한다.
     let ax = A.x, by = B.y;
-    for (let p = 0; p < passes; p++) {
+    settle(() => {
       ax = pushOut(A.x, S.y, by, ds.x, boxes, cl, 'x');
       by = pushOut(B.y, T.x, ax, dt.y, boxes, cl, 'y');
-    }
+      return [ax, by];
+    }, passes);
     raw = [S, { x: ax, y: S.y }, { x: ax, y: by }, { x: T.x, y: by }, T];
   } else {
     // 세로 → 가로: 반대 방향 ㄱ자.
     let ay = A.y, bx = B.x;
-    for (let p = 0; p < passes; p++) {
+    settle(() => {
       ay = pushOut(A.y, S.x, bx, ds.y, boxes, cl, 'y');
       bx = pushOut(B.x, T.y, ay, dt.x, boxes, cl, 'x');
-    }
+      return [ay, bx];
+    }, passes);
     raw = [S, { x: S.x, y: ay }, { x: bx, y: ay }, { x: bx, y: T.y }, T];
   }
 

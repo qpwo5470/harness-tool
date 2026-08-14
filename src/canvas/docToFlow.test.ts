@@ -57,9 +57,36 @@ describe('도면 레퍼런스', () => {
 });
 
 describe('레인 배정 — 구간 겹침 채색', () => {
-  it('레인 인덱스는 중앙 기준 대칭 오프셋으로 바뀐다', async () => {
+  /**
+   * 예전 기댓값은 완전 대칭인 `[0, 12, -12, 24, -24]` 였다. **음수 쪽만 반 칸씩
+   * 더 미는 값으로 바꿨다.** 근거:
+   *
+   * 라우터가 노드 상자를 돌아 나갈 때는 부호를 접어 `|laneY|` 만 쓴다
+   * (route.pushAside — 안쪽으로 되돌아가면 그 상자를 다시 관통하므로 밀어내기는
+   * 언제나 바깥쪽이다). 완전 대칭이면 ±k 두 가닥이 접힌 뒤 **크기까지 같아져**
+   * 우회 구간에서 한 자리에 포개진다. 제3의 노드 회피가 들어오면서 우회하는
+   * 배선이 크게 늘어(한 줄 배치의 A→E 네 본 중 두 본) 실제로 겹치는 것을 봤다.
+   *
+   * 바꾼 값도 위아래로 번갈아 벌어지고(중앙 쏠림 없음), 어떤 두 레인도 step 이상
+   * 떨어져 있다. 아래 두 시험이 그 두 성질을 각각 못박는다.
+   */
+  it('레인 인덱스는 중앙 기준으로 위아래 번갈아 벌어진다', async () => {
     const { laneOffset } = await import('./docToFlow');
-    expect([0, 1, 2, 3, 4].map((l) => laneOffset(l, 12))).toEqual([0, 12, -12, 24, -24]);
+    expect([0, 1, 2, 3, 4].map((l) => laneOffset(l, 12))).toEqual([0, 12, -18, 24, -30]);
+  });
+
+  it('부호를 접어도(|lane|) 레인끼리 겹치지 않는다 — 상자 우회가 쓰는 성질', async () => {
+    const { laneOffset } = await import('./docToFlow');
+    const mags = Array.from({ length: 12 }, (_, l) => Math.abs(laneOffset(l, 12)));
+    expect(new Set(mags).size).toBe(mags.length);
+    // 레인 번호가 커질수록 크기도 커진다 → 접어도 가닥끼리 순서가 뒤집히지 않는다
+    for (let k = 1; k < mags.length; k++) expect(mags[k]).toBeGreaterThan(mags[k - 1]);
+  });
+
+  it('어떤 두 레인도 step 이상 떨어져 있다 (선끼리 붙어 보이지 않게)', async () => {
+    const { laneOffset } = await import('./docToFlow');
+    const vs = Array.from({ length: 12 }, (_, l) => laneOffset(l, 12)).sort((a, b) => a - b);
+    for (let k = 1; k < vs.length; k++) expect(vs[k] - vs[k - 1]).toBeGreaterThanOrEqual(12);
   });
 
   it('겹치지 않는 구간은 같은 레인을 재사용한다', async () => {

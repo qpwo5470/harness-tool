@@ -31,7 +31,10 @@ import { computeNets, endpointKey } from './netlist';
 import { describeEndpoint } from '../export/exporters';
 // 도면 레퍼런스(J1 · SP1 · D1)는 캔버스와 같은 규칙을 써야 한다.
 // 여기서 따로 매기면 패널이 가리키는 J2 와 도면의 J2 가 달라진다.
-import { refLabels } from '../canvas/docToFlow';
+import { refLabels, nodeBoxes } from '../canvas/docToFlow';
+// 배선이 부품을 지나는지는 **실제로 그려지는 경로**로 판정해야 한다.
+// 화면(OrthogonalEdge)·PDF(pdfDraw)와 같은 함수를 부른다.
+import { planWires } from '../canvas/wirePlan';
 // 구간(다발)은 배선에서 유도된다. 입력한 구간 길이를 검사하려면 화면과 **같은**
 // 산출을 봐야 한다 — 여기서 따로 세면 도면의 S3 와 경고의 S3 가 달라진다.
 import { buildPhysicalModel } from '../physical/segments';
@@ -77,6 +80,29 @@ function colorLabel(c: { base: string; stripe?: string }): string {
 /** 색 이름 비교용 정규화 — 'White/Orange ' 와 'white/orange' 는 같은 색이다 */
 function normColor(v: string): string {
   return v.trim().toLowerCase().replace(/\s+/g, '');
+}
+
+/**
+ * 축 정렬 선분이 사각형 **속**을 지나는가 (규칙 17 전용).
+ *
+ * 라우터가 "나는 다 피했다" 고 말해 주게 하지 않고 **최종 경로를 여기서 다시
+ * 잰다.** 라우터는 자기가 아는 상자만 아는데, 우리가 알고 싶은 것은 "화면에서
+ * 선이 가려지는가" 이지 "라우터가 시도했는가" 가 아니다. 회피 되풀이가 상한에
+ * 걸린 경우든, 라우터가 애초에 손대지 않는 배치(부품끼리 겹쳐 놓은 경우)든
+ * 똑같이 잡힌다.
+ *
+ * 변에 닿기만 하는 건 겹침이 아니다 — 패드 핸들은 상자 변 위에 있으므로
+ * 모든 배선의 첫 점·끝 점이 어느 변엔가 걸린다.
+ */
+function segHitsBox(
+  p: { x: number; y: number }, q: { x: number; y: number },
+  b: { x: number; y: number; w: number; h: number },
+): boolean {
+  const eps = 1e-6;
+  const x0 = Math.min(p.x, q.x), x1 = Math.max(p.x, q.x);
+  const y0 = Math.min(p.y, q.y), y1 = Math.max(p.y, q.y);
+  return x1 > b.x + eps && x0 < b.x + b.w - eps
+    && y1 > b.y + eps && y0 < b.y + b.h - eps;
 }
 
 /**
@@ -544,6 +570,57 @@ export function validateHarness(doc: HarnessDocument): Issue[] {
         });
       }
     }
+  }
+
+  // ================================================================
+  // 17. 배선이 부품을 지난다 — 도면에서 그 구간이 가려진다
+  //
+  //     배선은 노드보다 아래층에 그려지고 하우징은 흰색으로 채워진다. 그래서
+  //     경로가 커넥터 상자를 지나면 **그 구간만 선이 사라진다** — 화면에서도,
+  //     공장에 나가는 PDF 에서도. 도면을 읽는 사람은 선이 거기서 끝난 줄 안다.
+  //
+  //     라우터가 상자를 비켜 가지만(canvas/route.ts) 항상 되는 것은 아니다:
+  //       · 회피 되풀이가 상한(MAX_AVOID_PASSES)에 걸린 배치
+  //       · 부품을 서로 겹쳐 놓아 애초에 비킬 자리가 없는 배치
+  //     그때 라우터는 **그리기는 그린다** — 선을 지우는 것보다 낫기 때문이다.
+  //     대신 그 사실이 조용히 묻히면 안 되므로 여기서 알린다.
+  //
+  //     왜 warn 인가: 만들 수는 있고 접속표·자재표도 멀쩡하다(error 아님).
+  //     하지만 산출물인 도면이 실제로 잘못 보이고, 자동으로 고칠 수 없다 —
+  //     부품을 조금 옮기는 것은 사람의 판단이다. "알고만 있으면 되는 것"(info)
+  //     보다는 한 칸 위다.
+  //
+  //     왜 라우터에게 물어보지 않나: `segHitsBox` 머리말 참고. 최종 경로를
+  //     직접 다시 잰다.
+  // ================================================================
+  if (doc.wires.length > 0) {
+    // 노드 상자·경로는 문서당 한 번만 만든다(배선 N × 노드 M 이라 되풀이가 비싸다)
+    const boxes = nodeBoxes(doc, 'logical');
+    planWires(doc, 'logical').forEach((plan, i) => {
+      const w = doc.wires[i];
+      if (!w) return;
+      // 제 끝 노드는 제외한다 — 핸들이 그 상자 변에 붙어 있어 판정 기준이 다르다
+      const ends = new Set(
+        [w.from, w.to].map((e) => (e.type === 'pin' ? e.connectorId : e.deviceId)),
+      );
+      const hit: string[] = [];
+      for (const n of boxes) {
+        if (ends.has(n.id)) continue;
+        const crossed = plan.points.some(
+          (p, k) => k > 0 && segHitsBox(plan.points[k - 1], p, n.box),
+        );
+        if (crossed) hit.push(refs.get(n.id) ?? n.id);
+      }
+      if (hit.length === 0) return;
+      out.push({
+        id: 'wire-crosses-part',
+        level: 'warn',
+        title: `배선이 부품을 지남 — ${hit.join(' ')}`,
+        detail: `도면에서 ${hit.join('·')} 블록이 이 배선 위를 덮으므로 그 구간의 선이 화면에도 PDF 에도 보이지 않는다 — 선이 거기서 끊긴 것처럼 읽힌다. 가운데 부품을 위아래로 조금 옮기거나 사이를 벌리면 배선이 비켜 간다.`,
+        targetId: w.id,
+        where: whereWire(w),
+      });
+    });
   }
 
   return sortIssues(out);
