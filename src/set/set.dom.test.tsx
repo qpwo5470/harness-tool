@@ -230,6 +230,33 @@ describe('하네스 카드', () => {
     expect(within(cardA).getByText('2본 · 1,000mm')).toBeTruthy();
     expect(within(cardA).getByText('510mm')).toBeTruthy();
 
+    /**
+     * 길이를 모르는 배선이 섞이면 합계가 몇 본치인지 밝힌다.
+     * 실제 발주 문서(이스턴웰스)로 확인한 결함 — 길이 미정 하네스 카드가
+     * "3본 · 0mm" 로 나왔다. statsOf 는 모르는 배선을 0 으로 더하지 않는데
+     * 카드가 그 사실을 감춰 0mm 를 실측값처럼 보이게 했다.
+     */
+    const strip = (h: HarnessDocument, keep: number): HarnessDocument => ({
+      ...h,
+      wires: h.wires.map((w, i) => (i < keep ? w : { ...w, lengthMm: undefined })),
+    });
+
+    // 전부 미입력 → 0mm 가 아니라 "길이 미입력"
+    cleanup();
+    const none = makeKit();
+    show({ ...none, harnesses: [strip(none.harnesses[0], 0), ...none.harnesses.slice(1)] });
+    expect(
+      within(screen.getByLabelText('하네스 A MDB 전원·통신')).getByText('2본 · 길이 미입력'),
+    ).toBeTruthy();
+
+    // 일부만 아는 경우 → 몇 본치 합계인지 밝힌다
+    cleanup();
+    const some = makeKit();
+    show({ ...some, harnesses: [strip(some.harnesses[0], 1), ...some.harnesses.slice(1)] });
+    expect(
+      within(screen.getByLabelText('하네스 A MDB 전원·통신')).getByText(/1본 기준/),
+    ).toBeTruthy();
+
     // 미완성 배지 / 완료 배지
     expect(within(cardA).getByText('터미널 미지정 1핀')).toBeTruthy();
     expect(within(screen.getByLabelText('하네스 B 도어 스위치')).getByText('완료')).toBeTruthy();

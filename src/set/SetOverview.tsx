@@ -393,8 +393,19 @@ export function SetOverview(props: {
                   </div>
                   <div className="so-spec-row">
                     <span className="so-spec-k">전선</span>
+                    {/*
+                      합계는 **길이를 아는 본수**와 함께 적는다.
+                      statsOf 는 모르는 배선을 0 으로 더하지 않는데(kit.ts 주석 참고)
+                      카드가 그 사실을 감추고 "3본 · 0mm" 라고 적고 있었다.
+                      길이를 하나도 모르면 0mm 가 아니라 미입력이다 — 실제 발주 문서로
+                      확인했다(길이 미정인 하네스 카드가 0mm 로 나왔다).
+                    */}
                     <span className="so-spec-v num">
-                      {st.wireCount}본 · {num(st.wireLengthMm)}mm
+                      {st.countedLength === 0
+                        ? `${st.wireCount}본 · 길이 미입력`
+                        : st.countedLength < st.wireCount
+                          ? `${st.wireCount}본 · ${num(st.wireLengthMm)}mm (${st.countedLength}본 기준)`
+                          : `${st.wireCount}본 · ${num(st.wireLengthMm)}mm`}
                     </span>
                   </div>
                   <div className="so-spec-row">
