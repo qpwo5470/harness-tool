@@ -1,8 +1,9 @@
 /**
  * Agent D 소유 — 파트리스트 집계 + CSV (문서의 순수 함수, 테스트 대상).
  */
-import type { HarnessDocument, Endpoint, PartGender } from '../types';
+import type { HarnessDocument, Endpoint, KitDocument, PartGender } from '../types';
 import { computeNets } from '../store/netlist';
+import { perSetOf, totalOf } from '../store/kit';
 import { genderDetail } from '../library/gender';
 import { lengthResolver, type LengthSource } from '../store/wireLength';
 
@@ -198,6 +199,56 @@ export function buildRunList(doc: HarnessDocument): RunRow[] {
       lengthSource: len.source,
     };
   });
+}
+
+// ============================================================
+// 하네스 BOM — 세트 구성표 (종별 수량)
+// ============================================================
+
+export type KitBomRow = {
+  letter: string;
+  drawingNo: string;
+  name: string;
+  /** 세트 하나에 몇 개 */
+  perSet: number;
+  /** 주문 세트 수 */
+  orderQty: number;
+  /**
+   * 총수량. **저장하지 않고 언제나 perSet × orderQty 로 파생한다**
+   * (store/kit.ts 의 원칙 그대로) — 화면 숫자와 발주 숫자가 갈라지면 안 된다.
+   */
+  totalQty: number;
+};
+
+/**
+ * 세트 구성 BOM.
+ *
+ * 대화상자는 예전부터 '하네스 BOM CSV' 를 고를 수 있었지만 저장하는 쪽에 이
+ * 산출물이 아예 없어 **체크해도 아무 파일도 나오지 않았다**. 미리보기에 있는
+ * 것은 반드시 나와야 한다.
+ */
+export function buildKitBom(kit: KitDocument): KitBomRow[] {
+  return kit.harnesses.map((h, i) => ({
+    letter: h.letter ?? String.fromCharCode(65 + i),
+    drawingNo: h.drawingNo ?? '',
+    name: h.name,
+    perSet: perSetOf(kit.set, h.id),
+    orderQty: kit.set.orderQty,
+    totalQty: totalOf(kit.set, h.id),
+  }));
+}
+
+/** 세트 BOM → CSV */
+export function kitBomToCsv(rows: KitBomRow[]): string {
+  const esc = (v: string | number) => {
+    const s = String(v ?? '');
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const head = ['letter', 'drawing_no', 'name', 'per_set', 'order_qty', 'total_qty'];
+  const body = rows.map((r) =>
+    [r.letter, r.drawingNo, r.name, r.perSet, r.orderQty, r.totalQty].map(esc).join(','),
+  );
+  return [head.join(','), ...body].join('\n');
 }
 
 /** 접속표 → CSV */

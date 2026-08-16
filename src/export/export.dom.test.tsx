@@ -122,11 +122,21 @@ describe('내보내기 대화상자 §6', () => {
     expect(fileNames().some((n) => n.includes('KIT-2408_하네스BOM_RevB.csv'))).toBe(true);
   });
 
-  it('파일이 3개를 넘으면 ZIP 안내로 바뀐다', () => {
+  /**
+   * 안내 문구가 "3개를 넘으면" → "2개 이상이면" 으로 바뀐 이유.
+   * 예전 규칙은 파일을 하나씩 <a download> 로 눌렀고, 브라우저가 두 번째부터
+   * 막아 세트 27개 중 1개만 떨어졌다(오류도 없었다). 이제 둘 이상이면 무조건
+   * ZIP 한 개다 — 연속 다운로드 차단을 아예 만나지 않는다.
+   */
+  it('파일이 2개 이상이면 ZIP 안내로 바뀐다', () => {
     open();
-    expect(screen.getByText('파일을 개별로 내려받는다.')).toBeTruthy();
-    fireEvent.click(screen.getByRole('checkbox', { name: '문서 JSON' }));
-    expect(screen.getByText('파일이 3개를 넘으면 ZIP 하나로 묶인다.')).toBeTruthy();
+    // 기본값은 PDF+접속표+파트리스트 셋이라 이미 ZIP 이다
+    expect(screen.getByText('파일이 2개 이상이면 ZIP 하나로 묶인다.')).toBeTruthy();
+    for (const n of ['도면 PDF', '파트리스트 CSV']) {
+      fireEvent.click(screen.getByRole('checkbox', { name: n }));
+    }
+    expect(fileNames()).toHaveLength(1);
+    expect(screen.getByText('파일 하나는 그대로 내려받는다.')).toBeTruthy();
   });
 
   it('여유율 세그먼트를 바꾸면 안내 문구가 따라온다', () => {
@@ -186,9 +196,11 @@ describe('내보내기 대화상자 §6', () => {
     expect(plan.unit).toBe('inch');
     expect(plan.paper).toBe('A4');
     expect(plan.csvCols).toEqual(['네트', '와이어', 'FROM', 'TO', '신호', '게이지', '길이']);
+    // files 에 source 가 붙었다 — 저장하는 쪽이 이름을 다시 만들지 않고 이 목록을
+    // 그대로 돌기 위한 고리다(미리보기 이름 ≠ 실제 파일명 사고의 재발 방지).
     expect(plan.files).toEqual([
-      { kind: 'PDF', name: 'KIT-2408_B_도면_RevB.pdf' },
-      { kind: 'CSV', name: 'KIT-2408_B_접속표_RevB.csv' },
+      { kind: 'PDF', name: 'KIT-2408_B_도면_RevB.pdf', source: { of: 'pdf', harnessId: 'hB' } },
+      { kind: 'CSV', name: 'KIT-2408_B_접속표_RevB.csv', source: { of: 'runsCsv', harnessId: 'hB' } },
     ]);
   });
 

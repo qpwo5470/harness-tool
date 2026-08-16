@@ -16,21 +16,30 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import type { HarnessDocument, KitDocument } from '../types';
-import { letterAt } from '../store/kit';
 import { buildPartList, buildRunList } from './exporters';
+import {
+  harnessLetter, planExportFiles, revTag as revTagOf, targetsOf,
+  type ExportFile, type ExportItems, type ExportScope,
+} from './exportPlan';
 import './export.css';
 
 export type ExportPlan = {
-  scope: { kind: 'harness'; harnessId: string } | { kind: 'set' };
-  items: { pdf: boolean; runsCsv: boolean; partsCsv: boolean; bomCsv: boolean; json: boolean };
+  scope: ExportScope;
+  items: ExportItems;
   /** 전선 여유율(%) — 0 | 5 | 10 | 직접 입력 */
   marginPct: number;
   unit: 'mm' | 'inch';
   paper: 'A3' | 'A4';
   /** 켜진 CSV 열 */
   csvCols: string[];
-  /** 나올 파일 목록 (파생) */
-  files: { name: string; kind: string }[];
+  /**
+   * 나올 파일 목록.
+   *
+   * 화면에 보여 준 **그 목록 그대로** 넘어간다. 저장하는 쪽이 이름을 다시
+   * 만들지 않으므로 미리보기와 실제 파일명이 갈라질 수 없다 — 예전에는 갈라져서
+   * 미리보기엔 `_RevA` 가 있고 실제 파일엔 없었다.
+   */
+  files: ExportFile[];
 };
 
 type ItemKey = keyof ExportPlan['items'];
@@ -50,34 +59,34 @@ const DEFAULT_COLS = ['네트', '와이어', 'FROM', 'TO', '색', '게이지', '
 const MARGIN_PRESETS = [0, 5, 10];
 type MarginSel = 0 | 5 | 10 | 'custom';
 
-/** 도면 한 종당 나오는 PDF 매수 (논리 + 물리) */
-const PDF_PAGES_PER_HARNESS = 2;
-
-/** 파일명에 못 쓰는 문자를 다듬는다 — 품번에 공백·슬래시가 섞여 들어온다 */
-function safe(s: string): string {
-  return s.trim().replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, '-');
-}
+/**
+ * 도면 한 종이 차지하는 면 수 — 배선도 · 접속표 · 파트리스트 셋이 최소치다
+ * (export/pdf.ts 의 addHarness). 표가 길면 더 늘어나므로 '이상' 으로 적는다.
+ * 예전 값 2 는 어느 면도 세지 않은 숫자였다.
+ */
+const PDF_PAGES_PER_HARNESS = 3;
 
 export function ExportDialog(props: {
   kit: KitDocument;
   activeHarnessId: string;
   onCancel: () => void;
   onExport: (plan: ExportPlan) => void;
+  /** 내보내는 중이면 진행 상황. 있는 동안 대화상자는 잠긴다. */
+  busy?: { done: number; total: number } | null;
 }): JSX.Element {
-  const { kit, activeHarnessId, onCancel, onExport } = props;
+  const { kit, activeHarnessId, onCancel, onExport, busy } = props;
 
-  const letterOf = (h: HarnessDocument): string =>
-    h.letter ?? letterAt(Math.max(0, kit.harnesses.findIndex((x) => x.id === h.id)));
+  const letterOf = (h: HarnessDocument): string => harnessLetter(kit, h);
 
   // 열릴 때의 활성 하네스가 기본 범위다. 세트에 없는 id 면 첫 하네스로 내린다.
   const initialId =
     kit.harnesses.find((h) => h.id === activeHarnessId)?.id ?? kit.harnesses[0]?.id ?? '';
 
-  const [scope, setScope] = useState<ExportPlan['scope']>({
+  const [scope, setScope] = useState<ExportScope>({
     kind: 'harness',
     harnessId: initialId,
   });
-  const [items, setItems] = useState<ExportPlan['items']>({
+  const [items, setItems] = useState<ExportItems>({
     pdf: true, runsCsv: true, partsCsv: true, bomCsv: false, json: false,
   });
   const [marginSel, setMarginSel] = useState<MarginSel>(5);
@@ -86,8 +95,10 @@ export function ExportDialog(props: {
   const [paper, setPaper] = useState<ExportPlan['paper']>('A3');
   const [cols, setCols] = useState<string[]>(DEFAULT_COLS);
 
-  // Esc 로 닫는다 (스크림 클릭도 같은 동작)
+  // Esc 로 닫는다 (스크림 클릭도 같은 동작). 내보내는 중에는 닫히지 않는다 —
+  // 진행 중에 창이 사라지면 다 됐는지 아닌지 알 길이 없다.
   useEffect(() => {
+    if (busy) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.stopPropagation();
@@ -96,23 +107,19 @@ export function ExportDialog(props: {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onCancel]);
+  }, [onCancel, busy]);
 
   const marginPct = marginSel === 'custom' ? customPct : marginSel;
 
   /** 이번 범위가 실제로 가리키는 하네스들 */
-  const targets: HarnessDocument[] = useMemo(() => {
-    if (scope.kind === 'set') return kit.harnesses;
-    const h = kit.harnesses.find((x) => x.id === scope.harnessId);
-    return h ? [h] : [];
-  }, [kit, scope]);
+  const targets: HarnessDocument[] = useMemo(() => targetsOf(kit, scope), [kit, scope]);
 
   /** 건수는 전부 실제 데이터에서 센다 — 화면 숫자와 파일 숫자가 갈라지면 안 된다 */
   const counts = useMemo(() => {
     const runs = targets.reduce((n, h) => n + buildRunList(h).length, 0);
     const parts = targets.reduce((n, h) => n + buildPartList(h).length, 0);
     return {
-      pdf: `${targets.length * PDF_PAGES_PER_HARNESS}매`,
+      pdf: `${targets.length * PDF_PAGES_PER_HARNESS}매 이상`,
       runsCsv: `${runs}행`,
       partsCsv: `${parts}행`,
       bomCsv: `${kit.set.items.length}행`,
@@ -120,30 +127,18 @@ export function ExportDialog(props: {
     } as Record<ItemKey, string>;
   }, [targets, kit.set.items.length]);
 
-  /** 파일명 규칙 `[세트]_[하네스]_[종류]_[Rev]` */
-  const setTag = safe(kit.set.pn) || 'SET';
+  /**
+   * 파일명 규칙 `[세트]_[하네스]_[종류]_[Rev]`.
+   * 이름을 만드는 곳은 exportPlan.ts 하나뿐이다 — 여기서 다시 조립하면
+   * 저장하는 쪽과 또 갈라진다(실제로 갈라져서 `_RevA` 가 사라진 적이 있다).
+   */
   const revRaw = (kit.set.rev ?? '').trim().replace(/^rev\.?\s*/i, '');
-  const revTag = revRaw ? `Rev${safe(revRaw)}` : '';
-  const fileName = (parts: string[], ext: string) =>
-    [setTag, ...parts, revTag].filter(Boolean).join('_') + ext;
+  const revTag = revTagOf(kit);
+  const files = useMemo(() => planExportFiles(kit, scope, items), [kit, scope, items]);
 
-  // fileName · letterOf 는 아래 값들에서만 만들어지므로 의존성은 이 넷이면 족하다.
-  const files = useMemo(() => {
-    const out: { name: string; kind: string }[] = [];
-    for (const h of targets) {
-      const L = letterOf(h);
-      if (items.pdf) out.push({ kind: 'PDF', name: fileName([L, '도면'], '.pdf') });
-      if (items.runsCsv) out.push({ kind: 'CSV', name: fileName([L, '접속표'], '.csv') });
-      if (items.partsCsv) out.push({ kind: 'CSV', name: fileName([L, '파트리스트'], '.csv') });
-    }
-    // BOM 과 문서 JSON 은 세트 하나에 한 장이다 — 하네스별로 늘어나지 않는다.
-    if (items.bomCsv) out.push({ kind: 'CSV', name: fileName(['하네스BOM'], '.csv') });
-    if (items.json) out.push({ kind: 'JSON', name: fileName(['문서'], '.json') });
-    return out;
-  }, [targets, items, setTag, revTag]);
-
+  // 브라우저는 사용자가 누르지 않은 연속 다운로드를 막는다. 둘 이상이면 봉투 하나다.
   const zipNote =
-    files.length > 3 ? '파일이 3개를 넘으면 ZIP 하나로 묶인다.' : '파일을 개별로 내려받는다.';
+    files.length > 1 ? '파일이 2개 이상이면 ZIP 하나로 묶인다.' : '파일 하나는 그대로 내려받는다.';
   const marginNote =
     marginPct === 0 ? '도면 길이 그대로' : `길이에 ${marginPct}% 더해 내보낸다`;
   const summary =
@@ -170,7 +165,7 @@ export function ExportDialog(props: {
     });
 
   return (
-    <div className="ex-scrim" data-testid="ex-scrim" onClick={onCancel}>
+    <div className="ex-scrim" data-testid="ex-scrim" onClick={() => { if (!busy) onCancel(); }}>
       <div
         className="ex"
         role="dialog"
@@ -392,17 +387,21 @@ export function ExportDialog(props: {
           </div>
         </div>
 
+        {/* 9종 도면은 한글이 래스터라 수 초가 걸린다. 그동안 무엇이 되고 있는지
+            보여 주고 버튼을 잠근다 — 두 번 누르면 같은 묶음이 두 번 만들어진다. */}
         <footer className="ex-foot">
-          <span className="ex-summary">{summary}</span>
+          <span className="ex-summary">
+            {busy ? `내보내는 중… ${busy.done}/${busy.total}` : summary}
+          </span>
           <span className="ex-spacer" />
-          <button type="button" className="ex-btn" onClick={onCancel}>취소</button>
+          <button type="button" className="ex-btn" disabled={!!busy} onClick={onCancel}>취소</button>
           <button
             type="button"
             className="ex-btn primary"
-            disabled={files.length === 0}
+            disabled={files.length === 0 || !!busy}
             onClick={submit}
           >
-            내보내기
+            {busy ? '내보내는 중…' : '내보내기'}
           </button>
         </footer>
       </div>

@@ -23,19 +23,37 @@ import { ValidationPanel } from './panels/ValidationPanel';
 import { validateHarness } from './store/validate';
 import { letterAt, orderText } from './store/kit';
 import { buildPartList, toCsv, buildRunList, runListToCsv } from './export/exporters';
+import { buildExportEntries, packForDownload } from './export/bundle';
+import { zipFileName } from './export/exportPlan';
 import './App.css';
 
 type Tab = 'prop' | 'runs' | 'parts' | 'check';
 /** 상단 하네스 탭: 세트 개요 또는 하네스 id */
 type HarnessTab = 'set' | string;
 
-function saveBlob(name: string, text: string, mime: string) {
-  const url = URL.createObjectURL(new Blob([text], { type: mime }));
+/**
+ * 파일 하나를 내려받는다.
+ *
+ * 두 가지를 예전 코드와 다르게 한다.
+ *  - 앵커를 문서에 붙였다 뗀다: Firefox 는 문서에 없는 <a> 의 click() 을 무시한다.
+ *  - URL 회수를 다음 틱으로 미룬다: 수 MB 짜리 ZIP 은 click() 이 돌아온 뒤에도
+ *    브라우저가 읽고 있어, 곧바로 revoke 하면 빈 파일이 떨어지거나 취소된다.
+ */
+function saveBytes(name: string, data: string | Uint8Array<ArrayBuffer>, mime: string) {
+  if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') return;
+  const url = URL.createObjectURL(new Blob([data], { type: mime }));
   const a = document.createElement('a');
   a.href = url;
   a.download = name;
+  a.style.display = 'none';
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(url);
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+function saveBlob(name: string, text: string, mime: string) {
+  saveBytes(name, text, mime);
 }
 
 /**
@@ -93,6 +111,8 @@ export default function App() {
   const [hTab, setHTab] = useState<HarnessTab>(activeHarnessId);
   const [partsScope, setPartsScope] = useState<PartsScope>({ kind: 'harness', harnessId: activeHarnessId });
   const [exportOpen, setExportOpen] = useState(false);
+  /** 내보내는 중이면 진행 상황 — 대화상자를 잠그고 몇/몇을 보여 준다 */
+  const [exportBusy, setExportBusy] = useState<{ done: number; total: number } | null>(null);
   /**
    * 라이브러리 패널은 커스텀 부품을 마운트 때 한 번만 읽는다.
    * 불러오기가 문서에 딸려 온 부품을 저장소에 넣어도 패널은 모르므로,
@@ -243,31 +263,37 @@ export default function App() {
   };
   /**
    * 내보내기 실행. ExportDialog 는 계획만 세우고 저장은 여기서 한다.
-   * PDF 는 현재 열린 도면만 낼 수 있어 활성 하네스 기준이다.
+   *
+   * 예전에는 파일마다 <a download> 를 눌렀다 — 브라우저가 두 번째부터 막아
+   * 세트 27개 중 1개만 떨어지고 **오류도 나지 않았다**. 이제 계획된 파일을
+   * 전부 바이트로 만든 뒤 하나로 접어(둘 이상이면 ZIP) 한 번만 내려받는다.
+   * 이름도 다시 만들지 않고 대화상자가 보여 준 목록(plan.files)을 그대로 쓴다.
    */
   const runExport = async (plan: ExportPlan) => {
-    setExportOpen(false);
-    const scope = plan.scope;
-    const targets = scope.kind === 'set'
-      ? kit.harnesses
-      : kit.harnesses.filter((h) => h.id === scope.harnessId);
-    const tag = kit.set.pn || 'SET';
-    for (const h of targets) {
-      const L = h.letter ?? letterAt(kit.harnesses.indexOf(h));
-      if (plan.items.runsCsv) {
-        saveBlob(`${tag}_${L}_접속표.csv`, runListToCsv(buildRunList(h)), 'text/csv;charset=utf-8;');
-      }
-      if (plan.items.partsCsv) {
-        saveBlob(`${tag}_${L}_파트리스트.csv`, toCsv(buildPartList(h)), 'text/csv;charset=utf-8;');
-      }
-    }
-    if (plan.items.json) saveBlob(`${tag}.json`, exportJson(), 'application/json');
-    if (plan.items.pdf) {
-      const { downloadPdf, downloadKitPdf } = await import('./export/pdf');
-      const paper = plan.paper;
-      // 세트 범위면 하네스마다 3면을 이어 붙인 한 권으로 낸다
-      if (scope.kind === 'set') await downloadKitPdf(kit, { paper });
-      else await downloadPdf(targets[0] ?? doc, { paper });
+    if (plan.files.length === 0) return;
+    setExportBusy({ done: 0, total: plan.files.length });
+    try {
+      const entries = await buildExportEntries(kit, plan, {
+        docJson: exportJson,
+        onProgress: (done, total) => setExportBusy({ done, total }),
+      });
+      const one = packForDownload(entries, zipFileName(kit));
+      saveBytes(one.name, one.data, one.mime);
+      setExportOpen(false);
+      showToast(
+        entries.length > 1
+          ? `${entries.length}개 파일을 ${one.name} 하나로 내려받았습니다`
+          : `${one.name} 을(를) 내려받았습니다`,
+      );
+    } catch (e) {
+      // 조용히 넘어가면 발주처에 반쪽짜리 묶음이 나간다. 무엇이 왜 실패했는지 말한다.
+      showToast(
+        `내보내지 못했습니다 — ${e instanceof Error ? e.message : String(e)}`,
+        undefined,
+        10000,
+      );
+    } finally {
+      setExportBusy(null);
     }
   };
 
@@ -568,6 +594,7 @@ export default function App() {
           activeHarnessId={activeHarnessId}
           onCancel={() => setExportOpen(false)}
           onExport={runExport}
+          busy={exportBusy}
         />
       )}
       {/* 파괴적 동작(삭제·일괄 지정)의 실행취소 안내. 확인 대화상자를 대신한다. */}

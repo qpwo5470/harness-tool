@@ -425,6 +425,25 @@ function safeName(s: string): string {
   return s.trim().replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, '-') || 'harness';
 }
 
+/**
+ * 하네스 한 종의 PDF 를 **바이트로** 만든다 (저장하지 않는다).
+ *
+ * 세트 내보내기는 파일을 하나씩 내려받는 대신 ZIP 한 개로 묶는다(브라우저가
+ * 연속 다운로드를 막는다). 봉투에 담으려면 바이트가 필요하므로 저장과 생성을
+ * 갈라 둔다.
+ */
+export function harnessPdfBytes(
+  doc: HarnessDocument,
+  opts?: { paper?: Paper },
+): Uint8Array<ArrayBuffer> {
+  const ctx = makeCtx(opts?.paper ?? 'A3');
+  addHarness(ctx, doc);
+  stampFooters(ctx);
+  const buf = ctx.pdf.output?.('arraybuffer');
+  if (!buf) throw new Error('이 환경에서는 PDF 바이트를 만들 수 없습니다');
+  return new Uint8Array(buf);
+}
+
 export function downloadPdf(doc: HarnessDocument, opts?: PdfOptions): Promise<void>;
 /**
  * @deprecated 옛 호출부(App.tsx)가 넘기던 React Flow DOM 요소. 이제 스냅샷을
