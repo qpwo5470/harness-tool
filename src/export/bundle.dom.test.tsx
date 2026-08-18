@@ -19,13 +19,25 @@ import { buildExportEntries, packForDownload } from './bundle';
 import { zipFileName } from './exportPlan';
 import { crc32 } from './zip';
 
-/** jspdf 를 태우지 않는다 — 여기서 볼 것은 도면 내용이 아니라 봉투와 이름이다 */
+/**
+ * jspdf 를 태우지 않는다 — 여기서 볼 것은 도면 내용이 아니라 봉투와 이름이다.
+ * 다만 **어떤 옵션으로 불렸는지는 기록한다.** 용지·치수 단위가 대화상자에서
+ * 도면 생성까지 실제로 흘러가는지는 이 경로에서만 확인할 수 있다.
+ */
+const { pdfCalls } = vi.hoisted(() => ({
+  pdfCalls: [] as { id: string; paper?: string; unit?: string }[],
+}));
 vi.mock('./pdf', () => ({
-  harnessPdfBytes: (doc: HarnessDocument) =>
-    new TextEncoder().encode(`%PDF-1.4 ${doc.id}`),
+  harnessPdfBytes: (doc: HarnessDocument, opts?: { paper?: string; unit?: string }) => {
+    pdfCalls.push({ id: doc.id, paper: opts?.paper, unit: opts?.unit });
+    return new TextEncoder().encode(`%PDF-1.4 ${doc.id}`);
+  },
 }));
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  pdfCalls.length = 0;
+});
 
 const housing: PartLibraryItem = {
   id: 'h4', category: 'housing', name: '테스트 하우징 4P', pinCount: 4, spec: { 터미널: 'TST-T' },
@@ -244,5 +256,162 @@ describe('세트 내보내기 — 봉투 하나로', () => {
       files: [{ kind: 'JSON', name: 'X_문서_RevA.json', source: { of: 'json' } }],
     };
     await expect(buildExportEntries(kit, broken)).rejects.toThrow(/X_문서_RevA\.json/);
+  });
+});
+
+// ============================================================
+// 옵션 → 산출물 (대화상자에서 파일 바이트까지 한 줄로)
+//
+// 실사용에서 터진 세 번째 결함: 대화상자에서 여유율·치수 단위·CSV 열을 고를 수
+// 있는데 **산출물이 안 바뀌었다.** buildExportEntries 가 files 와 paper 만
+// 읽고 나머지를 버렸기 때문이다. 아래 시험들은 대화상자를 실제로 눌러 만든
+// plan 으로 바이트를 만들고, 그 **내용**을 읽는다. 여기서 한 줄만 도로 끊어도
+// (예: bodyOf 가 다시 옵션을 무시하면) 전부 깨진다.
+// ============================================================
+
+const A_RUNS = 'EW-EVC-KIT-01_A_접속표_RevA.csv';
+const A_PARTS = 'EW-EVC-KIT-01_A_파트리스트_RevA.csv';
+
+/** 대화상자에서 옵션을 고른 뒤, 실제로 만들어진 파일 본문을 이름으로 찾아 준다 */
+async function exportWith(
+  kit: KitDocument,
+  pick: () => void,
+): Promise<Record<string, string>> {
+  const onExport = vi.fn();
+  render(
+    <ExportDialog kit={kit} activeHarnessId="h0" onCancel={vi.fn()} onExport={onExport} />,
+  );
+  pick();
+  fireEvent.click(screen.getByRole('button', { name: '내보내기' }));
+  const plan = onExport.mock.calls[0][0] as ExportPlan;
+  const entries = await buildExportEntries(kit, plan);
+  cleanup();   // 한 시험에서 여러 번 열기 때문에 직접 치운다
+  return Object.fromEntries(entries.map((e) => [e.name, new TextDecoder().decode(e.data)]));
+}
+
+/** CSV 한 줄을 머리글 기준 맵으로 (이 픽스처에는 따옴표 필요한 값이 없다) */
+function row(csv: string, n: number): Record<string, string> {
+  const lines = csv.split('\n');
+  const head = lines[0].split(',');
+  return Object.fromEntries(lines[n].split(',').map((v, i) => [head[i], v]));
+}
+const wireRow = (csv: string) =>
+  csv.split('\n').map((_, i) => i).filter((i) => i > 0)
+    .map((i) => row(csv, i)).find((r) => r.category === '와이어')!;
+
+/** 도면 PDF 를 빼 CSV 둘만 남긴다 (도면은 아래 용지·단위 시험에서 따로 본다) */
+const csvOnly = () => fireEvent.click(screen.getByRole('checkbox', { name: '도면 PDF' }));
+
+describe('내보내기 옵션이 산출물에 반영된다', () => {
+  /**
+   * 하네스 A 는 100mm · 101mm 짜리 AWG22 흑색 2본이라 와이어 행 하나로 묶여
+   * 도면 길이 합이 201mm 다. 여유율은 이 201 에만 붙는다.
+   */
+  it('여유율 5%(기본): 파트리스트는 1.05 배 + 그 사실이 적히고, 접속표는 도면값 그대로', async () => {
+    const out = await exportWith(makeKit(), csvOnly);
+
+    const parts = out[A_PARTS];
+    expect(parts.split('\n')[0]).toBe(
+      'category,part,qty,detail,drawing_length_mm,order_margin_pct,order_length_mm',
+    );
+    const w = wireRow(parts);
+    expect(w.drawing_length_mm).toBe('201');
+    expect(w.order_margin_pct).toBe('5');            // 몇 % 인지 파일이 스스로 말한다
+    expect(w.order_length_mm).toBe('211.05');        // 201 × 1.05
+
+    // 접속표는 제작자가 자르는 표다 — 여유율이 닿지 않는다
+    const runs = out[A_RUNS];
+    expect(runs.split('\n')[0]).toBe('wire,net,from,to,color,gauge,length_mm');
+    expect(row(runs, 1).length_mm).toBe('100');
+    expect(row(runs, 2).length_mm).toBe('101');
+  });
+
+  it('여유율 0%: 발주 길이가 도면 길이와 같아진다', async () => {
+    const out = await exportWith(makeKit(), () => {
+      csvOnly();
+      fireEvent.click(screen.getByRole('button', { name: '0%' }));
+    });
+    const w = wireRow(out[A_PARTS]);
+    expect(w.order_margin_pct).toBe('0');
+    expect(w.order_length_mm).toBe(w.drawing_length_mm);
+    expect(w.order_length_mm).toBe('201');
+  });
+
+  /** 대조군 — 옵션을 바꿨는데 파일이 그대로면 여기서 잡힌다 */
+  it('여유율만 바꿔도 파트리스트 바이트가 달라진다 (접속표는 안 달라진다)', async () => {
+    const a = await exportWith(makeKit(), () => {
+      csvOnly();
+      fireEvent.click(screen.getByRole('button', { name: '0%' }));
+    });
+    const b = await exportWith(makeKit(), () => {
+      csvOnly();
+      fireEvent.click(screen.getByRole('button', { name: '10%' }));
+    });
+    expect(b[A_PARTS]).not.toBe(a[A_PARTS]);
+    expect(wireRow(b[A_PARTS]).order_length_mm).toBe('221.1');   // 201 × 1.1
+    // 이 한 줄이 원칙이다: 여유율은 접속표를 건드리지 않는다
+    expect(b[A_RUNS]).toBe(a[A_RUNS]);
+  });
+
+  it('inch 를 고르면 값과 열 이름이 함께 바뀐다', async () => {
+    const out = await exportWith(makeKit(), () => {
+      csvOnly();
+      fireEvent.click(screen.getByRole('button', { name: 'inch' }));
+    });
+    const runs = out[A_RUNS];
+    expect(runs.split('\n')[0]).toBe('wire,net,from,to,color,gauge,length_in');
+    expect(row(runs, 1).length_in).toBe('3.937');    // 100 / 25.4
+
+    const parts = out[A_PARTS];
+    expect(parts.split('\n')[0]).toContain('drawing_length_in');
+    const w = wireRow(parts);
+    expect(w.drawing_length_in).toBe('7.913');       // 201 / 25.4
+    expect(w.order_length_in).toBe('8.309');         // 211.05 / 25.4
+    expect(w.detail).toBe('총 7.913in');             // 사람이 읽는 칸에도 단위가 붙는다
+  });
+
+  it('열을 두 개만 고르면 그 두 열만, 그 순서로 나온다', async () => {
+    const out = await exportWith(makeKit(), () => {
+      csvOnly();
+      // 기본 7열 중 다섯을 끄고 TO · 색만 남긴다
+      for (const c of ['와이어', '네트', 'FROM', '게이지', '길이']) {
+        fireEvent.click(screen.getByRole('button', { name: c }));
+      }
+    });
+    const runs = out[A_RUNS];
+    expect(runs.split('\n')[0]).toBe('to,color');
+    expect(runs.split('\n')[1].split(',')).toHaveLength(2);
+  });
+
+  it('꺼 두었던 열을 켜면 그 열이 실제로 붙는다', async () => {
+    const out = await exportWith(makeKit(), () => {
+      csvOnly();
+      fireEvent.click(screen.getByRole('button', { name: '단자' }));
+    });
+    const runs = out[A_RUNS];
+    // 칩 순서 그대로 길이 뒤에 단자가 붙는다
+    expect(runs.split('\n')[0]).toBe('wire,net,from,to,color,gauge,length_mm,terminal');
+    expect(row(runs, 1).terminal).toBe('TST-T');     // 하우징 스펙의 터미널
+  });
+
+  /** 용지는 이미 반영되고 있었다 — 끊긴 것은 나머지 셋이었다. 그 사실을 못 박는다 */
+  it('용지 A3/A4 와 치수 단위가 도면 생성까지 그대로 흘러간다', async () => {
+    await exportWith(makeKit(), () => {
+      // 도면 PDF 하나만 남긴다
+      for (const n of ['접속표 CSV', '파트리스트 CSV']) {
+        fireEvent.click(screen.getByRole('checkbox', { name: n }));
+      }
+    });
+    expect(pdfCalls).toEqual([{ id: 'h0', paper: 'A3', unit: 'mm' }]);
+
+    pdfCalls.length = 0;
+    await exportWith(makeKit(), () => {
+      for (const n of ['접속표 CSV', '파트리스트 CSV']) {
+        fireEvent.click(screen.getByRole('checkbox', { name: n }));
+      }
+      fireEvent.click(screen.getByRole('button', { name: 'A4' }));
+      fireEvent.click(screen.getByRole('button', { name: 'inch' }));
+    });
+    expect(pdfCalls).toEqual([{ id: 'h0', paper: 'A4', unit: 'inch' }]);
   });
 });

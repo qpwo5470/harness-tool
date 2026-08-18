@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import type { HarnessDocument } from '../types';
-import { buildPartList, toCsv, buildRunList, runListToCsv } from './exporters';
+import {
+  buildPartList, toCsv, buildRunList, runListToCsv,
+  RUN_CSV_COLUMNS, RUN_CSV_DEFAULT_COLS,
+} from './exporters';
 import { sampleDoc } from '../fixtures/sampleDoc';
 
 describe('buildPartList', () => {
@@ -122,6 +125,198 @@ describe('buildRunList', () => {
   it('접속표 CSV 헤더가 맞다', () => {
     const csv = runListToCsv(buildRunList(sampleDoc));
     expect(csv.split('\n')[0]).toBe('wire,net,from,to,color,gauge,length_mm');
+  });
+});
+
+// ============================================================
+// 내보내기 옵션 — 고른 것이 실제로 산출물을 바꾸는가
+//
+// 이 절이 통째로 회귀 시험이다. 대화상자는 여유율·치수 단위·CSV 열을 고르게
+// 해 놓고 산출물은 언제나 도면 mm · 고정 7열을 뱉었다. 고를 수는 있는데 결과가
+// 안 바뀌는 스위치였다. 아래 시험들은 **파일 내용**을 직접 읽는다.
+// ============================================================
+
+/** 길이 300mm 짜리 와이어 한 본 (계산이 눈에 보이는 최소 문서) */
+const oneWireDoc = (mm: number) => ({
+  ...sampleDoc,
+  cables: undefined,
+  wires: [{
+    id: 'w1',
+    from: { type: 'pin' as const, connectorId: 'con-a', pinId: 'a1' },
+    to: { type: 'pin' as const, connectorId: 'con-b2w', pinId: 'p1' },
+    color: { base: 'red' },
+    gauge: { system: 'awg' as const, value: 22 },
+    lengthMm: mm,
+  }],
+});
+
+/** CSV 를 머리글 배열 + 행별 열 맵으로 푼다 */
+function parseCsv(csv: string): { head: string[]; rows: Record<string, string>[] } {
+  const [h, ...body] = csv.split('\n');
+  const head = h.split(',');
+  return {
+    head,
+    rows: body.map((line) =>
+      Object.fromEntries(line.split(',').map((v, i) => [head[i], v]))),
+  };
+}
+
+const wireRowOf = (csv: string) =>
+  parseCsv(csv).rows.find((r) => r.category === '와이어')!;
+
+describe('전선 여유율 — 파트리스트에만 붙고, 붙었으면 밝힌다', () => {
+  const doc = oneWireDoc(800);
+
+  it('여유율을 주면 도면 길이·여유율·발주 길이를 열로 나눠 적는다', () => {
+    const csv = toCsv(buildPartList(doc), { marginPct: 5 });
+    expect(parseCsv(csv).head).toEqual([
+      'category', 'part', 'qty', 'detail',
+      'drawing_length_mm', 'order_margin_pct', 'order_length_mm',
+    ]);
+    const row = wireRowOf(csv);
+    expect(row.drawing_length_mm).toBe('800');   // 도면값은 그대로 남는다
+    expect(row.order_margin_pct).toBe('5');      // 몇 % 인지 행마다 적힌다
+    expect(row.order_length_mm).toBe('840');     // 800 × 1.05
+  });
+
+  it('여유율 0% 면 발주 길이가 도면 길이와 같다 — 열은 그대로 남는다', () => {
+    const row = wireRowOf(toCsv(buildPartList(doc), { marginPct: 0 }));
+    expect(row.drawing_length_mm).toBe('800');
+    expect(row.order_margin_pct).toBe('0');
+    // 열을 지우지 않는 이유: "여유를 안 넣은 발주서" 임을 문서가 스스로 말해야 한다
+    expect(row.order_length_mm).toBe('800');
+  });
+
+  it('여유율 10% 는 5% 와 다른 파일을 만든다 — 옵션을 바꾸면 내용이 바뀐다', () => {
+    const a = toCsv(buildPartList(doc), { marginPct: 5 });
+    const b = toCsv(buildPartList(doc), { marginPct: 10 });
+    expect(a).not.toBe(b);
+    expect(wireRowOf(b).order_length_mm).toBe('880');
+  });
+
+  it('정수로 떨어지지 않는 값도 잃지 않는다 — 101 × 1.05 = 106.05', () => {
+    expect(wireRowOf(toCsv(buildPartList(oneWireDoc(101)), { marginPct: 5 })).order_length_mm)
+      .toBe('106.05');
+  });
+
+  /** 이 시험이 원칙을 못 박는다 — 접속표는 현장이 자르는 표다 */
+  it('접속표는 여유율과 무관하게 언제나 도면 길이다', () => {
+    const runs = buildRunList(doc);
+    // runListToCsv 에는 여유율을 받는 자리 자체가 없다(구조로 막았다)
+    const csv = runListToCsv(runs);
+    expect(parseCsv(csv).rows[0].length_mm).toBe('800');
+    expect(runs[0].lengthMm).toBe('800');
+  });
+
+  it('길이가 없는 행(커넥터·터미널)은 발주 길이 칸을 비워 둔다', () => {
+    const rows = parseCsv(toCsv(buildPartList(doc), { marginPct: 5 })).rows;
+    const conn = rows.find((r) => r.category === '커넥터')!;
+    // 0 을 적으면 "길이 0 짜리 부품" 으로 읽힌다
+    expect(conn.drawing_length_mm).toBe('');
+    expect(conn.order_length_mm).toBe('');
+  });
+
+  it('여유율을 주지 않으면 옛 4열 그대로다 — 파트 탭 CSV 는 도면 그대로여야 한다', () => {
+    expect(toCsv(buildPartList(doc)).split('\n')[0]).toBe('category,part,qty,detail');
+  });
+
+  it('음수·비숫자·과도한 여유율은 조용히 고치지 않고 멈춘다', () => {
+    const rows = buildPartList(doc);
+    expect(() => toCsv(rows, { marginPct: -1 })).toThrow(/음수/);
+    expect(() => toCsv(rows, { marginPct: 101 })).toThrow(/너무 큽니다/);
+    expect(() => toCsv(rows, { marginPct: Number.NaN })).toThrow(/숫자가 아닙니다/);
+  });
+});
+
+describe('치수 단위 — 값과 단위 표기가 함께 바뀐다', () => {
+  const doc = oneWireDoc(800);
+
+  it('접속표를 inch 로 내면 열 이름과 값이 같이 바뀐다', () => {
+    const csv = runListToCsv(buildRunList(doc), { unit: 'inch' });
+    const { head, rows } = parseCsv(csv);
+    // 값만 바뀌고 이름이 그대로면 800mm 와 31.496in 을 구분할 수 없다
+    expect(head).toContain('length_in');
+    expect(head).not.toContain('length_mm');
+    expect(rows[0].length_in).toBe('31.496');    // 800 / 25.4, 소수 3자리
+  });
+
+  it('파트리스트를 inch 로 내면 열 이름·값·비고 문구가 모두 inch 다', () => {
+    const csv = toCsv(buildPartList(doc, { unit: 'inch' }), { unit: 'inch', marginPct: 5 });
+    const { head } = parseCsv(csv);
+    expect(head).toContain('drawing_length_in');
+    expect(head).toContain('order_length_in');
+    const row = wireRowOf(csv);
+    expect(row.drawing_length_in).toBe('31.496');
+    expect(row.order_length_in).toBe('33.071');  // 840 / 25.4
+    expect(row.detail).toBe('총 31.496in');      // 사람이 읽는 칸에도 단위가 붙는다
+  });
+
+  it('mm 가 기본이고, 딱 떨어지는 값에 소수점을 붙이지 않는다', () => {
+    expect(parseCsv(runListToCsv(buildRunList(doc))).rows[0].length_mm).toBe('800');
+    expect(wireRowOf(toCsv(buildPartList(doc)))!.detail).toBe('총 800mm');
+  });
+});
+
+describe('CSV 열 선택 — 고른 열만, 고른 순서대로', () => {
+  const doc = oneWireDoc(800);
+
+  /**
+   * 기본 선택이 옛 고정 헤더와 글자 하나까지 같아야 한다. 이 헤더는 받는 쪽
+   * 엑셀 매크로가 참조하는 인터페이스라, 옵션을 아무것도 건드리지 않은 사람의
+   * 파일이 조용히 바뀌면 안 된다.
+   */
+  it('기본 열은 옛 고정 헤더와 같다', () => {
+    expect(runListToCsv(buildRunList(doc), { cols: RUN_CSV_DEFAULT_COLS }))
+      .toBe(runListToCsv(buildRunList(doc)));
+  });
+
+  it('두 개만 고르면 그 두 열만, 그 순서로 나온다', () => {
+    const csv = runListToCsv(buildRunList(doc), { cols: ['TO', '와이어'] });
+    expect(csv.split('\n')[0]).toBe('to,wire');
+    expect(csv.split('\n')[1].split(',')).toHaveLength(2);
+    expect(csv.split('\n')[1].endsWith(',w1')).toBe(true);
+  });
+
+  it('대화상자에 있는 열은 전부 CSV 가 안다 — 목록의 출처가 하나다', () => {
+    const all = RUN_CSV_COLUMNS.map((c) => c.label);
+    const head = runListToCsv(buildRunList(doc), { cols: all }).split('\n')[0];
+    expect(head).toBe('wire,net,from,to,signal,color,gauge,length_mm,terminal,note');
+  });
+
+  it('신호·단자·비고 열이 실제 값을 싣는다', () => {
+    // 규격 신호명이 붙은 하우징 + 스펙 터미널
+    const withSpec = {
+      ...doc,
+      usedParts: doc.usedParts.map((p) =>
+        p.id === 'lib-xh-4p'
+          ? {
+              ...p,
+              spec: { ...p.spec, 터미널: 'YST025' },
+              pinLayout: [{ index: 1, offset: { x: 0, y: 0 }, signal: '34V' }],
+            }
+          : p),
+    };
+    const r = parseCsv(runListToCsv(buildRunList(withSpec), {
+      cols: ['신호', '단자', '비고'],
+    })).rows[0];
+    expect(r.signal).toBe('34V');
+    expect(r.terminal).toContain('YST025');
+    expect(r.note).toBe('');                     // 라벨도 케이블도 없으면 빈 칸
+  });
+
+  it('케이블에서 온 길이는 비고에 출처가 남는다', () => {
+    // sampleDoc 의 w2 는 cbl-1(300mm) 을 따른다 — 숫자만으로는 출처를 알 수 없다
+    const r = parseCsv(runListToCsv(buildRunList(sampleDoc), { cols: ['와이어', '비고'] }))
+      .rows.find((x) => x.wire === 'w2')!;
+    expect(r.note).toBe('케이블 기준');
+  });
+
+  it('열을 하나도 고르지 않으면 빈 CSV 를 만들지 않고 멈춘다', () => {
+    expect(() => runListToCsv(buildRunList(doc), { cols: [] })).toThrow(/열을 하나도/);
+  });
+
+  it('CSV 가 모르는 열 이름은 조용히 건너뛰지 않는다', () => {
+    expect(() => runListToCsv(buildRunList(doc), { cols: ['없는열'] })).toThrow(/없는 열/);
   });
 });
 

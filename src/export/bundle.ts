@@ -17,6 +17,7 @@ import type { ExportFile } from './exportPlan';
 import {
   buildKitBom, buildPartList, buildRunList, kitBomToCsv, runListToCsv, toCsv,
 } from './exporters';
+import type { LengthUnit } from './units';
 import { buildZip } from './zip';
 
 /**
@@ -46,6 +47,24 @@ export type BuildHooks = {
 const defaultYield = () => new Promise<void>((r) => { setTimeout(r, 0); });
 
 /**
+ * 이 묶음을 만드는 데 필요한 계획.
+ *
+ * 대화상자의 `ExportPlan` 이 그대로 들어맞는다(구조적으로 넓다). 옵션이
+ * optional 인 이유는 시험이 파일 목록만 들고 부를 수 있게 하기 위해서이며,
+ * 빠졌을 때의 기본값은 **아무 옵션도 안 건드린 사람이 받던 것과 같다**
+ * (mm · 여유율 0% · 기본 7열).
+ */
+export type ExportBuildPlan = {
+  files: ExportFile[];
+  paper: 'A3' | 'A4';
+  unit?: LengthUnit;
+  /** 전선 여유율(%) — **파트리스트 CSV 에만** 적용된다 */
+  marginPct?: number;
+  /** 접속표 CSV 에 넣을 열 (고른 순서 그대로) */
+  csvCols?: string[];
+};
+
+/**
  * 계획된 파일들을 실제 바이트로 만든다.
  *
  * 계획 목록을 **그대로** 돌기 때문에 대화상자가 예고한 개수·이름과 산출물이
@@ -54,7 +73,7 @@ const defaultYield = () => new Promise<void>((r) => { setTimeout(r, 0); });
  */
 export async function buildExportEntries(
   kit: KitDocument,
-  plan: { files: ExportFile[]; paper: 'A3' | 'A4' },
+  plan: ExportBuildPlan,
   hooks: BuildHooks = {},
 ): Promise<ExportEntry[]> {
   const out: ExportEntry[] = [];
@@ -66,7 +85,7 @@ export async function buildExportEntries(
 
   for (const f of plan.files) {
     try {
-      out.push({ name: f.name, mime: mimeOf(f), data: await bodyOf(kit, f, plan.paper, pdfMod, hooks) });
+      out.push({ name: f.name, mime: mimeOf(f), data: await bodyOf(kit, f, plan, pdfMod, hooks) });
     } catch (e) {
       const why = e instanceof Error ? e.message : String(e);
       throw new Error(`${f.name} 을(를) 만들지 못했습니다 — ${why}`);
@@ -81,27 +100,47 @@ function mimeOf(f: ExportFile): string {
   return f.kind === 'PDF' ? PDF_MIME : f.kind === 'JSON' ? JSON_MIME : CSV_MIME;
 }
 
+/**
+ * 파일 하나의 본문.
+ *
+ * ## 여유율이 어디에 붙고 어디에 안 붙는지가 이 함수의 요점이다
+ * - `runsCsv` · `pdf` → **도면 길이 그대로.** 이 둘은 현장이 전선을 자를 때
+ *   보는 종이다. 여기에 여유율을 곱하면 도면보다 긴 전선이 잘려 나간다.
+ * - `partsCsv` → **여유율 적용.** 전선은 여유를 두고 산다. 대신 도면값·여유율·
+ *   발주값을 열로 나눠 적어 어느 숫자가 무엇인지 문서가 스스로 말하게 한다
+ *   (`toCsv` 주석).
+ * 치수 단위는 셋 모두에 적용된다 — 한 봉투 안의 종이가 서로 다른 단위를 쓰면
+ * 그게 더 위험하다.
+ */
 async function bodyOf(
   kit: KitDocument,
   f: ExportFile,
-  paper: 'A3' | 'A4',
+  plan: ExportBuildPlan,
   pdfMod: typeof import('./pdf') | null,
   hooks: BuildHooks,
 ): Promise<Uint8Array<ArrayBuffer>> {
+  const unit = plan.unit ?? 'mm';
   // 콜백 안에서도 좁혀진 타입이 유지되도록 지역 const 로 받는다
   const src = f.source;
+  // 세트 BOM 은 종별 수량표라 길이가 없다 — 단위도 여유율도 걸리지 않는다.
   if (src.of === 'bomCsv') return encode(kitBomToCsv(buildKitBom(kit)));
   if (src.of === 'json') {
+    // 문서 JSON 은 "다시 열기용" 스냅샷이다. 표시 옵션으로 값을 바꾸면 그 파일을
+    // 다시 열었을 때 도면 치수가 달라진다 — 저장값은 언제나 mm 원본이다.
     const json = hooks.docJson?.();
     if (json == null) throw new Error('문서 JSON 을 얻지 못했습니다');
     return encode(json);
   }
   const h = kit.harnesses.find((x) => x.id === src.harnessId);
   if (!h) throw new Error('세트에서 하네스를 찾지 못했습니다');
-  if (src.of === 'runsCsv') return encode(runListToCsv(buildRunList(h)));
-  if (src.of === 'partsCsv') return encode(toCsv(buildPartList(h)));
+  if (src.of === 'runsCsv') {
+    return encode(runListToCsv(buildRunList(h), { cols: plan.csvCols, unit }));
+  }
+  if (src.of === 'partsCsv') {
+    return encode(toCsv(buildPartList(h, { unit }), { unit, marginPct: plan.marginPct ?? 0 }));
+  }
   if (!pdfMod) throw new Error('PDF 모듈을 불러오지 못했습니다');
-  return pdfMod.harnessPdfBytes(h, { paper });
+  return pdfMod.harnessPdfBytes(h, { paper: plan.paper, unit });
 }
 
 /**

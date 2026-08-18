@@ -16,7 +16,10 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import type { HarnessDocument, KitDocument } from '../types';
-import { buildPartList, buildRunList } from './exporters';
+import {
+  buildPartList, buildRunList, RUN_CSV_COLUMNS, RUN_CSV_DEFAULT_COLS,
+} from './exporters';
+import { clampMarginPct, MAX_MARGIN_PCT } from './units';
 import {
   harnessLetter, planExportFiles, revTag as revTagOf, targetsOf,
   type ExportFile, type ExportItems, type ExportScope,
@@ -52,9 +55,13 @@ const ITEM_DEFS: { key: ItemKey; name: string; ext: string; desc: string }[] = [
   { key: 'json', name: '문서 JSON', ext: '.json', desc: '부품 스냅샷 포함 · 다시 열기용' },
 ];
 
-const CSV_COLS = ['네트', '와이어', 'FROM', 'TO', '신호', '색', '게이지', '길이', '단자', '비고'];
-/** 접속표 기본 열 — 신호·단자·비고는 비워 둔다(대개 안 쓴다) */
-const DEFAULT_COLS = ['네트', '와이어', 'FROM', 'TO', '색', '게이지', '길이'];
+/**
+ * 고를 수 있는 CSV 열 — **목록도 순서도 exporters.ts 가 정한다.**
+ * 예전에는 여기에 문자열 배열이 따로 있었고 CSV 는 고정 7열을 찍었다. 칩을
+ * 눌러도 파일이 안 바뀌던 이유다. 이제 칩에 보이는 열은 반드시 CSV 가 아는 열이다.
+ */
+const CSV_COLS = RUN_CSV_COLUMNS.map((c) => c.label);
+const DEFAULT_COLS = RUN_CSV_DEFAULT_COLS;
 
 const MARGIN_PRESETS = [0, 5, 10];
 type MarginSel = 0 | 5 | 10 | 'custom';
@@ -139,8 +146,19 @@ export function ExportDialog(props: {
   // 브라우저는 사용자가 누르지 않은 연속 다운로드를 막는다. 둘 이상이면 봉투 하나다.
   const zipNote =
     files.length > 1 ? '파일이 2개 이상이면 ZIP 하나로 묶인다.' : '파일 하나는 그대로 내려받는다.';
+  // 여유율이 **파트리스트에만** 붙는다는 사실을 문구로도 못 박는다 — 예전 문구는
+  // "길이에 N% 더해 내보낸다" 라서 접속표·도면까지 늘어나는 것처럼 읽혔다.
   const marginNote =
-    marginPct === 0 ? '도면 길이 그대로' : `길이에 ${marginPct}% 더해 내보낸다`;
+    marginPct === 0
+      ? '도면 길이 그대로'
+      : `파트리스트 발주 길이에만 ${marginPct}% 더한다`;
+  /**
+   * 접속표를 내보내기로 해 놓고 열을 하나도 고르지 않은 상태.
+   * 그대로 두면 머리글도 없는 빈 CSV 가 나가 "배선이 없는 하네스" 로 읽힌다.
+   * 조용히 최소 열을 끼워 넣지 않고 **내보내기를 막는다** — 무엇이 빠졌는지는
+   * 고른 사람만 안다.
+   */
+  const noCols = items.runsCsv && cols.length === 0;
   const summary =
     scope.kind === 'set'
       ? `세트 전체 · 하네스 ${kit.harnesses.length}종 기준`
@@ -152,7 +170,8 @@ export function ExportDialog(props: {
   const toggleCol = (c: string) =>
     setCols((s) => (s.includes(c) ? s.filter((x) => x !== c) : [...s, c]));
 
-  const submit = () =>
+  const submit = () => {
+    if (noCols) return;
     onExport({
       scope,
       items,
@@ -163,6 +182,7 @@ export function ExportDialog(props: {
       csvCols: CSV_COLS.filter((c) => cols.includes(c)),
       files,
     });
+  };
 
   return (
     <div className="ex-scrim" data-testid="ex-scrim" onClick={() => { if (!busy) onCancel(); }}>
@@ -288,13 +308,13 @@ export function ExportDialog(props: {
                       className="ex-num num"
                       type="number"
                       min={0}
-                      max={100}
+                      max={MAX_MARGIN_PCT}
                       aria-label="여유율 직접 입력"
                       value={customPct}
-                      onChange={(e) => {
-                        const v = Number(e.target.value);
-                        setCustomPct(Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : 0);
-                      }}
+                      // 범위 검사는 units.ts 한 곳에서 한다 — 비숫자(빈 칸·문자)는 0,
+                      // 음수와 100% 초과는 잘린다. 음수 여유율은 도면보다 짧은
+                      // 전선을 주문하라는 뜻이 되고, 100% 초과는 여유가 아니라 오타다.
+                      onChange={(e) => setCustomPct(clampMarginPct(e.target.value))}
                     />
                     <span className="ex-unit">%</span>
                   </span>
@@ -357,6 +377,11 @@ export function ExportDialog(props: {
                   })}
                 </div>
               </div>
+              {noCols && (
+                <p className="ex-warn" role="alert">
+                  접속표 CSV 에 넣을 열을 하나도 고르지 않았다. 한 개 이상 골라야 내보낼 수 있다.
+                </p>
+              )}
             </section>
           </div>
 
@@ -398,7 +423,7 @@ export function ExportDialog(props: {
           <button
             type="button"
             className="ex-btn primary"
-            disabled={files.length === 0 || !!busy}
+            disabled={files.length === 0 || noCols || !!busy}
             onClick={submit}
           >
             {busy ? '내보내는 중…' : '내보내기'}

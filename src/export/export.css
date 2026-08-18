@@ -213,6 +213,18 @@
   color: var(--muted);
 }
 
+/* 빈 CSV 를 막는 경고 — 내보내기 버튼이 잠긴 이유를 옆에 적는다 */
+.ex-warn {
+  margin: 6px 0 0 86px;
+  padding: 6px 8px;
+  font-size: var(--fs-cap);
+  line-height: 1.5;
+  color: var(--danger);
+  background: var(--danger-tint);
+  border: 1px solid var(--danger-line);
+  border-radius: var(--radius);
+}
+
 .ex-chips { flex: 1; display: flex; flex-wrap: wrap; gap: 4px; }
 .ex-chip {
   height: 24px;

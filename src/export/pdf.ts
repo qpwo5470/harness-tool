@@ -20,6 +20,7 @@
 import { jsPDF } from 'jspdf';
 import type { HarnessDocument, KitDocument } from '../types';
 import { buildPartList, buildRunList, type PartRow, type RunRow } from './exporters';
+import { formatLength, unitLabel, type LengthUnit } from './units';
 import { colorAbbr, strokeColor } from '../canvas/docToFlow';
 import {
   C, PAPER_PT, SHEET_MARGIN, chunk, drawSheet, estimateTextWidth, needsRaster,
@@ -112,6 +113,11 @@ type Ctx = {
   pageH: number;
   /** 페이지 번호(1-base) → 그 면이 속한 하네스. 푸터를 마지막에 한 번에 찍는다. */
   pageDocs: HarnessDocument[];
+  /**
+   * 치수 단위. 도면은 **여유율을 곱하지 않은 도면 길이**를 이 단위로만 바꿔
+   * 적는다 — 종이는 현장이 자르는 치수다(README §6).
+   */
+  unit: LengthUnit;
 };
 
 /** 표 위쪽 시작선 (제목 아래) */
@@ -213,30 +219,33 @@ function drawCells(
 // 2면 — 접속표 (FROM → TO)
 // ============================================================
 
-const RUN_COLS: Col[] = [
-  { title: 'NET', w: 0.16 },
-  { title: 'FROM', w: 0.23 },
-  { title: 'TO', w: 0.23 },
-  { title: '색', w: 0.15 },
-  { title: '게이지', w: 0.10, align: 'right' },
-  { title: '길이 (mm)', w: 0.13, align: 'right' },
-];
+/** 길이 열 제목만 단위를 따라간다 — 숫자만 바뀌면 mm 인지 in 인지 알 수 없다 */
+function runCols(unit: LengthUnit): Col[] {
+  return [
+    { title: 'NET', w: 0.16 },
+    { title: 'FROM', w: 0.23 },
+    { title: 'TO', w: 0.23 },
+    { title: '색', w: 0.15 },
+    { title: '게이지', w: 0.10, align: 'right' },
+    { title: `길이 (${unitLabel(unit)})`, w: 0.13, align: 'right' },
+  ];
+}
 
-function runCells(r: RunRow): string[] {
+function runCells(r: RunRow, unit: LengthUnit): string[] {
   const [base, stripe] = r.color.split('/');
   const net = r.netCode ? (r.net ? `${r.netCode} ${r.net}` : r.netCode) : (r.net || '—');
   // 색은 흑백 인쇄를 대비해 **약호 + 이름**을 함께 적는다
   const color = base ? `${colorAbbr(base, stripe)} ${r.color}` : '—';
   // 케이블 심선은 케이블 길이로 재단된다 — 값은 적되 어디서 온 값인지 밝힌다.
   // 그냥 숫자만 적으면 이 심선에 직접 지정된 길이처럼 읽힌다.
-  const len = r.lengthMm
-    ? (r.lengthSource === 'cable' ? `${r.lengthMm} (케이블)` : r.lengthMm)
-    : '—';
+  const num = r.lengthMm ? formatLength(Number(r.lengthMm), unit) : '';
+  const len = num ? (r.lengthSource === 'cable' ? `${num} (케이블)` : num) : '—';
   return [net, r.from || '—', r.to || '—', color, r.gauge || '—', len];
 }
 
 function drawRunList(ctx: Ctx, doc: HarnessDocument): void {
   const rows = buildRunList(doc);
+  const RUN_COLS = runCols(ctx.unit);
   const { x, w } = tableRect(ctx);
   const widths = layoutCols(RUN_COLS, w);
   const bottom = ctx.pageH - FOOT_GAP;
@@ -257,7 +266,7 @@ function drawRunList(ctx: Ctx, doc: HarnessDocument): void {
     let y = TABLE_TOP + HEAD_H;
     for (const r of page) {
       y += ROW_H;
-      const cells = runCells(r);
+      const cells = runCells(r, ctx.unit);
       const colorText = cells[3];
       cells[3] = ''; // 색 칸은 견본과 함께 따로 그린다
       drawCells(ctx, cells, RUN_COLS, widths, x, y - 4.5);
@@ -325,7 +334,9 @@ export function partLines(rows: PartRow[]): PartLine[] {
 }
 
 function drawPartList(ctx: Ctx, doc: HarnessDocument): void {
-  const rows = buildPartList(doc);
+  // 도면의 파트리스트도 **도면 길이 그대로**다. 발주용 여유율은 파트리스트
+  // CSV 에만 붙는다(export/bundle.ts 의 bodyOf 주석).
+  const rows = buildPartList(doc, { unit: ctx.unit });
   const lines = partLines(rows);
   const { x, w } = tableRect(ctx);
   const widths = layoutCols(PART_COLS, w);
@@ -384,10 +395,12 @@ function drawPartList(ctx: Ctx, doc: HarnessDocument): void {
 export type PdfOptions = {
   /** 기본 A3 (가로). 좁은 프린터만 있으면 A4 */
   paper?: Paper;
+  /** 기본 mm — 화면·저장값과 같은 단위다 */
+  unit?: LengthUnit;
   filename?: string;
 };
 
-function makeCtx(paper: Paper): Ctx {
+function makeCtx(paper: Paper, unit: LengthUnit = 'mm'): Ctx {
   const pdf = new jsPDF({
     orientation: 'landscape',
     unit: 'pt',
@@ -401,6 +414,7 @@ function makeCtx(paper: Paper): Ctx {
     pageW: Number.isFinite(w) && w > 0 ? w : PAPER_PT[paper].w,
     pageH: Number.isFinite(h) && h > 0 ? h : PAPER_PT[paper].h,
     pageDocs: [],
+    unit,
   };
 }
 
@@ -434,9 +448,9 @@ function safeName(s: string): string {
  */
 export function harnessPdfBytes(
   doc: HarnessDocument,
-  opts?: { paper?: Paper },
+  opts?: { paper?: Paper; unit?: LengthUnit },
 ): Uint8Array<ArrayBuffer> {
-  const ctx = makeCtx(opts?.paper ?? 'A3');
+  const ctx = makeCtx(opts?.paper ?? 'A3', opts?.unit ?? 'mm');
   addHarness(ctx, doc);
   stampFooters(ctx);
   const buf = ctx.pdf.output?.('arraybuffer');
@@ -456,16 +470,19 @@ export async function downloadPdf(
 ): Promise<void> {
   const opts: PdfOptions = arg && typeof (arg as HTMLElement).nodeType === 'number' ? {} : ((arg as PdfOptions) ?? {});
   const paper: Paper = opts.paper ?? 'A3';
-  const ctx = makeCtx(paper);
+  const ctx = makeCtx(paper, opts.unit ?? 'mm');
   addHarness(ctx, doc);
   stampFooters(ctx);
   ctx.pdf.save(opts.filename ?? `${safeName(doc.name || 'harness')}.pdf`);
 }
 
 /** 세트 전체를 한 PDF 로 — 하네스마다 위 세 면을 이어 붙인다 */
-export async function downloadKitPdf(kit: KitDocument, opts?: { paper?: Paper }): Promise<void> {
+export async function downloadKitPdf(
+  kit: KitDocument,
+  opts?: { paper?: Paper; unit?: LengthUnit },
+): Promise<void> {
   const paper: Paper = opts?.paper ?? 'A3';
-  const ctx = makeCtx(paper);
+  const ctx = makeCtx(paper, opts?.unit ?? 'mm');
   for (const h of kit.harnesses) addHarness(ctx, h);
   if (!kit.harnesses.length) {
     startPage(ctx, {
