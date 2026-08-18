@@ -30,10 +30,13 @@ import { useMemo, useRef, useState } from 'react';
 import type { MouseEvent } from 'react';
 import type { HarnessDocument } from '../types';
 import {
-  buildPhysicalModel, formatMm, formatRange, materialRows,
+  buildPhysicalModel, cableRuns, formatMm, formatRange, materialRows,
   segmentLengthNoteText, spanNoteText,
   type PhysNode, type PhysicalModel, type Segment,
 } from './segments';
+// 자켓색 해석은 논리 뷰·PDF 와 **같은 함수**를 쓴다 — 같은 케이블이 화면마다
+// 다른 색으로 보이면 안 되고, 미지정을 어떻게 그릴지도 한 곳에서만 정한다.
+import { jacketPaint } from '../canvas/docToFlow';
 import './physical.css';
 
 // ================================================================
@@ -204,6 +207,23 @@ export function PhysicalView(props: {
     () => new Map(model.segments.map((s) => [s.code, s] as const)),
     [model],
   );
+  /**
+   * 케이블 자켓 — 심선 2본 이상이 함께 지나는 구간에만 두른다.
+   * 논리 뷰와 같은 뜻이고(canvas/wirePlan), 여기서는 구간 트리 위에 그려진다.
+   */
+  const jackets = useMemo(() => cableRuns(doc, model).filter((c) => c.segCodes.length > 0), [doc, model]);
+  const pathByCode = useMemo(
+    () => new Map(layout.paths.map((p) => [p.code, p] as const)),
+    [layout],
+  );
+  /** 구간 코드 → 그 구간을 자켓째 지나는 케이블 이름들 (호버 카드용) */
+  const cablesAt = useMemo(() => {
+    const m = new Map<string, string[]>();
+    for (const c of jackets) {
+      for (const code of c.segCodes) m.set(code, [...(m.get(code) ?? []), c.name]);
+    }
+    return m;
+  }, [jackets]);
   /** 선택이 배선이면 그 배선이 지나는 구간을 고정 강조한다 */
   const selSegs = useMemo(() => {
     const out = new Set<string>();
@@ -269,6 +289,31 @@ export function PhysicalView(props: {
                     </g>
                   ) : null,
                 )}
+                {/*
+                  케이블 자켓 — **다발 아래에** 자켓색 슬리브를 덧그린다.
+                  심선 2본 이상이 함께 지나는 구간에만 두르므로, 슬리브가 끊기는
+                  자리가 곧 브레이크아웃이다(논리 뷰의 자켓 사각형과 같은 규칙).
+                */}
+                {jackets.map((c) => {
+                  const paint = jacketPaint(c.jacketColor);
+                  return c.segCodes.map((code) => {
+                    const p = pathByCode.get(code);
+                    const s = segByCode.get(code);
+                    if (!p || !s) return null;
+                    return (
+                      <path
+                        key={`jk-${c.cableId}-${code}`}
+                        data-testid={`pv-jacket-${c.cableId}-${code}`}
+                        className={`pv-jacket${paint.dashed ? ' is-unspec' : ''}${selection === c.cableId ? ' is-sel' : ''}`}
+                        d={p.d}
+                        stroke={paint.color}
+                        strokeWidth={Math.max(4, s.count) + 10}
+                      >
+                        <title>{`${c.name}${paint.dashed ? ' · 자켓색 미지정' : ''}`}</title>
+                      </path>
+                    );
+                  });
+                })}
                 {/* 다발 — 굵기 = 본수 */}
                 {layout.paths.map((p) => {
                   const s = segByCode.get(p.code);
@@ -401,7 +446,13 @@ export function PhysicalView(props: {
 
         {/* 구간 호버 카드 — 표에서 올릴 때는 띄우지 않는다(커서가 캔버스 밖) */}
         {hotSeg && hotSrc === 'canvas' && (
-          <SegmentCard seg={hotSeg} model={model} x={cursor.x} y={cursor.y} />
+          <SegmentCard
+            seg={hotSeg}
+            model={model}
+            cables={cablesAt.get(hotSeg.code) ?? []}
+            x={cursor.x}
+            y={cursor.y}
+          />
         )}
       </div>
 
@@ -641,8 +692,15 @@ function LengthCell(props: {
 }
 
 /** 구간 호버 카드 — 폭 250px, 논리 뷰 배선 카드와 같은 골격 */
-function SegmentCard(props: { seg: Segment; model: PhysicalModel; x: number; y: number }) {
-  const { seg, model, x, y } = props;
+function SegmentCard(props: {
+  seg: Segment;
+  model: PhysicalModel;
+  /** 이 구간을 자켓째 지나는 케이블 이름들 */
+  cables: string[];
+  x: number;
+  y: number;
+}) {
+  const { seg, model, cables, x, y } = props;
   const left = x > 380 ? x - 266 : x + 16;
   const top = Math.min(Math.max(y - 40, 8), 700);
   const wires = seg.wireIds.map((id) => model.wireCodes.get(id) ?? id);
@@ -695,6 +753,12 @@ function SegmentCard(props: { seg: Segment; model: PhysicalModel; x: number; y: 
         {seg.lengthSource === 'entered' && seg.derivedMm == null && (
           <p className="pv-note">
             {`배선에서 유도할 근거는 없습니다 (${segmentLengthNoteText(seg.lengthNote ?? 'none')}) — 직접 넣은 값입니다.`}
+          </p>
+        )}
+        {/* 이 구간이 자켓 안을 지나면 그 사실을 밝힌다 — 외경·보호재 판단이 달라진다 */}
+        {cables.length > 0 && (
+          <p className="pv-wires">
+            <i>케이블 자켓</i> <span>{cables.join(' · ')}</span>
           </p>
         )}
         <p className="pv-note">보호재 미지정 · 외경은 √본수 × 심선 외경 추정값</p>

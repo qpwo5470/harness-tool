@@ -32,6 +32,7 @@ import { docToNodes, docToEdges, highlightedWires, refLabels, colorAbbr } from '
 import { nodeTypes } from './nodes';
 import { partHousingSize } from './geometry';
 import { edgeTypes } from './OrthogonalEdge';
+import { JacketLayer } from './JacketLayer';
 import { WireCard } from './WireCard';
 import type { Device, Endpoint, PartLibraryItem, Wire } from '../types';
 import { SEED_PARTS, instantiate, suggestedColor } from '../library/seed';
@@ -362,6 +363,9 @@ function Flow() {
         fitViewOptions={{ padding: 0.18 }}
         proOptions={{ hideAttribution: false }}
       >
+        {/* 케이블 자켓 — 심선들이 나란히 가는 구간을 슬리브 윤곽으로 감싼다.
+            기하는 wirePlan 하나에서 오고 PDF 도 같은 것을 그린다. */}
+        <JacketLayer doc={doc} view={view} selection={selection} />
         <Background gap={16} size={1} color="var(--line-row)" />
         <Controls showInteractive={false} />
         {/* 제목블록이 우하단을 쓰므로 미니맵은 우상단으로 뺀다 */}

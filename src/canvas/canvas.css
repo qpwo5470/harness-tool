@@ -143,6 +143,23 @@
 .react-flow__edge path { transition: none !important; }
 
 /* ============================================================
+   케이블 자켓 — 심선이 나란히 가는 구간을 감싸는 슬리브 윤곽
+   색은 인라인으로 온다(자켓색은 문서 데이터라 토큰이 아니다 — JacketLayer).
+   각진 모서리 유지: rx 를 주지 않는다.
+   ============================================================ */
+/* 히트는 자켓 벽(.hz-jacket-hit)만 받는다 — 사각형 안쪽을 잡으면 그 속을 달리는
+   심선을 클릭할 수 없다. 심선이 먼저다. */
+.hz-jacket { pointer-events: none; }
+.hz-jacket-hit { cursor: pointer; pointer-events: stroke; }
+.hz-jacket-label {
+  font-size: 10px; font-weight: 600; pointer-events: none;
+  paint-order: stroke; stroke: #fff; stroke-width: 3px; stroke-linejoin: round;
+}
+/* 고정 선택 — 스틸(--accent) 대신 자켓색을 굵게 한다. 자켓색은 물건의 색이라
+   덮으면 무슨 케이블인지 못 읽는다(굵기로 구분한다). */
+.hz-jacket.on { stroke-width: 2.6px; }
+
+/* ============================================================
    선택 모델 (§11) — 박스 드래그 · 다중 배지
    ============================================================ */
 

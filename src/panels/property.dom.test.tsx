@@ -6,6 +6,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import { useHarnessStore } from '../store/harnessStore';
+import { buildPartList } from '../export/exporters';
 import { PropertyPanel } from './PropertyPanel';
 import type { HarnessDocument, PartLibraryItem, PinSlot } from '../types';
 
@@ -356,6 +357,56 @@ describe('(A) 와이어 — 케이블', () => {
     // 지울 수도 없는데 자재표에는 그대로 발주됐다.
     expect(doc().cables).toHaveLength(0);
     expect(doc().wires[0].cableId).toBeUndefined();
+  });
+
+  // ── 케이블 게이지 ────────────────────────────────────────────────
+  //
+  // 고치기 전: `Cable.gauge` 는 스키마·정규화·자재표에는 있는데 **입력칸만 없었다**.
+  // 파일에 값이 들어 있으면 자재표에 표시만 되고, 새로 넣거나 고칠 길이 없었다.
+  it('A-8 케이블 게이지를 넣고 Enter 로 확정하면 산출물에 반영된다', () => {
+    showCableDoc();
+    const g = screen.getByLabelText('케이블 게이지 값') as HTMLInputElement;
+    expect(g.value).toBe('');                          // 미지정이 0 으로 보이지 않는다
+    expect(g.placeholder).toBe('미지정');
+
+    fireEvent.change(g, { target: { value: '20' } });
+    expect(cable0().gauge).toBeUndefined();            // 타이핑 중에는 쌓지 않는다
+    fireEvent.keyDown(g, { key: 'Enter' });
+    expect(cable0().gauge).toEqual({ system: 'awg', value: 20 });
+
+    // 자재표(발주 산출물)의 케이블 행에 그대로 실린다
+    const row = buildPartList(doc()).find((r) => r.category === '케이블')!;
+    expect(row.detail).toContain('AWG20');
+  });
+
+  it('A-8 단위를 바꾸면 배선 게이지와 **같은 환산표**로 옮겨 간다', () => {
+    showCableDoc((d) => { d.cables![0].gauge = { system: 'awg', value: 20 }; });
+    expect(screen.getByLabelText('케이블 게이지 단위 AWG').getAttribute('aria-pressed')).toBe('true');
+
+    fireEvent.click(screen.getByLabelText('케이블 게이지 단위 mm2'));
+    expect(cable0().gauge).toEqual({ system: 'mm2', value: 0.5 });   // AWG20 = 0.5sq
+    expect(screen.getByText('≈ AWG 20')).toBeTruthy();
+  });
+
+  it('A-8 비우고 확정하면 0 이 아니라 **미지정**으로 되돌린다', () => {
+    showCableDoc((d) => { d.cables![0].gauge = { system: 'awg', value: 20 }; });
+    const g = screen.getByLabelText('케이블 게이지 값');
+    fireEvent.change(g, { target: { value: '' } });
+    fireEvent.blur(g);
+    expect(cable0().gauge).toBeUndefined();
+    // "AWG0" 짜리 케이블이 자재표로 나가면 안 된다
+    expect(buildPartList(doc()).find((r) => r.category === '케이블')!.detail).not.toContain('AWG0');
+  });
+
+  it('A-8 심선 굵기와 어긋나면 카드가 그 자리에서 짚어 준다', () => {
+    // 심선은 AWG22(makeDoc), 케이블 규격은 AWG20 — 같은 단위라 비교할 수 있다
+    showCableDoc((d) => { d.cables![0].gauge = { system: 'awg', value: 20 }; });
+    expect(screen.getByText('심선 1본이 다른 굵기입니다')).toBeTruthy();
+
+    // 단위가 다르면 어림 환산하지 않는다 — 경고가 거짓말을 하면 안 된다(검증 규칙 10 과 같은 태도)
+    cleanup();
+    showCableDoc((d) => { d.cables![0].gauge = { system: 'mm2', value: 0.5 }; });
+    expect(screen.queryByText(/다른 굵기입니다/)).toBeNull();
   });
 
   it('A-5 심선에 길이를 넣으면 문구가 이중 계상을 감추지 않는다', () => {

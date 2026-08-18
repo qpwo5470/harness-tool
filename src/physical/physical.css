@@ -64,6 +64,18 @@
 .pv-bundle.is-hot { stroke: var(--line-strong); }
 .pv-bundle.is-dim { opacity: .16; }
 
+/* 케이블 자켓 — 다발 **아래**에 깔리는 외피 슬리브 (색·굵기는 인라인).
+   심선 2본 이상이 함께 지나는 구간에만 그려지므로, 끊기는 자리가 브레이크아웃이다.
+   자켓색 미지정은 점선 — 색을 지어내지 않는다(canvas/docToFlow.jacketPaint). */
+.pv-jacket {
+  fill: none;
+  stroke-linejoin: miter;
+  stroke-linecap: butt;
+  opacity: .42;
+}
+.pv-jacket.is-unspec { stroke-dasharray: 9 6; }
+.pv-jacket.is-sel { opacity: .75; }
+
 /* 분기점 마커 — 13×13 정사각형 45° 회전. 채움 = 스플라이스 분기 */
 .pv-branch {
   fill: var(--bg-canvas);

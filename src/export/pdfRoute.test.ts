@@ -21,10 +21,11 @@
 import { describe, it, expect } from 'vitest';
 import { sampleDoc } from '../fixtures/sampleDoc';
 import { fanoutDoc, labelOverhangDoc } from '../fixtures/fanoutDoc';
+import { cableDoc } from '../fixtures/cableDoc';
 import { rowOfConnectorsDoc } from '../fixtures/rowOfConnectors';
 import { assignLanes, docToEdges, nodePositions, refLabels } from '../canvas/docToFlow';
 import { connectorLabelRects } from '../canvas/geometry';
-import { routeWire, planWires } from '../canvas/wirePlan';
+import { routeWire, planWires, planJackets } from '../canvas/wirePlan';
 import type { OrthoEdgeData } from '../canvas/OrthogonalEdge';
 import type { HarnessDocument } from '../types';
 import {
@@ -390,6 +391,110 @@ describe('PDF 라벨 자리 = 화면 라벨 자리', () => {
         expect(r.x + r.w).toBeLessThanOrEqual(dr.bounds.x + dr.bounds.w + 1e-6);
       }
     }
+  });
+});
+
+// ============================================================
+/**
+ * 케이블 자켓도 **화면과 같은 그림**이어야 한다.
+ *
+ * 경로에서 두 번 났던 사고(pdfDraw 가 제 계산을 들고 있어 종이와 화면이 갈렸다)를
+ * 자켓에서 되풀이하지 않는 자리다. 위 배선 시험과 같은 방식으로, 종이에 실제로
+ * 찍힌 사각형을 등비 변환으로 되짚어 화면 좌표와 맞춘다.
+ */
+describe('PDF 자켓 = 화면 자켓', () => {
+  const doc = cableDoc({ jacketColor: 'black' });
+
+  /** 종이에 찍힌 사각형만 받아 적는 목 — 자켓은 `rect` 로 그려진다 */
+  function recordingRects(): { pdf: PdfLike; rects: Rect[]; dashes: number[][] } {
+    const rects: Rect[] = [];
+    const dashes: number[][] = [];
+    const noop = () => undefined;
+    const pdf: PdfLike = {
+      setLineWidth: noop, setDrawColor: noop, setFillColor: noop, setTextColor: noop,
+      setFontSize: noop, setFont: noop, text: noop, addImage: noop, line: noop,
+      addPage: noop, setPage: noop, getNumberOfPages: () => 1, save: noop,
+      setLineDashPattern: (p) => void dashes.push(p),
+      rect: (x, y, w, h) => void rects.push({ x, y, w, h }),
+      internal: { pageSize: { getWidth: () => PAPER_PT.A3.w, getHeight: () => PAPER_PT.A3.h } },
+    };
+    return { pdf, rects, dashes };
+  }
+
+  it('buildDrawing 의 자켓 사각형이 화면과 **같은 함수**에서 온다', () => {
+    const screen = planJackets(doc, 'logical').filter((j) => j.runs.length > 0);
+    const pdf = buildDrawing(doc).jackets;
+    expect(pdf).toHaveLength(screen.length);
+    expect(pdf.length).toBeGreaterThan(0);
+    pdf.forEach((j, i) => {
+      expect(j.cableId).toBe(screen[i].cableId);
+      expect(j.runs).toEqual(screen[i].runs);
+      expect(j.labelAt).toEqual(screen[i].labelAt);
+      expect(j.label).toBe(screen[i].label);
+    });
+  });
+
+  it('종이 좌표를 역변환하면 화면 자켓 사각형이 그대로 나온다', () => {
+    const { pdf, rects } = recordingRects();
+    const page = { w: PAPER_PT.A3.w, h: PAPER_PT.A3.h };
+    const area = drawFrameAndTitleBlock(pdf, doc, () => 0, page);
+    rects.length = 0;                     // 프레임·제목블록 사각형은 버린다
+    const dr = buildDrawing(doc);
+    const xf = fitTransform(dr.bounds, area);
+    drawDrawing(pdf, dr, xf, () => 0);
+
+    // drawDrawing 은 자켓을 **맨 먼저** 그린다 (배선·하우징이 그 뒤다)
+    const expected = dr.jackets.flatMap((j) => j.runs);
+    expect(expected.length).toBeGreaterThan(0);
+    expected.forEach((r, i) => {
+      expect(inv(rects[i].x, xf.tx, xf.scale)).toBeCloseTo(r.x, 6);
+      expect(inv(rects[i].y, xf.ty, xf.scale)).toBeCloseTo(r.y, 6);
+      expect(rects[i].w / xf.scale).toBeCloseTo(r.w, 6);
+      expect(rects[i].h / xf.scale).toBeCloseTo(r.h, 6);
+    });
+  });
+
+  it('자켓색 미지정은 종이에서도 점선이다 — 색을 지어내지 않는다', () => {
+    const unspec = cableDoc();                       // cb-p 자켓색 없음
+    expect(buildDrawing(unspec).jackets.find((j) => j.cableId === 'cb-p')!.dashed).toBe(true);
+    expect(buildDrawing(doc).jackets.find((j) => j.cableId === 'cb-p')!.dashed).toBe(false);
+
+    // 실제로 점선 패턴을 켜고 그린다(빈 배열 = 실선)
+    const { pdf, dashes } = recordingRects();
+    const dr = buildDrawing(unspec);
+    drawDrawing(pdf, dr, fitTransform(dr.bounds, { x: 0, y: 0, w: 800, h: 600 }), () => 0);
+    expect(dashes.some((p) => p.length === 2 && p[0] > 0)).toBe(true);
+  });
+
+  it('도면 경계가 자켓 사각형을 전부 담는다 — 종이 끝에서 잘리지 않는다', () => {
+    const dr = buildDrawing(doc);
+    for (const j of dr.jackets) {
+      for (const r of j.runs) {
+        expect(r.x).toBeGreaterThanOrEqual(dr.bounds.x - 1e-6);
+        expect(r.y).toBeGreaterThanOrEqual(dr.bounds.y - 1e-6);
+        expect(r.x + r.w).toBeLessThanOrEqual(dr.bounds.x + dr.bounds.w + 1e-6);
+        expect(r.y + r.h).toBeLessThanOrEqual(dr.bounds.y + dr.bounds.h + 1e-6);
+      }
+    }
+  });
+
+  /**
+   * 대조군 — 고치기 전에는 케이블이 종이에 **한 획도** 나오지 않았다.
+   * 케이블을 걷어 낸 문서와 그림이 완전히 같다는 것이 그 증거다.
+   */
+  it('대조군 — 자켓이 없으면 케이블이 있는 도면과 없는 도면이 같은 그림이다', () => {
+    const bare: HarnessDocument = {
+      ...doc,
+      cables: [],
+      wires: doc.wires.map(({ cableId: _drop, ...rest }) => rest),
+    };
+    const a = buildDrawing(doc);
+    const b = buildDrawing(bare);
+    expect(b.jackets).toEqual([]);
+    expect(a.jackets.length).toBeGreaterThan(0);
+    // 배선·하우징은 한 점도 다르지 않다 — 자켓만이 유일한 차이다
+    expect(b.wires.map((w) => w.points)).toEqual(a.wires.map((w) => w.points));
+    expect(b.nodes).toEqual(a.nodes);
   });
 });
 

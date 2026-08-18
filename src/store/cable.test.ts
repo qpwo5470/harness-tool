@@ -14,6 +14,7 @@ import { useHarnessStore } from './harnessStore';
 import { validateHarness } from './validate';
 import { lengthResolver } from './wireLength';
 import { normalizeDocument } from './persistence';
+import { buildPartList } from '../export/exporters';
 import { sampleDoc } from '../fixtures/sampleDoc';
 
 const S = () => useHarnessStore.getState();
@@ -157,6 +158,52 @@ describe('A-4 코어 수와 심선 수', () => {
     if (!r.ok) return;
     expect(r.kit.harnesses[0].cables?.[0].coreCount).toBe(0);
     expect(r.warnings.some((w) => w.includes('음수'))).toBe(true);
+  });
+});
+
+// ================================================================
+// A-8 케이블 규격 게이지
+//
+// 입력 UI 가 없던 시절에는 값이 있어도 아무도 손대지 못해 어긋날 일이 없었다.
+// 이제 넣을 수 있게 됐으니, 심선과 어긋나는 경우를 정해 둬야 한다.
+// ================================================================
+describe('A-8 케이블 게이지와 심선 게이지', () => {
+  it('같은 단위인데 값이 다르면 warn 이고 케이블을 짚는다', () => {
+    // 심선 AWG22 · 케이블 규격 AWG20 → 들어오는 물건과 접속표가 갈린다
+    const doc = cableDoc({ cable: { gauge: { system: 'awg', value: 20 } } });
+    const found = ids(doc, 'cable-gauge-mismatch');
+    expect(found).toHaveLength(1);
+    expect(found[0].level).toBe('warn');
+    expect(found[0].title).toContain('AWG20');
+    expect(found[0].title).toContain('AWG22');
+    // 고칠 칸(케이블 게이지)이 케이블 카드에 있으므로 케이블로 데려간다
+    expect(found[0].targetId).toBe('cb1');
+  });
+
+  it('값이 같으면 아무 말도 하지 않는다', () => {
+    const doc = cableDoc({ cable: { gauge: { system: 'awg', value: 22 } } });
+    expect(ids(doc, 'cable-gauge-mismatch')).toHaveLength(0);
+  });
+
+  it('게이지를 안 적은 케이블은 판정 대상이 아니다 — 선택 필드다', () => {
+    expect(ids(cableDoc(), 'cable-gauge-mismatch')).toHaveLength(0);
+  });
+
+  /**
+   * 단위가 섞이면 **판정하지 않는다**. 규칙 10(`thinnest`)과 같은 태도다 —
+   * AWG22 를 0.34 로 볼지 0.3 으로 볼지는 제조사마다 다르고, 여기서 어림 환산을
+   * 하면 경고가 거짓말을 한다. 그래서 샘플 문서(케이블 0.5sq · 심선 AWG22)도 조용하다.
+   */
+  it('단위가 다르면 어림 환산하지 않고 조용하다', () => {
+    const doc = cableDoc({ cable: { gauge: { system: 'mm2', value: 0.5 } } });
+    expect(ids(doc, 'cable-gauge-mismatch')).toHaveLength(0);
+    expect(ids(sampleDoc, 'cable-gauge-mismatch')).toHaveLength(0);
+  });
+
+  it('자재표에는 케이블 게이지가 그대로 실린다 — 입력이 산출물까지 간다', () => {
+    const doc = cableDoc({ cable: { gauge: { system: 'mm2', value: 0.75 } } });
+    const row = buildPartList(doc).find((r) => r.category === '케이블')!;
+    expect(row.detail).toContain('MM20.75');
   });
 });
 

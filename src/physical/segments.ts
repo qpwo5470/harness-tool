@@ -855,6 +855,49 @@ export function buildPhysicalModel(doc: HarnessDocument): PhysicalModel {
 }
 
 // ================================================================
+// 케이블 자켓 — 물리 뷰
+// ================================================================
+
+/**
+ * 한 케이블의 심선들이 **함께 지나는 구간**.
+ *
+ * 논리 뷰의 자켓(canvas/wirePlan.planJackets)과 **같은 뜻**이다: 심선 2본 이상이
+ * 나란히 가는 구간이 자켓이고, 그 바깥은 이미 갈라진 뒤다. 다만 물리 뷰는 좌표가
+ * 아니라 **구간 트리** 위에 그려지므로(layoutTree) 사각형이 아니라 구간 코드로
+ * 답한다 — 두 뷰의 기하는 애초에 같은 좌표계가 아니다.
+ *
+ * 왜 여기 있나: 구간을 아는 곳이 여기뿐이다. 화면(PhysicalView)이 직접 세면
+ * 도면의 S3 와 자켓의 S3 가 갈릴 수 있다(구간 규칙은 이 파일 한 곳에 있다).
+ */
+export type CableRun = {
+  cableId: Id;
+  /** 이 케이블 심선이 **2본 이상** 지나는 구간 코드 (작도 순서) */
+  segCodes: string[];
+  /** 문서에 적힌 심선 id (문서 순서) */
+  coreIds: Id[];
+  /** 자켓색 원문. 미지정이면 undefined — 색을 지어내지 않는다 */
+  jacketColor?: string;
+  name: string;
+};
+
+export function cableRuns(doc: HarnessDocument, model: PhysicalModel): CableRun[] {
+  return (doc.cables ?? []).map((cb) => {
+    const coreIds = doc.wires.filter((w) => w.cableId === cb.id).map((w) => w.id);
+    const mine = new Set(coreIds);
+    const segCodes = model.segments
+      .filter((s) => s.wireIds.filter((id) => mine.has(id)).length >= 2)
+      .map((s) => s.code);
+    return {
+      cableId: cb.id,
+      segCodes,
+      coreIds,
+      ...(cb.jacketColor != null ? { jacketColor: cb.jacketColor } : {}),
+      name: cb.name ?? `${cb.coreCount}C 케이블`,
+    };
+  });
+}
+
+// ================================================================
 // 자재 요약
 // ================================================================
 

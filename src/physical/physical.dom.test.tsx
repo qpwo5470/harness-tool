@@ -425,3 +425,69 @@ describe('자재 요약 · 선택', () => {
     expect(onSelect).toHaveBeenCalledWith(null);
   });
 });
+
+// ============================================================
+// 케이블 자켓 — 논리 뷰와 같은 규칙, 다른 좌표계
+//
+// 물리 뷰는 구간 트리 위에 그려지므로 사각형이 아니라 **구간 위에 덧그린 슬리브**다.
+// 뜻은 같다: 심선 2본 이상이 함께 지나는 구간에만 두르고, 끊기는 자리가 브레이크아웃.
+// 고치기 전에는 이 화면 어디에도 케이블이라는 사실이 나오지 않았다.
+// ============================================================
+describe('케이블 자켓', () => {
+  /** w5·w6 (J1 → J3) 을 한 케이블로 묶는다 — 두 본이 같은 구간을 함께 지난다 */
+  function cabled(jacketColor?: string): HarnessDocument {
+    const doc = makeDoc();
+    const mine = new Set(['w5', 'w6']);
+    return {
+      ...doc,
+      cables: [{ id: 'cb1', name: '2C 이더넷', coreCount: 2, lengthMm: 340, ...(jacketColor ? { jacketColor } : {}) }],
+      wires: doc.wires.map((x) => (mine.has(x.id) ? { ...x, cableId: 'cb1' } : x)),
+    };
+  }
+
+  it('대조군 — 케이블을 지정하지 않으면 자켓이 하나도 그려지지 않는다', () => {
+    const { container } = draw(makeDoc());
+    expect(container.querySelectorAll('.pv-jacket')).toHaveLength(0);
+  });
+
+  it('심선 2본이 함께 지나는 구간에만 자켓이 덧그려진다', () => {
+    const doc = cabled('gray');
+    const { container } = draw(doc);
+    const model = buildPhysicalModel(doc);
+    // 그 구간을 손으로 골라 두지 않는다 — 구간 산출은 segments.ts 한 곳이 정한다
+    const expected = model.segments.filter(
+      (s) => s.wireIds.filter((id) => id === 'w5' || id === 'w6').length >= 2,
+    );
+    expect(expected.length).toBeGreaterThan(0);
+    expect(container.querySelectorAll('.pv-jacket')).toHaveLength(expected.length);
+    for (const s of expected) {
+      expect(screen.getByTestId(`pv-jacket-cb1-${s.code}`)).toBeTruthy();
+    }
+    // 심선이 갈라진 뒤의 구간에는 자켓이 없다 — 그게 브레이크아웃이다
+    const lone = model.segments.find((s) => s.wireIds.includes('w5') && !s.wireIds.includes('w6'));
+    if (lone) expect(screen.queryByTestId(`pv-jacket-cb1-${lone.code}`)).toBeNull();
+  });
+
+  it('자켓색 미지정은 점선 — 논리 뷰·PDF 와 같은 규칙이다', () => {
+    // SVG 요소의 className 은 SVGAnimatedString 이라 문자열로 직접 읽는다
+    const classOf = (c: HTMLElement) => c.querySelector('.pv-jacket')!.getAttribute('class') ?? '';
+    const { container } = draw(cabled());
+    expect(classOf(container)).toContain('is-unspec');
+    cleanup();
+
+    const { container: c2 } = draw(cabled('gray'));
+    expect(classOf(c2)).not.toContain('is-unspec');
+  });
+
+  it('구간 호버 카드가 어느 케이블 자켓을 지나는지 밝힌다', () => {
+    const doc = cabled('gray');
+    const { container } = draw(doc);
+    const code = buildPhysicalModel(doc).segments.find(
+      (s) => s.wireIds.includes('w5') && s.wireIds.includes('w6'),
+    )!.code;
+    fireEvent.mouseEnter(container.querySelector(`[data-testid="pv-hit-${code}"]`)!);
+    const card = screen.getByTestId('pv-hover');
+    expect(within(card).getByText('케이블 자켓')).toBeTruthy();
+    expect(within(card).getByText('2C 이더넷')).toBeTruthy();
+  });
+});

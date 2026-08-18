@@ -33,6 +33,9 @@ import { SEED_PARTS } from '../library/seed';
 import { loadCustomParts } from '../library/customParts';
 import { GENDER_LABEL, GENDER_LONG } from '../library/gender';
 import { refLabels, colorAbbr, strokeColor } from '../canvas/docToFlow';
+// 자켓이 도면에 실제로 그려지는지는 그리는 쪽에 물어본다 — 여기서 따로 판정하면
+// 카드가 "그려집니다" 라고 하는데 도면에는 없는 상태가 생긴다.
+import { planJackets } from '../canvas/wirePlan';
 // 핀 격자 해석은 캔버스와 같은 출처를 쓴다 (기하는 geometry.ts 한 곳)
 import { PAD, layoutCells } from '../canvas/geometry';
 import { computeNets } from '../store/netlist';
@@ -227,16 +230,337 @@ let cableSeq = 0;
 /** 케이블 심선 수 상한 — 리본/다심 케이블은 64심이 시중 최대급이라 그 위는 오타로 본다 */
 const MAX_CORE_COUNT = 64;
 
+// ============================================================
+// 케이블 카드 — 배선(A)의 '케이블 소속' 안과 케이블 단독 선택(F)이 **같은 것**을 쓴다
+//
+// 두 벌로 두면 한쪽에서만 고칠 수 있는 값이 생긴다(자켓색 · 코어 수처럼).
+// 심선을 골랐든 자켓을 골랐든 케이블을 손보는 손동작은 같아야 한다.
+// ============================================================
+function CableCard({
+  doc,
+  cable,
+  currentWireId,
+  showDelete = true,
+}: {
+  doc: HarnessDocument;
+  cable: Cable;
+  /** 배선을 통해 열렸으면 그 배선 id — 심선 목록에서 '(현재)' 로 짚어 준다 */
+  currentWireId?: string;
+  /**
+   * 카드 안에 삭제 버튼을 둘지.
+   * 케이블을 **직접 골랐을 때**는 패널 푸터에 이미 '케이블 삭제' 가 있다 —
+   * 같은 화면에 같은 이름의 버튼이 둘이면 어느 쪽이 무엇을 지우는지 알 수 없다.
+   */
+  showDelete?: boolean;
+}) {
+  const updateCable = useHarnessStore((s) => s.updateCable);
+  const removeEntity = useHarnessStore((s) => s.remove);
+
+  /** 길이·게이지 초안 — 타이핑마다 스토어에 쓰면 글자 수만큼 실행취소가 쌓인다 */
+  const [lenDraft, setLenDraft] = useState<string | null>(null);
+  const [gaugeDraft, setGaugeDraft] = useState<string | null>(null);
+  /**
+   * 아직 게이지가 없을 때 **어느 단위로** 받을지.
+   * 값이 없는데 단위만 고르면 `{system, value:?}` 를 지어내야 하므로, 단위는
+   * 여기에 담아 두었다가 값이 들어오는 순간 함께 저장한다.
+   */
+  const [gaugeSys, setGaugeSys] = useState<'awg' | 'mm2'>('awg');
+
+  const refs = useMemo(() => refLabels(doc), [doc]);
+  const codes = useMemo(() => wireCodes(doc), [doc]);
+  const cores = doc.wires.filter((w) => w.cableId === cable.id);
+
+  /**
+   * 도면에 자켓이 그려지는가.
+   *
+   * 자켓은 심선이 **나란히 가는 구간**에만 그려진다(canvas/wirePlan). 심선들이
+   * 서로 멀찍이 떨어져 있으면 그릴 자리가 없는데, 화면이 그 사실을 말하지 않으면
+   * "자켓색을 골랐는데 도면에 아무것도 없다" 로 보인다.
+   */
+  const drawn = useMemo(() => {
+    if (cores.length < 2) return null;
+    return planJackets(doc, 'logical').find((j) => j.cableId === cable.id)?.runs.length ?? 0;
+  }, [doc, cable.id, cores.length]);
+
+  /**
+   * 케이블 길이 확정 (Enter · 포커스 이동).
+   * 배선 길이 일괄 입력과 같은 방식이다 — 한 번 확정할 때 실행취소 한 단계만 쌓는다.
+   * 빈칸으로 확정하면 길이를 **지운다**(0 을 넣지 않는다). 0 을 남기면 발주서에
+   * "0mm 로 자르라"는 지시가 되고, 지우면 다시 '미입력'이라고 정직하게 말한다.
+   */
+  const commitLen = () => {
+    if (lenDraft == null) return;
+    const raw = lenDraft.trim();
+    setLenDraft(null);
+    if (!raw) {
+      if (cable.lengthMm != null) updateCable(cable.id, { lengthMm: undefined });
+      return;
+    }
+    const v = Number(raw);
+    if (!Number.isFinite(v) || v <= 0) return;   // 음수·0·문자는 받지 않는다
+    if (v === cable.lengthMm) return;
+    updateCable(cable.id, { lengthMm: v });
+  };
+
+  /**
+   * 케이블 게이지 확정.
+   * 빈칸이면 **미지정으로 되돌린다** — 0 을 남기면 자재표에 "AWG0" 이 실린다.
+   */
+  const commitGauge = () => {
+    if (gaugeDraft == null) return;
+    const raw = gaugeDraft.trim();
+    setGaugeDraft(null);
+    if (!raw) {
+      if (cable.gauge) updateCable(cable.id, { gauge: undefined });
+      return;
+    }
+    const v = Number(raw);
+    if (!Number.isFinite(v) || v <= 0) return;
+    const system = cable.gauge?.system ?? gaugeSys;
+    if (cable.gauge?.system === system && cable.gauge.value === v) return;
+    updateCable(cable.id, { gauge: { system, value: v } });
+  };
+
+  /**
+   * 단위 전환. 값이 있으면 배선 게이지와 **같은 방식**으로 환산해 옮긴다
+   * (환산표는 이 파일 하나뿐이라 배선과 케이블이 다른 숫자를 쓰지 않는다).
+   * 값이 없으면 저장할 것이 없으므로 "다음에 받을 단위" 만 기억한다.
+   */
+  const switchGaugeSystem = (sys: 'awg' | 'mm2') => {
+    setGaugeSys(sys);
+    const g = cable.gauge;
+    if (!g || g.system === sys) return;
+    updateCable(cable.id, {
+      gauge: { system: sys, value: sys === 'mm2' ? (awgToMm2(g.value) ?? 0.34) : mm2ToAwg(g.value) },
+    });
+  };
+
+  const curSys = cable.gauge?.system ?? gaugeSys;
+  const gaugeAlt = !cable.gauge
+    ? ''
+    : cable.gauge.system === 'awg'
+      ? (awgToMm2(cable.gauge.value) != null ? `≈ ${awgToMm2(cable.gauge.value)} mm²` : '')
+      : `≈ AWG ${mm2ToAwg(cable.gauge.value)}`;
+
+  /** 케이블 게이지와 단위·값이 어긋나는 심선 (검증 규칙 19 와 같은 판정) */
+  const offSpec = cable.gauge
+    ? cores.filter((w) => w.gauge.system === cable.gauge!.system && w.gauge.value !== cable.gauge!.value)
+    : [];
+
+  return (
+    <div className="pp-cable">
+      <Field label="케이블명">
+        <input
+          className="pp-input grow"
+          aria-label="케이블명"
+          value={cable.name ?? ''}
+          onChange={(e) => updateCable(cable.id, { name: e.target.value || undefined })}
+        />
+        {/*
+          케이블을 지울 길이 하나는 있어야 한다. 선택(selection)은 커넥터·장치·
+          배선만 될 수 있어 예전에는 케이블을 고를 수도 지울 수도 없었고,
+          심선을 전부 '단선' 으로 빼도 자재표는 그 케이블을 계속 발주했다.
+          심선의 소속은 끊고 배선 자체는 남긴다(store/harnessStore.ts remove).
+        */}
+        {showDelete && (
+          <button
+            type="button"
+            className="pp-mini-btn danger"
+            aria-label="케이블 삭제"
+            title="이 케이블을 지웁니다 — 심선은 단선으로 남습니다"
+            onClick={() => {
+              const n = cores.length;
+              removeEntity(cable.id);
+              showToast(
+                n > 0
+                  ? `케이블을 지웠습니다 — 심선 ${n}본은 단선으로 남았습니다`
+                  : '케이블을 지웠습니다',
+                undoSteps(1),
+              );
+            }}
+          >
+            케이블 삭제
+          </button>
+        )}
+      </Field>
+      <Field label="길이">
+        {/*
+          케이블 길이 입력. 이 칸이 없어서 "길이는 케이블을 따릅니다" 라는
+          규칙이 UI 만으로는 성립하지 않았다 — 새 케이블에 심선을 넣는 순간
+          그 심선은 '길이 미입력' error 가 되고 발주까지 막혔는데, 고칠 길이
+          JSON 을 손으로 여는 것뿐이었다. 배선 길이와 같은 방식(Enter 확정).
+        */}
+        <input
+          className="pp-input num w-len"
+          aria-label="케이블 길이"
+          inputMode="numeric"
+          placeholder="미입력"
+          value={lenDraft ?? (cable.lengthMm ?? '')}
+          onChange={(e) => setLenDraft(e.target.value)}
+          onBlur={commitLen}
+          onKeyDown={(e) => { if (e.key === 'Enter') commitLen(); }}
+        />
+        <span className="pp-unit num">mm</span>
+        <span className="pp-spacer" />
+        <span className="pp-hint">
+          {cable.lengthMm != null
+            ? '심선 전부가 이 길이로 재단됩니다'
+            : '값을 넣고 Enter — 비우면 심선 길이가 미상이 됩니다'}
+        </span>
+      </Field>
+      <Field label="게이지">
+        {/*
+          케이블 게이지 입력. 스키마·정규화·자재표에는 예전부터 있었는데 **입력칸만
+          없어서**, 파일에 값이 있으면 보이기만 하고 새로 넣을 수는 없었다.
+          배선 게이지와 같은 손동작(AWG/mm² 토글 + 값)을 쓴다 — 같은 성질의 값을
+          화면마다 다른 방식으로 넣게 하면 어느 쪽이 맞는지 헷갈린다.
+          다만 케이블 게이지는 **선택 필드**라 '비우면 미지정' 이 있어야 하고,
+          그래서 값은 Enter 확정(길이 칸과 같은 규칙)이다.
+        */}
+        <div className="pp-seg">
+          {(['awg', 'mm2'] as const).map((sys) => (
+            <button
+              key={sys}
+              type="button"
+              className={curSys === sys ? 'on' : ''}
+              aria-pressed={curSys === sys}
+              aria-label={`케이블 게이지 단위 ${sys === 'awg' ? 'AWG' : 'mm2'}`}
+              onClick={() => switchGaugeSystem(sys)}
+            >
+              {sys === 'awg' ? 'AWG' : 'mm²'}
+            </button>
+          ))}
+        </div>
+        <input
+          className="pp-input num w-gauge"
+          aria-label="케이블 게이지 값"
+          inputMode="decimal"
+          placeholder="미지정"
+          value={gaugeDraft ?? (cable.gauge?.value ?? '')}
+          onChange={(e) => setGaugeDraft(e.target.value)}
+          onBlur={commitGauge}
+          onKeyDown={(e) => { if (e.key === 'Enter') commitGauge(); }}
+        />
+        <span className="pp-alt num">{gaugeAlt}</span>
+        <span className="pp-spacer" />
+        <span className={`pp-hint${offSpec.length ? ' broken' : ''}`}>
+          {!cable.gauge
+            ? '값을 넣고 Enter — 비우면 미지정으로 돌아갑니다'
+            : offSpec.length
+              ? `심선 ${offSpec.length}본이 다른 굵기입니다`
+              : '자재표의 케이블 규격에 실립니다'}
+        </span>
+      </Field>
+      <Field label="코어 수">
+        <div className="pp-stepper">
+          {/*
+            하한은 **실제로 물린 심선 수**다. 1코어에 심선 2본 같은 상태는
+            물리적으로 존재할 수 없는데 예전에는 그대로 통과했다.
+            상한은 오타 방지용(MAX_CORE_COUNT) — 코어 수가 심선 수보다 많은
+            것 자체는 정상이라(예비심) 막지 않고 검증이 알린다.
+          */}
+          <button
+            type="button"
+            aria-label="코어 수 감소"
+            disabled={cable.coreCount <= Math.max(1, cores.length)}
+            onClick={() =>
+              updateCable(cable.id, {
+                coreCount: Math.max(Math.max(1, cores.length), cable.coreCount - 1),
+              })}
+          >
+            −
+          </button>
+          <span className="num">{cable.coreCount}</span>
+          <button
+            type="button"
+            aria-label="코어 수 증가"
+            disabled={cable.coreCount >= MAX_CORE_COUNT}
+            onClick={() =>
+              updateCable(cable.id, { coreCount: Math.min(MAX_CORE_COUNT, cable.coreCount + 1) })}
+          >
+            +
+          </button>
+        </div>
+        <span className="pp-flabel sm">자켓색</span>
+        <div className="pp-chips">
+          {JACKET_KEYS.map((k) => {
+            const c = findColor(k)!;
+            const on = (cable.jacketColor ?? '').trim().toLowerCase() === k;
+            return (
+              <button
+                key={k}
+                type="button"
+                className={`pp-chip sm${on ? ' on' : ''}${c.light ? ' light' : ''}`}
+                style={{ background: c.css }}
+                aria-pressed={on}
+                aria-label={`자켓색 ${c.ko}(${c.key})`}
+                title={`${c.ko} · ${c.key}`}
+                onClick={() => updateCable(cable.id, { jacketColor: k })}
+              />
+            );
+          })}
+        </div>
+        <input
+          className="pp-input num sm grow"
+          aria-label="자켓색 직접 입력"
+          value={cable.jacketColor ?? ''}
+          onChange={(e) => updateCable(cable.id, { jacketColor: e.target.value || undefined })}
+        />
+      </Field>
+      {/*
+        자켓색이 도면에 어떻게 나가는지 밝힌다. 예전에는 자켓색이 표·CSV 에만
+        실려, 검은 자켓을 골라 둔 사람이 도면에서는 아무 차이도 볼 수 없었다.
+      */}
+      <p className="pp-hint indent">
+        {cable.jacketColor
+          ? '도면에서 심선 다발을 이 색 자켓 윤곽으로 감쌉니다.'
+          : '자켓색 미지정 — 도면에는 색 없이 점선 윤곽으로 나갑니다(색을 지어내지 않습니다).'}
+        {drawn === 0 && ' 지금 배치에서는 심선들이 나란히 가는 구간이 없어 자켓이 그려지지 않습니다.'}
+      </p>
+      <div className="pp-cores">
+        {/*
+          코어 수와 실제 심선 수는 다를 수 있다(예비심). 다만 화면이 그 사실을
+          감추면 안 된다 — 예전에는 coreCount 가 1 인데 "심선 2가닥" 이라고
+          적어 두 숫자가 같은 카드 안에서 서로 어긋나 있었다.
+        */}
+        <div className={`pp-hint${cores.length > cable.coreCount ? ' broken' : ''}`}>
+          같은 케이블 심선 <b className="num">{cores.length}</b>가닥 ·{' '}
+          {cores.length > cable.coreCount
+            ? `${cable.coreCount}코어에 다 들어가지 않습니다`
+            : cores.length < cable.coreCount
+              ? `${cable.coreCount}코어 중 ${cable.coreCount - cores.length}심 예비`
+              : `${cable.coreCount}코어를 다 씁니다`}
+        </div>
+        {cores.map((w) => {
+          const f = endpointParts(doc, refs, w.from);
+          const t = endpointParts(doc, refs, w.to);
+          return (
+            <div key={w.id} className={`pp-core${w.id === currentWireId ? ' cur' : ''}`}>
+              <i className="pp-swatch-sm" style={swatchStyle(w.color.base, w.color.stripe)} aria-hidden />
+              <span className="num pp-core-code">{codes.get(w.id)}</span>
+              <span className="pp-core-path">
+                {f.ref} {f.pin} → {t.ref} {t.pin}
+                {w.id === currentWireId ? ' (현재)' : ''}
+              </span>
+            </div>
+          );
+        })}
+        {cores.length === 0 && (
+          <p className="pp-hint broken">
+            심선이 하나도 없습니다 — 그래도 자재표에는 1개로 잡혀 발주됩니다.
+            쓰지 않을 케이블이면 지우고, 쓸 것이라면 배선에서 이 케이블을 소속으로 고르세요.
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function WireEditor({ doc, wire }: { doc: HarnessDocument; wire: Wire }) {
   const updateWire = useHarnessStore((s) => s.updateWire);
   const addCable = useHarnessStore((s) => s.addCable);
-  const updateCable = useHarnessStore((s) => s.updateCable);
-  const removeEntity = useHarnessStore((s) => s.remove);
   // 선택 액션이라 계약상 없을 수 있다 — 없으면 예전처럼 두 단계로 나눠 만든다
   const addCableForWire = useHarnessStore((s) => s.addCableForWire);
-
-  /** 케이블 길이 초안 — 타이핑마다 스토어에 쓰면 글자 수만큼 실행취소가 쌓인다 */
-  const [cableLenDraft, setCableLenDraft] = useState<string | null>(null);
 
   const refs = useMemo(() => refLabels(doc), [doc]);
   const codes = useMemo(() => wireCodes(doc), [doc]);
@@ -271,28 +595,6 @@ function WireEditor({ doc, wire }: { doc: HarnessDocument; wire: Wire }) {
         ? (awgToMm2(wire.gauge.value) ?? 0.34)
         : mm2ToAwg(wire.gauge.value);
     updateWire(wire.id, { gauge: { system: sys, value: v } });
-  };
-
-  const cores = doc.wires.filter((w) => cable && w.cableId === cable.id);
-
-  /**
-   * 케이블 길이 확정 (Enter · 포커스 이동).
-   * 배선 길이 일괄 입력과 같은 방식이다 — 한 번 확정할 때 실행취소 한 단계만 쌓는다.
-   * 빈칸으로 확정하면 길이를 **지운다**(0 을 넣지 않는다). 0 을 남기면 발주서에
-   * "0mm 로 자르라"는 지시가 되고, 지우면 다시 '미입력'이라고 정직하게 말한다.
-   */
-  const commitCableLen = () => {
-    if (cableLenDraft == null || !cable) return;
-    const raw = cableLenDraft.trim();
-    setCableLenDraft(null);
-    if (!raw) {
-      if (cable.lengthMm != null) updateCable(cable.id, { lengthMm: undefined });
-      return;
-    }
-    const v = Number(raw);
-    if (!Number.isFinite(v) || v <= 0) return;   // 음수·0·문자는 받지 않는다
-    if (v === cable.lengthMm) return;
-    updateCable(cable.id, { lengthMm: v });
   };
 
   const chip = colorChip;
@@ -468,152 +770,43 @@ function WireEditor({ doc, wire }: { doc: HarnessDocument; wire: Wire }) {
           </p>
         )}
 
-        {cable && (
-          <div className="pp-cable">
-            <Field label="케이블명">
-              <input
-                className="pp-input grow"
-                aria-label="케이블명"
-                value={cable.name ?? ''}
-                onChange={(e) => updateCable(cable.id, { name: e.target.value || undefined })}
-              />
-              {/*
-                케이블을 지울 길이 하나는 있어야 한다. 선택(selection)은 커넥터·장치·
-                배선만 될 수 있어 예전에는 케이블을 고를 수도 지울 수도 없었고,
-                심선을 전부 '단선' 으로 빼도 자재표는 그 케이블을 계속 발주했다.
-                심선의 소속은 끊고 배선 자체는 남긴다(store/harnessStore.ts remove).
-              */}
-              <button
-                type="button"
-                className="pp-mini-btn danger"
-                aria-label="케이블 삭제"
-                title="이 케이블을 지웁니다 — 심선은 단선으로 남습니다"
-                onClick={() => {
-                  const n = cores.length;
-                  removeEntity(cable.id);
-                  showToast(
-                    n > 0
-                      ? `케이블을 지웠습니다 — 심선 ${n}본은 단선으로 남았습니다`
-                      : '케이블을 지웠습니다',
-                    undoSteps(1),
-                  );
-                }}
-              >
-                케이블 삭제
-              </button>
-            </Field>
-            <Field label="길이">
-              {/*
-                케이블 길이 입력. 이 칸이 없어서 "길이는 케이블을 따릅니다" 라는
-                규칙이 UI 만으로는 성립하지 않았다 — 새 케이블에 심선을 넣는 순간
-                그 심선은 '길이 미입력' error 가 되고 발주까지 막혔는데, 고칠 길이
-                JSON 을 손으로 여는 것뿐이었다. 배선 길이와 같은 방식(Enter 확정).
-              */}
-              <input
-                className="pp-input num w-len"
-                aria-label="케이블 길이"
-                inputMode="numeric"
-                placeholder="미입력"
-                value={cableLenDraft ?? (cable.lengthMm ?? '')}
-                onChange={(e) => setCableLenDraft(e.target.value)}
-                onBlur={commitCableLen}
-                onKeyDown={(e) => { if (e.key === 'Enter') commitCableLen(); }}
-              />
-              <span className="pp-unit num">mm</span>
-              <span className="pp-spacer" />
-              <span className="pp-hint">
-                {cable.lengthMm != null
-                  ? '심선 전부가 이 길이로 재단됩니다'
-                  : '값을 넣고 Enter — 비우면 심선 길이가 미상이 됩니다'}
-              </span>
-            </Field>
-            <Field label="코어 수">
-              <div className="pp-stepper">
-                {/*
-                  하한은 **실제로 물린 심선 수**다. 1코어에 심선 2본 같은 상태는
-                  물리적으로 존재할 수 없는데 예전에는 그대로 통과했다.
-                  상한은 오타 방지용(MAX_CORE_COUNT) — 코어 수가 심선 수보다 많은
-                  것 자체는 정상이라(예비심) 막지 않고 검증이 알린다.
-                */}
-                <button
-                  type="button"
-                  aria-label="코어 수 감소"
-                  disabled={cable.coreCount <= Math.max(1, cores.length)}
-                  onClick={() =>
-                    updateCable(cable.id, {
-                      coreCount: Math.max(Math.max(1, cores.length), cable.coreCount - 1),
-                    })}
-                >
-                  −
-                </button>
-                <span className="num">{cable.coreCount}</span>
-                <button
-                  type="button"
-                  aria-label="코어 수 증가"
-                  disabled={cable.coreCount >= MAX_CORE_COUNT}
-                  onClick={() =>
-                    updateCable(cable.id, { coreCount: Math.min(MAX_CORE_COUNT, cable.coreCount + 1) })}
-                >
-                  +
-                </button>
-              </div>
-              <span className="pp-flabel sm">자켓색</span>
-              <div className="pp-chips">
-                {JACKET_KEYS.map((k) => {
-                  const c = findColor(k)!;
-                  const on = (cable.jacketColor ?? '').trim().toLowerCase() === k;
-                  return (
-                    <button
-                      key={k}
-                      type="button"
-                      className={`pp-chip sm${on ? ' on' : ''}${c.light ? ' light' : ''}`}
-                      style={{ background: c.css }}
-                      aria-pressed={on}
-                      aria-label={`자켓색 ${c.ko}(${c.key})`}
-                      title={`${c.ko} · ${c.key}`}
-                      onClick={() => updateCable(cable.id, { jacketColor: k })}
-                    />
-                  );
-                })}
-              </div>
-              <input
-                className="pp-input num sm grow"
-                aria-label="자켓색 직접 입력"
-                value={cable.jacketColor ?? ''}
-                onChange={(e) => updateCable(cable.id, { jacketColor: e.target.value || undefined })}
-              />
-            </Field>
-            <div className="pp-cores">
-              {/*
-                코어 수와 실제 심선 수는 다를 수 있다(예비심). 다만 화면이 그 사실을
-                감추면 안 된다 — 예전에는 coreCount 가 1 인데 "심선 2가닥" 이라고
-                적어 두 숫자가 같은 카드 안에서 서로 어긋나 있었다.
-              */}
-              <div className={`pp-hint${cores.length > cable.coreCount ? ' broken' : ''}`}>
-                같은 케이블 심선 <b className="num">{cores.length}</b>가닥 ·{' '}
-                {cores.length > cable.coreCount
-                  ? `${cable.coreCount}코어에 다 들어가지 않습니다`
-                  : cores.length < cable.coreCount
-                    ? `${cable.coreCount}코어 중 ${cable.coreCount - cores.length}심 예비`
-                    : `${cable.coreCount}코어를 다 씁니다`}
-              </div>
-              {cores.map((w) => {
-                const f = endpointParts(doc, refs, w.from);
-                const t = endpointParts(doc, refs, w.to);
-                return (
-                  <div key={w.id} className={`pp-core${w.id === wire.id ? ' cur' : ''}`}>
-                    <i className="pp-swatch-sm" style={swatchStyle(w.color.base, w.color.stripe)} aria-hidden />
-                    <span className="num pp-core-code">{codes.get(w.id)}</span>
-                    <span className="pp-core-path">
-                      {f.ref} {f.pin} → {t.ref} {t.pin}
-                      {w.id === wire.id ? ' (현재)' : ''}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
+        {cable && <CableCard doc={doc} cable={cable} currentWireId={wire.id} />}
+      </Section>
+    </>
+  );
+}
+
+// ============================================================
+// (F) 케이블 — 캔버스의 자켓·검증 항목에서 곧장 열린다
+//
+// 예전에는 **심선을 골라야만** 케이블 카드가 열렸다. 그래서 심선이 0본이 되면
+// 그 케이블은 UI 에서 손댈 수 없었고(고를 수도 지울 수도 없다), 검증이
+// `cable-empty` 로 알리는 데 그쳤다 — 그 항목을 눌러도 갈 곳이 없었다.
+// 케이블을 1급 선택 대상으로 올려 그 막다른 길을 없앤다.
+// ============================================================
+function CableEditor({ doc, cable }: { doc: HarnessDocument; cable: Cable }) {
+  const cores = doc.wires.filter((w) => w.cableId === cable.id);
+  return (
+    <>
+      <div className="pp-card">
+        <div className="pp-card-top">
+          <span className="pp-badge num">CABLE</span>
+          <span className="pp-ref num">{`${cable.coreCount}C`}</span>
+          <span className="pp-card-name">{cable.name ?? '이름 없는 케이블'}</span>
+        </div>
+        <div className="pp-card-meta num">
+          {[
+            `심선 ${cores.length}본`,
+            cable.gauge ? `${cable.gauge.system.toUpperCase()}${cable.gauge.value}` : '게이지 미지정',
+            cable.lengthMm != null ? `${cable.lengthMm}mm` : '길이 미입력',
+            cable.jacketColor ? `자켓 ${cable.jacketColor}` : '자켓색 미지정',
+          ].join(' · ')}
+        </div>
+      </div>
+
+      <Section label="케이블" note="심선 전체에 걸리는 값">
+        {/* 삭제는 패널 푸터의 '케이블 삭제' 하나뿐이다 — 같은 이름의 버튼을 둘 두지 않는다 */}
+        <CableCard doc={doc} cable={cable} showDelete={false} />
       </Section>
     </>
   );
@@ -1029,6 +1222,8 @@ const EMPTY_HINTS: { tag: string; text: string }[] = [
   { tag: 'WIRE', text: '배선 — 색·게이지·길이·케이블 소속' },
   { tag: 'CONN', text: '커넥터 — 방향과 핀별 터미널' },
   { tag: 'DEV', text: '장치 — 이름과 단자 목록' },
+  // 케이블은 도면에서 자켓(심선을 감싼 윤곽)을 눌러 고른다
+  { tag: 'CABLE', text: '케이블 — 자켓을 클릭하면 길이·코어·자켓색' },
 ];
 
 function EmptyState({ doc }: { doc: HarnessDocument }) {
@@ -1364,8 +1559,10 @@ export function PropertyPanel() {
   const wire = doc.wires.find((w) => w.id === selection);
   const conn = doc.connectors.find((c) => c.id === selection);
   const dev = doc.devices.find((d) => d.id === selection);
+  // 케이블도 1급 선택 대상이다 — 자켓 클릭·검증 항목 클릭이 여기로 들어온다.
+  const cable = doc.cables?.find((c) => c.id === selection);
 
-  if (!selection || (!wire && !conn && !dev)) {
+  if (!selection || (!wire && !conn && !dev && !cable)) {
     return (
       <aside className="pp">
         <EmptyState doc={doc} />
@@ -1373,7 +1570,10 @@ export function PropertyPanel() {
     );
   }
 
-  const kindLabel = wire ? '배선' : conn ? (conn.kind === 'splice' ? '스플라이스' : '커넥터') : '장치';
+  const kindLabel = wire ? '배선'
+    : conn ? (conn.kind === 'splice' ? '스플라이스' : '커넥터')
+    : cable ? '케이블'
+    : '장치';
 
   return (
     <aside className="pp">
@@ -1381,6 +1581,7 @@ export function PropertyPanel() {
         {wire && <WireEditor doc={doc} wire={wire} />}
         {conn && <ConnectorEditor key={conn.id} doc={doc} conn={conn} />}
         {dev && <DeviceEditor doc={doc} dev={dev} />}
+        {cable && <CableEditor key={cable.id} doc={doc} cable={cable} />}
       </div>
       <div className="pp-foot">
         <span className="pp-foot-hint num">변경 즉시 반영 · ⌘Z 실행취소</span>

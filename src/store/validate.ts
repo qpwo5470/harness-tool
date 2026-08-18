@@ -331,7 +331,38 @@ export function validateHarness(doc: HarnessDocument): Issue[] {
           targetId: cores[0].id,
           where: `${doc.name} ${name}`,
         });
-      } else if (cb.coreCount > cores.length) {
+      }
+      /**
+       * 19. 케이블 규격 게이지와 심선 게이지가 어긋난다.
+       *
+       * `Cable.gauge` 는 "이 케이블의 심선은 몇 SQ 짜리인가" 라는 **품목 규격**이고
+       * 자재표의 케이블 행에 그대로 실린다(export/exporters.ts). 심선이 그와 다른
+       * 굵기로 적혀 있으면 같은 도면이 두 굵기를 말하는 셈이라, 발주는 케이블
+       * 규격대로 오는데 접속표·허용전류 계산은 심선 값을 쓴다.
+       *
+       * **단위가 다르면 판정하지 않는다** — 규칙 10(`thinnest`)과 같은 태도다.
+       * 여기서 어림 환산을 하면 경고가 거짓말을 한다(AWG22 ↔ 0.34/0.3/0.5 는
+       * 제조사마다 다르게 잡는다). 단위를 통일하는 것은 사람의 판단이다.
+       *
+       * 케이블을 targetId 로 삼는다 — 고칠 칸(케이블 게이지)이 케이블 카드에 있다.
+       */
+      if (cb.gauge) {
+        const off = cores.filter(
+          (w) => w.gauge.system === cb.gauge!.system && w.gauge.value !== cb.gauge!.value,
+        );
+        if (off.length > 0) {
+          const kinds = [...new Set(off.map((w) => gaugeLabel(w.gauge)))].join(' · ');
+          out.push({
+            id: 'cable-gauge-mismatch',
+            level: 'warn',
+            title: `케이블 규격과 심선 굵기가 다름 — 케이블 ${gaugeLabel(cb.gauge)} · 심선 ${kinds}`,
+            detail: `자재표에는 ${gaugeLabel(cb.gauge)} 케이블이 실리는데 심선 ${off.length}본은 ${kinds} 로 적혀 있다 — 들어오는 물건과 접속표의 굵기가 갈리므로, 케이블 규격이 맞으면 심선을, 심선이 맞으면 케이블 게이지를 고쳐야 한다.`,
+            targetId: cb.id,
+            where: `${doc.name} ${name}`,
+          });
+        }
+      }
+      if (cb.coreCount > cores.length) {
         out.push({
           id: 'cable-core-spare',
           level: 'info',

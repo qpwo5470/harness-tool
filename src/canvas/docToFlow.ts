@@ -39,6 +39,32 @@ export function strokeColor(base: string): string {
 }
 
 /**
+ * 자켓색 미지정일 때 쓰는 중립색.
+ *
+ * hex 로 못박는 이유는 pdfDraw 의 색표와 같다 — PDF 는 CSS 변수를 읽지 못하는데
+ * 화면과 종이가 같은 그림이어야 하므로 **한 문자열**을 둘 다 쓴다.
+ * (값은 tokens.css 의 --muted)
+ */
+export const JACKET_UNSPEC_COLOR = '#7a7a7d';
+
+/**
+ * 자켓을 그릴 색과 선 모양.
+ *
+ * **미지정은 색을 지어내지 않는다.** 검정을 기본값으로 깔면 도면이 "검은 자켓"
+ * 이라고 말하게 되고, 그 도면을 받은 사람은 검정을 발주한다. 대신 중립색
+ * **점선** 윤곽으로 그려 "자켓은 있으나 색은 정해지지 않았다" 를 그림으로 말한다.
+ * (실선/점선은 흑백 인쇄에서도 남는 구분이다 — 색만으로 나누지 않는다.)
+ *
+ * 지정된 색은 전선과 **같은 보정**(strokeColor)을 지난다. 자켓색 red 는 UI 강조가
+ * 아니라 **물건의 색**이므로 그대로 빨강으로 그린다 — 전선 빨강과 같은 자격이다.
+ */
+export function jacketPaint(jacketColor?: string): { color: string; dashed: boolean } {
+  const raw = (jacketColor ?? '').trim();
+  if (!raw) return { color: JACKET_UNSPEC_COLOR, dashed: true };
+  return { color: strokeColor(raw), dashed: false };
+}
+
+/**
  * 전선 색 약호. 도면에서는 색 이름을 다 쓸 자리가 없어 약호를 쓴다.
  * (현장 관행 · Claude Design 스펙과 동일)
  */
