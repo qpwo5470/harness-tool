@@ -51,6 +51,13 @@ type WireGroup = {
  * 케이블 심선은 케이블에 딸려 오는 것이라 **전선으로 따로 사지 않는다**
  * (같은 파트리스트의 '케이블' 행에 이미 길이가 잡혀 있다). 길이를 모르는 것과는
  * 다른 사정이므로 0 으로 뭉개지 않고 본수를 따로 밝힌다.
+ *
+ * ## 무엇을 사는지는 **소속**이 정한다 (길이 출처가 아니다)
+ * 예전에는 길이가 케이블에서 왔을 때만 심선으로 쳤다. 그래서 속성 패널에서
+ * 심선에 길이를 한 번 치면 그 가닥이 전선 행으로도 발주되고 케이블 행도 남아
+ * **같은 두 가닥을 전선으로도 케이블로도** 샀다(전선 720mm + 케이블 300mm).
+ * 심선을 짧게 자르는 것은 재단 지시이지 구매 지시가 아니다 — 재단 길이는
+ * 접속표·물리 뷰가 그대로 쓰고, 여기서는 소속만 본다.
  */
 function wireLengthDetail(g: WireGroup, unit: LengthUnit): string | undefined {
   const notes: string[] = [];
@@ -130,9 +137,11 @@ export function buildPartList(doc: HarnessDocument, opts: PartListOptions = {}):
     const key = `${w.gauge.system.toUpperCase()}${w.gauge.value} · ${color}`;
     const cur = wg.get(key) ?? { qty: 0, len: 0, counted: 0, cable: 0, missing: 0 };
     cur.qty += 1;
-    const { mm, source } = lengthOf(w);
-    if (mm == null) cur.missing += 1;
-    else if (source === 'cable') cur.cable += 1;   // 케이블에 딸려 오므로 전선으로 사지 않는다
+    const { mm, cable } = lengthOf(w);
+    // 실재하는 케이블에 속하면 그 케이블 행이 이미 발주한다 — 길이를 직접 넣었어도.
+    // (없는 케이블을 가리키는 배선은 딸려 올 곳이 없으므로 전선으로 친다.)
+    if (cable) cur.cable += 1;
+    else if (mm == null) cur.missing += 1;
     else {
       cur.len += mm;
       cur.counted += 1;
@@ -165,12 +174,25 @@ export function buildPartList(doc: HarnessDocument, opts: PartListOptions = {}):
   }
 
   // 케이블
+  //
+  // 자켓색·게이지는 **여기서 처음이자 유일하게 산출물에 나온다.** 속성 패널에는
+  // 입력칸이 있는데 캔버스·물리 뷰·PDF·CSV 어디에도 나오지 않아, 검은 자켓을
+  // 골라 둔 사람이 받는 발주서에는 그 사실이 한 글자도 없었다. 케이블은 자켓색과
+  // 규격이 곧 품목이라(같은 4C 라도 자켓이 다르면 다른 물건이다) 비고에 싣는다.
+  // 게이지는 아직 입력 UI 가 없지만, 파일에 들어 있는 값이 보이지 않는 것이
+  // 더 나쁘므로 있으면 적는다.
   for (const cb of doc.cables ?? []) {
+    const spec = [
+      `${cb.coreCount}C`,
+      cb.jacketColor,
+      cb.gauge ? `${cb.gauge.system.toUpperCase()}${cb.gauge.value}` : undefined,
+      cb.lengthMm ? `${formatLength(cb.lengthMm, unit)}${unitLabel(unit)}` : undefined,
+    ].filter(Boolean);
     rows.push({
       category: '케이블',
       part: cb.name ?? `${cb.coreCount}C 케이블`,
       qty: 1,
-      detail: cb.lengthMm ? `${formatLength(cb.lengthMm, unit)}${unitLabel(unit)}` : undefined,
+      detail: spec.join(' · '),
       drawingLengthMm: cb.lengthMm,
     });
   }

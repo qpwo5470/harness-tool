@@ -27,7 +27,18 @@ export type WireLength = {
   /** 재단 길이(mm). 모르면 null */
   mm: number | null;
   source: LengthSource;
-  /** source === 'cable' 일 때 그 케이블 */
+  /**
+   * 이 심선이 **속한** 케이블(문서에 실재하는 것). 길이의 출처와는 별개다:
+   * 심선에 길이를 직접 넣어도(source === 'wire') 소속은 그대로 케이블이다.
+   *
+   * 예전에는 `source === 'cable'` 일 때만 채웠다. 그래서 자재표는 "케이블에
+   * 딸려 오는 심선인가" 를 길이 출처로 판정했고, 심선에 길이를 한 번 치는
+   * 순간 그 가닥이 **전선으로도 케이블로도** 발주됐다(이중 계상).
+   * 무엇을 사는지는 소속이 정한다 — 그 사실을 여기서 알려 준다.
+   *
+   * `cableId` 가 문서에 없는 케이블을 가리키면(깨진 참조) 비워 둔다 —
+   * 없는 케이블에 딸려 올 수는 없으므로 그 가닥은 전선으로 사야 한다.
+   */
   cable?: Cable;
 };
 
@@ -42,8 +53,12 @@ const UNKNOWN: WireLength = { mm: null, source: 'none' };
 export function lengthResolver(doc: Pick<HarnessDocument, 'cables'>): LengthResolver {
   const cableById = new Map((doc.cables ?? []).map((c) => [c.id, c] as const));
   return (w: Wire): WireLength => {
-    if (typeof w.lengthMm === 'number') return { mm: w.lengthMm, source: 'wire' };
-    const cable = w.cableId ? cableById.get(w.cableId) : undefined;
+    const own = w.cableId ? cableById.get(w.cableId) : undefined;
+    // 소속은 길이보다 먼저 정해진다 — 개별 길이를 넣어도 케이블 심선은 케이블 심선이다
+    if (typeof w.lengthMm === 'number') {
+      return { mm: w.lengthMm, source: 'wire', ...(own ? { cable: own } : {}) };
+    }
+    const cable = own;
     if (cable && typeof cable.lengthMm === 'number') {
       return { mm: cable.lengthMm, source: 'cable', cable };
     }

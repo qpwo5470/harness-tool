@@ -237,13 +237,27 @@ function normWire(v: unknown): Wire | null {
   };
 }
 
-function normCable(v: unknown): Cable | null {
+/**
+ * 케이블.
+ *
+ * `coreCount` 는 **0 미만이 될 수 없다** — 음수 코어는 존재하지 않고, 그대로
+ * 두면 "−3코어 케이블" 이 자재표와 검증을 지나 발주까지 간다. 못 쓰는 값은
+ * 0(=코어 수 미상)으로 되돌리고 몇 건을 왜 고쳤는지 알린다. 임의로 1 이나
+ * 심선 수로 채우지 않는다 — 그건 우리가 모르는 사실을 지어내는 것이다.
+ */
+function normCable(v: unknown, warn: string[], at: (s: string) => string): Cable | null {
   if (!isObj(v) || !str(v.id)) return null;
   const g = isObj(v.gauge) ? v.gauge : null;
+  const rawCore = typeof v.coreCount === 'number' && Number.isFinite(v.coreCount)
+    ? Math.round(v.coreCount)
+    : 0;
+  if (rawCore < 0) {
+    warn.push(at(`케이블 ${str(v.name) ?? str(v.id)} 의 코어 수(${v.coreCount})가 음수라 미상으로 되돌렸습니다`));
+  }
   return {
     id: str(v.id)!,
     ...(str(v.name) != null ? { name: str(v.name)! } : {}),
-    coreCount: typeof v.coreCount === 'number' && Number.isFinite(v.coreCount) ? v.coreCount : 0,
+    coreCount: Math.max(0, rawCore),
     ...(g && (g.system === 'awg' || g.system === 'mm2') && typeof g.value === 'number'
       ? { gauge: { system: g.system, value: g.value } }
       : {}),
@@ -333,8 +347,22 @@ function normHarness(v: unknown, i: number, warn: string[]): HarnessDocument | n
 
   // cables 는 원래 선택 필드다 — 없다고 경고하지 않는다.
   const cables = Array.isArray(v.cables)
-    ? (v.cables as unknown[]).map(normCable).filter((c): c is Cable => c != null)
+    ? (v.cables as unknown[]).map((c) => normCable(c, warn, at)).filter((c): c is Cable => c != null)
     : [];
+
+  /**
+   * 없는 케이블을 가리키는 배선.
+   *
+   * **고치지 않는다** — `cableId` 를 지우면 그 심선이 원래 몇 mm 였는지도 같이
+   * 사라지고, 케이블을 잘못 지운 파일이라면 되살릴 근거가 없어진다. 어느 쪽이
+   * 맞는지는 사람만 안다. 다만 조용히 넘기면 재단 길이가 300mm 에서 '미상' 으로
+   * 바뀐 이유가 화면 어디에도 남지 않으므로, 몇 본인지 밝힌다(검증도 짚는다).
+   */
+  const cableIds = new Set(cables.map((c) => c.id));
+  const dangling = wires.filter((w) => w.cableId && !cableIds.has(w.cableId));
+  if (dangling.length > 0) {
+    warn.push(at(`배선 ${dangling.length}본이 문서에 없는 케이블을 가리킵니다 — 소속만 그대로 두었습니다`));
+  }
 
   // 구간 길이도 선택 필드다. 키가 가리킬 수 있는 것은 살아남은 커넥터·장치뿐이다.
   const segmentLengths = normSegmentLengths(

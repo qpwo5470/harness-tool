@@ -87,8 +87,40 @@ describe('와이어 총 길이', () => {
       { id: 'cb1', name: '2C 전원 케이블', coreCount: 2, lengthMm: 500 },
     ]);
     expect(wireRow(doc).detail).toBe('케이블 심선 2본');
-    // 케이블 행에는 그대로 500mm 가 잡힌다 — 이중 계상이 아니다
-    expect(buildPartList(doc).find((r) => r.category === '케이블')!.detail).toBe('500mm');
+    // 케이블 행에는 그대로 500mm 가 잡힌다 — 이중 계상이 아니다.
+    // 기대 문자열이 '500mm' 에서 바뀐 이유: 자켓색·코어수·게이지가 입력만 되고
+    // 어떤 산출물에도 나오지 않던 것을 이 행에 실었다(감사 A-8). 길이는 그대로다.
+    expect(buildPartList(doc).find((r) => r.category === '케이블')!.detail).toBe('2C · 500mm');
+  });
+
+  /**
+   * 회귀(감사 A-5): 케이블 심선에 **개별 길이를 넣으면** 그 가닥이 전선 행으로도
+   * 발주되고 케이블 행도 남아 같은 두 가닥을 두 번 샀다 (전선 720mm + 케이블
+   * 300mm). 심선을 짧게 자르는 것은 재단 지시이지 구매 지시가 아니다 —
+   * 무엇을 사는지는 길이 출처가 아니라 **소속**이 정한다.
+   */
+  it('심선에 개별 길이를 넣어도 전선으로 이중 발주하지 않는다', () => {
+    const doc = wireDoc([360, 360], [
+      { id: 'cb1', name: '2C 전원 케이블', coreCount: 2, lengthMm: 300 },
+    ]);
+    const wire = wireRow(doc);
+    expect(wire.detail).toBe('케이블 심선 2본');
+    expect(wire.drawingLengthMm).toBeUndefined();     // 전선으로 살 길이가 없다
+    const cable = buildPartList(doc).find((r) => r.category === '케이블')!;
+    expect(cable.drawingLengthMm).toBe(300);          // 케이블만 발주한다
+  });
+
+  /**
+   * 소속 케이블이 문서에 없으면(깨진 참조) 딸려 올 곳이 없다 —
+   * 그 가닥은 전선으로 사야 하므로 합계에 든다.
+   */
+  it('없는 케이블을 가리키는 배선은 전선으로 친다', () => {
+    const doc = wireDoc([100, 200]);                   // cables 없음 + cableId 없음
+    const broken = {
+      ...doc,
+      wires: doc.wires.map((w) => ({ ...w, cableId: 'cb-사라진케이블' })),
+    };
+    expect(wireRow(broken).detail).toBe('총 300mm');
   });
 });
 

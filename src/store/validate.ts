@@ -254,6 +254,97 @@ export function validateHarness(doc: HarnessDocument): Issue[] {
   }
 
   // ================================================================
+  // 18. 케이블 참조·구성이 어긋난다
+  //
+  //  (a) 없는 케이블을 가리키는 배선 — 케이블을 지우고 심선을 그대로 둔 파일,
+  //      손으로 고친 JSON 에서 나온다. 300mm 로 재단되던 심선이 조용히 '길이
+  //      미상' 이 되는데, 예전에는 "길이 미입력" 이라고만 말해 **왜** 미입력이
+  //      됐는지가 어디에도 나오지 않았다. 자동으로 지우지 않는다 —
+  //      단선으로 둘지 다른 케이블에 넣을지는 사람만 안다.
+  //  (b) 심선이 하나도 없는 케이블 — 자재표는 그래도 1개를 발주한다.
+  //      커넥터에는 '배선 없음' warn 이 있는데 케이블에만 없었다.
+  //  (c) 코어 수와 실제 심선 수가 어긋난다 — 심선이 더 많으면 물리적으로
+  //      들어가지 않고(error), 적으면 예비심이라 정상일 수 있다(info).
+  // ================================================================
+  {
+    const cables = doc.cables ?? [];
+    const cableById = new Map(cables.map((c) => [c.id, c]));
+    const coresOf = new Map<Id, Wire[]>();
+    for (const w of doc.wires) {
+      if (!w.cableId) continue;
+      if (!cableById.has(w.cableId)) {
+        // 제 길이가 있으면 재단은 되므로 만들 수는 있다 → warn.
+        // 길이까지 없으면 몇 mm 로 자를지 아무도 모른다 → error.
+        const lost = w.lengthMm == null;
+        out.push({
+          id: 'cable-missing',
+          level: lost ? 'error' : 'warn',
+          title: `없는 케이블에 속함 — ${w.cableId}`,
+          detail: lost
+            ? '이 배선이 소속으로 적은 케이블이 문서에 없다 — 따라올 길이가 없어 몇 mm 로 자를지 알 수 없다. 케이블을 다시 만들어 넣거나, 단선으로 돌리고 길이를 직접 입력해야 한다.'
+            : '이 배선이 소속으로 적은 케이블이 문서에 없다 — 재단 길이는 배선에 적힌 값으로 나오지만, 자재표에는 딸려 올 케이블이 없어 소속 표기만 헛돈다. 단선으로 돌리거나 케이블을 다시 골라야 한다.',
+          targetId: w.id,
+          where: whereWire(w),
+        });
+        continue;
+      }
+      push(coresOf, w.cableId, w);
+    }
+    for (const cb of cables) {
+      const name = cb.name ?? `${cb.coreCount}C 케이블`;
+      const cores = coresOf.get(cb.id) ?? [];
+      if (cores.length === 0) {
+        out.push({
+          id: 'cable-empty',
+          level: 'warn',
+          title: `심선 없음 — ${name}`,
+          detail: '이 케이블에 속한 배선이 하나도 없는데 자재표에는 1개로 잡혀 발주된다 — 쓰지 않을 케이블이면 지우고, 쓸 것이라면 심선의 케이블 소속을 지정해야 한다.',
+          targetId: cb.id,
+          where: `${doc.name} ${name}`,
+        });
+        continue;
+      }
+      /**
+       * 케이블 길이 미입력.
+       *
+       * 심선마다 길이를 넣어 뒀어도 **자켓을 몇 mm 사야 하는지**는 여전히 모른다 —
+       * 발주에서 케이블 행 하나가 통째로 수량 없이 나간다.
+       * 심선 중 하나라도 제 길이가 없으면 규칙 4 가 이미 "케이블에도 길이가
+       * 없다" 고 말하므로 여기서는 잠자코 있는다 (같은 판정을 두 번 만들지 않는다).
+       */
+      if (cb.lengthMm == null && cores.every((w) => w.lengthMm != null)) {
+        out.push({
+          id: 'cable-length-missing',
+          level: 'error',
+          title: `케이블 길이 미입력 — ${name}`,
+          detail: '심선마다 재단 길이가 있어도 케이블 자체를 몇 mm 사야 할지는 알 수 없다 — 자재표의 케이블 행이 수량 없이 나가므로 케이블 길이를 넣어야 한다.',
+          targetId: cores[0].id,
+          where: `${doc.name} ${name}`,
+        });
+      }
+      if (!Number.isFinite(cb.coreCount) || cb.coreCount < cores.length) {
+        out.push({
+          id: 'cable-core-mismatch',
+          level: 'error',
+          title: `코어 수 부족 — ${name} ${cb.coreCount}코어에 심선 ${cores.length}본`,
+          detail: `${cores.length}가닥을 ${cb.coreCount}코어 케이블에 넣을 수는 없다 — 코어 수를 올리거나, 넘치는 심선을 다른 케이블·단선으로 빼야 한다.`,
+          targetId: cores[0].id,
+          where: `${doc.name} ${name}`,
+        });
+      } else if (cb.coreCount > cores.length) {
+        out.push({
+          id: 'cable-core-spare',
+          level: 'info',
+          title: `예비심 ${cb.coreCount - cores.length}심 — ${name}`,
+          detail: `${cb.coreCount}코어 중 ${cores.length}심만 쓴다 — 여유를 두고 고른 것이면 그대로 두면 되고, 코어 수를 잘못 적은 것이면 줄여야 자재표의 케이블 규격이 맞는다.`,
+          targetId: cores[0].id,
+          where: `${doc.name} ${name}`,
+        });
+      }
+    }
+  }
+
+  // ================================================================
   // 14. 브리지가 없는 핀을 묶는다 — 스플라이스 내부 결선이 헛돈다
   // ================================================================
   for (const c of doc.connectors) {

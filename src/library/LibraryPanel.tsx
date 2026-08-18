@@ -115,10 +115,13 @@ export function LibraryPanel() {
 
   const addPart = (item: PartLibraryItem) => {
     if (item.category === 'terminal') return; // 단자는 캔버스에 놓지 않음
-    addUsedPart(item);
     const at = { x: 120 + Math.random() * 200, y: 120 + Math.random() * 160 };
     const conn = instantiate(item, at);
+    // 순서가 중요하다: 히스토리를 쌓는 addConnector 가 **먼저**여야 그 스냅샷에
+    // 부품이 아직 없어, ⌘Z 한 번이 커넥터와 부품 스냅샷을 함께 되돌린다.
+    // 반대로 부르면 부품이 스냅샷 안에 들어가 usedParts 에 영영 남는다.
     addConnector(conn);
+    addUsedPart(item);
     select(conn.id);
   };
 

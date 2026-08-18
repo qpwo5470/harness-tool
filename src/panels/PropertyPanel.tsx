@@ -215,10 +215,28 @@ function gridOf(housing: PartLibraryItem | undefined, pinCount: number) {
 // ============================================================
 // (A) 와이어
 // ============================================================
+/**
+ * 새 케이블 id 의 꼬리.
+ * `cbl-${Date.now()}` 만으로는 "+ 새 케이블" 을 연달아 누르면 같은 밀리초에
+ * **같은 id** 가 두 번 나온다 — 목록 버튼이 하나로 겹치고, 배선이 어느 케이블을
+ * 가리키는지 정할 수 없어 검증이 `duplicate-id` error 를 낸다.
+ * (스토어의 `harnessSeq`·라이브러리의 `devSeq` 와 같은 방식이다.)
+ */
+let cableSeq = 0;
+
+/** 케이블 심선 수 상한 — 리본/다심 케이블은 64심이 시중 최대급이라 그 위는 오타로 본다 */
+const MAX_CORE_COUNT = 64;
+
 function WireEditor({ doc, wire }: { doc: HarnessDocument; wire: Wire }) {
   const updateWire = useHarnessStore((s) => s.updateWire);
   const addCable = useHarnessStore((s) => s.addCable);
   const updateCable = useHarnessStore((s) => s.updateCable);
+  const removeEntity = useHarnessStore((s) => s.remove);
+  // 선택 액션이라 계약상 없을 수 있다 — 없으면 예전처럼 두 단계로 나눠 만든다
+  const addCableForWire = useHarnessStore((s) => s.addCableForWire);
+
+  /** 케이블 길이 초안 — 타이핑마다 스토어에 쓰면 글자 수만큼 실행취소가 쌓인다 */
+  const [cableLenDraft, setCableLenDraft] = useState<string | null>(null);
 
   const refs = useMemo(() => refLabels(doc), [doc]);
   const codes = useMemo(() => wireCodes(doc), [doc]);
@@ -231,6 +249,12 @@ function WireEditor({ doc, wire }: { doc: HarnessDocument; wire: Wire }) {
   const stripe = wire.color.stripe;
   const abbr = colorAbbr(base, stripe);
   const cable = wire.cableId ? doc.cables?.find((c) => c.id === wire.cableId) : undefined;
+  /**
+   * 소속으로 적힌 케이블이 문서에 없다 (손으로 고친 JSON 등).
+   * 예전에는 이 상태가 '단선' 도 아니고 어느 케이블도 아닌 **아무것도 안 눌린**
+   * 모습으로 보였다 — 화면이 거짓을 말하지 않도록 깨진 참조임을 드러낸다.
+   */
+  const danglingCableId = wire.cableId && !cable ? wire.cableId : undefined;
 
   const setColor = (patch: { base?: string; stripe?: string | undefined }) =>
     updateWire(wire.id, { color: { base: patch.base ?? base, stripe: 'stripe' in patch ? patch.stripe : stripe } });
@@ -250,6 +274,26 @@ function WireEditor({ doc, wire }: { doc: HarnessDocument; wire: Wire }) {
   };
 
   const cores = doc.wires.filter((w) => cable && w.cableId === cable.id);
+
+  /**
+   * 케이블 길이 확정 (Enter · 포커스 이동).
+   * 배선 길이 일괄 입력과 같은 방식이다 — 한 번 확정할 때 실행취소 한 단계만 쌓는다.
+   * 빈칸으로 확정하면 길이를 **지운다**(0 을 넣지 않는다). 0 을 남기면 발주서에
+   * "0mm 로 자르라"는 지시가 되고, 지우면 다시 '미입력'이라고 정직하게 말한다.
+   */
+  const commitCableLen = () => {
+    if (cableLenDraft == null || !cable) return;
+    const raw = cableLenDraft.trim();
+    setCableLenDraft(null);
+    if (!raw) {
+      if (cable.lengthMm != null) updateCable(cable.id, { lengthMm: undefined });
+      return;
+    }
+    const v = Number(raw);
+    if (!Number.isFinite(v) || v <= 0) return;   // 음수·0·문자는 받지 않는다
+    if (v === cable.lengthMm) return;
+    updateCable(cable.id, { lengthMm: v });
+  };
 
   const chip = colorChip;
 
@@ -357,7 +401,21 @@ function WireEditor({ doc, wire }: { doc: HarnessDocument; wire: Wire }) {
           />
           <span className="pp-unit num">mm</span>
           <span className="pp-spacer" />
-          <span className="pp-hint">{cable ? '길이는 케이블을 따릅니다' : '도면 길이 그대로'}</span>
+          {/*
+            케이블 심선의 길이칸은 잠그지 않는다 — 한쪽 심선만 짧게 자르는 일이
+            실제로 있고(끝단 정리), 접속표·물리 뷰는 그 값을 재단 길이로 쓴다.
+            대신 여기 값을 넣어도 **전선으로 따로 사지 않는다**는 사실을 밝힌다:
+            발주는 소속으로 갈린다(export/exporters.ts). 예전 문구("길이는 케이블을
+            따릅니다")는 값을 넣은 뒤에도 그대로 떠서, 전선 720mm + 케이블 300mm 로
+            같은 두 가닥이 두 번 계상되는 것을 감췄다.
+          */}
+          <span className="pp-hint">
+            {cable
+              ? (wire.lengthMm != null
+                ? '이 심선만 따로 재단 · 발주는 케이블로'
+                : `케이블 길이${cable.lengthMm != null ? ` ${cable.lengthMm}mm` : ''}를 따릅니다`)
+              : '도면 길이 그대로'}
+          </span>
         </Field>
       </Section>
 
@@ -387,17 +445,28 @@ function WireEditor({ doc, wire }: { doc: HarnessDocument; wire: Wire }) {
             className="pp-opt"
             onClick={() => {
               const c: Cable = {
-                id: `cbl-${Date.now().toString(36)}`,
+                id: `cbl-${Date.now().toString(36)}-${cableSeq++}`,
                 name: `케이블 ${(doc.cables?.length ?? 0) + 1}`,
                 coreCount: 2,
               };
-              addCable(c);
-              updateWire(wire.id, { cableId: c.id });
+              // 한 손동작 = 실행취소 한 단계. 통로가 없는 구현체에서만 둘로 나눈다.
+              if (addCableForWire) addCableForWire(c, wire.id);
+              else {
+                addCable(c);
+                updateWire(wire.id, { cableId: c.id });
+              }
             }}
           >
             + 새 케이블
           </button>
         </div>
+
+        {danglingCableId && (
+          <p className="pp-hint broken">
+            이 배선은 문서에 없는 케이블 <b className="num">{danglingCableId}</b> 을(를)
+            가리킵니다 — 재단 길이를 알 수 없으니 <b>단선</b>으로 두거나 케이블을 다시 고르세요.
+          </p>
+        )}
 
         {cable && (
           <div className="pp-cable">
@@ -408,13 +477,72 @@ function WireEditor({ doc, wire }: { doc: HarnessDocument; wire: Wire }) {
                 value={cable.name ?? ''}
                 onChange={(e) => updateCable(cable.id, { name: e.target.value || undefined })}
               />
+              {/*
+                케이블을 지울 길이 하나는 있어야 한다. 선택(selection)은 커넥터·장치·
+                배선만 될 수 있어 예전에는 케이블을 고를 수도 지울 수도 없었고,
+                심선을 전부 '단선' 으로 빼도 자재표는 그 케이블을 계속 발주했다.
+                심선의 소속은 끊고 배선 자체는 남긴다(store/harnessStore.ts remove).
+              */}
+              <button
+                type="button"
+                className="pp-mini-btn danger"
+                aria-label="케이블 삭제"
+                title="이 케이블을 지웁니다 — 심선은 단선으로 남습니다"
+                onClick={() => {
+                  const n = cores.length;
+                  removeEntity(cable.id);
+                  showToast(
+                    n > 0
+                      ? `케이블을 지웠습니다 — 심선 ${n}본은 단선으로 남았습니다`
+                      : '케이블을 지웠습니다',
+                    undoSteps(1),
+                  );
+                }}
+              >
+                케이블 삭제
+              </button>
+            </Field>
+            <Field label="길이">
+              {/*
+                케이블 길이 입력. 이 칸이 없어서 "길이는 케이블을 따릅니다" 라는
+                규칙이 UI 만으로는 성립하지 않았다 — 새 케이블에 심선을 넣는 순간
+                그 심선은 '길이 미입력' error 가 되고 발주까지 막혔는데, 고칠 길이
+                JSON 을 손으로 여는 것뿐이었다. 배선 길이와 같은 방식(Enter 확정).
+              */}
+              <input
+                className="pp-input num w-len"
+                aria-label="케이블 길이"
+                inputMode="numeric"
+                placeholder="미입력"
+                value={cableLenDraft ?? (cable.lengthMm ?? '')}
+                onChange={(e) => setCableLenDraft(e.target.value)}
+                onBlur={commitCableLen}
+                onKeyDown={(e) => { if (e.key === 'Enter') commitCableLen(); }}
+              />
+              <span className="pp-unit num">mm</span>
+              <span className="pp-spacer" />
+              <span className="pp-hint">
+                {cable.lengthMm != null
+                  ? '심선 전부가 이 길이로 재단됩니다'
+                  : '값을 넣고 Enter — 비우면 심선 길이가 미상이 됩니다'}
+              </span>
             </Field>
             <Field label="코어 수">
               <div className="pp-stepper">
+                {/*
+                  하한은 **실제로 물린 심선 수**다. 1코어에 심선 2본 같은 상태는
+                  물리적으로 존재할 수 없는데 예전에는 그대로 통과했다.
+                  상한은 오타 방지용(MAX_CORE_COUNT) — 코어 수가 심선 수보다 많은
+                  것 자체는 정상이라(예비심) 막지 않고 검증이 알린다.
+                */}
                 <button
                   type="button"
                   aria-label="코어 수 감소"
-                  onClick={() => updateCable(cable.id, { coreCount: Math.max(1, cable.coreCount - 1) })}
+                  disabled={cable.coreCount <= Math.max(1, cores.length)}
+                  onClick={() =>
+                    updateCable(cable.id, {
+                      coreCount: Math.max(Math.max(1, cores.length), cable.coreCount - 1),
+                    })}
                 >
                   −
                 </button>
@@ -422,7 +550,9 @@ function WireEditor({ doc, wire }: { doc: HarnessDocument; wire: Wire }) {
                 <button
                   type="button"
                   aria-label="코어 수 증가"
-                  onClick={() => updateCable(cable.id, { coreCount: cable.coreCount + 1 })}
+                  disabled={cable.coreCount >= MAX_CORE_COUNT}
+                  onClick={() =>
+                    updateCable(cable.id, { coreCount: Math.min(MAX_CORE_COUNT, cable.coreCount + 1) })}
                 >
                   +
                 </button>
@@ -454,8 +584,18 @@ function WireEditor({ doc, wire }: { doc: HarnessDocument; wire: Wire }) {
               />
             </Field>
             <div className="pp-cores">
-              <div className="pp-hint">
-                같은 케이블 심선 <b className="num">{cores.length}</b>가닥 · 길이는 케이블을 따릅니다
+              {/*
+                코어 수와 실제 심선 수는 다를 수 있다(예비심). 다만 화면이 그 사실을
+                감추면 안 된다 — 예전에는 coreCount 가 1 인데 "심선 2가닥" 이라고
+                적어 두 숫자가 같은 카드 안에서 서로 어긋나 있었다.
+              */}
+              <div className={`pp-hint${cores.length > cable.coreCount ? ' broken' : ''}`}>
+                같은 케이블 심선 <b className="num">{cores.length}</b>가닥 ·{' '}
+                {cores.length > cable.coreCount
+                  ? `${cable.coreCount}코어에 다 들어가지 않습니다`
+                  : cores.length < cable.coreCount
+                    ? `${cable.coreCount}코어 중 ${cable.coreCount - cores.length}심 예비`
+                    : `${cable.coreCount}코어를 다 씁니다`}
               </div>
               {cores.map((w) => {
                 const f = endpointParts(doc, refs, w.from);

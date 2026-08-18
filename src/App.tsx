@@ -123,6 +123,23 @@ export default function App() {
   const hoverWire = useHoverStore((s) => s.wireId);
   const setHover = useHoverStore((s) => s.setHover);
 
+  /**
+   * 실행취소·다시실행 실행부.
+   *
+   * ⌘Z 는 보고 있는 화면과 무관하게 활성 하네스를 되돌린다. 세트 개요를 보고
+   * 있으면 캔버스가 화면에 없으므로 **무엇이 사라졌는지 아무 데도 나타나지
+   * 않는다** — 도면이 조용히 바뀐 채로 발주로 넘어갈 수 있다.
+   * 화면을 갈아끼우지는 않는다(사용자가 보던 자리를 빼앗는 셈이라). 대신
+   * 도면이 바뀌었으면 어느 하네스가 바뀌었는지 토스트로 밝힌다.
+   */
+  const runUndo = (fn: () => void, isRedo: boolean) => {
+    const before = useHarnessStore.getState().doc;
+    fn();
+    const after = useHarnessStore.getState().doc;
+    if (hTab !== 'set' || after === before) return;
+    showToast(`${after.name} 도면을 ${isRedo ? '다시 실행했습니다' : '되돌렸습니다'} — 이 화면에는 보이지 않습니다`);
+  };
+
   // Delete/Backspace 로 선택 요소 삭제 (입력 중에는 무시)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -131,13 +148,12 @@ export default function App() {
       const mod = e.ctrlKey || e.metaKey;
       if (mod && e.key.toLowerCase() === 'z') {
         e.preventDefault();
-        if (e.shiftKey) redo();
-        else undo();
+        runUndo(e.shiftKey ? redo : undo, e.shiftKey);
         return;
       }
       if (mod && e.key.toLowerCase() === 'y') {
         e.preventDefault();
-        redo();
+        runUndo(redo, true);
         return;
       }
       if ((e.key === 'Delete' || e.key === 'Backspace') && selection) {
@@ -147,7 +163,8 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [selection, remove, undo, redo]);
+    // hTab 이 바뀌면 핸들러를 다시 건다 — 세트 개요에서는 되돌린 사실을 알려야 한다
+  }, [selection, remove, undo, redo, hTab]);
 
   /**
    * 자동저장 사고 알림.

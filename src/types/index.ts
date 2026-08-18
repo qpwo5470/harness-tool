@@ -351,6 +351,16 @@ export interface HarnessStore {
   addCable(c: Cable): void;
   updateCable(id: Id, patch: Partial<Cable>): void;
 
+  /**
+   * 케이블을 만들면서 그 자리에서 심선 하나를 넣는다 (선택 액션).
+   *
+   * `addCable` 뒤에 `updateWire` 를 부르면 한 손동작에 실행취소가 **두 단계**
+   * 쌓여, 한 번만 되돌린 사용자에게 심선 0본짜리 케이블이 남는다. 그 케이블은
+   * 자재표에 그대로 발주된다. 한 동작이면 한 단계여야 해서 통로를 하나 더 둔다.
+   * `syncUsedPart` 와 같이 optional 로만 얹으므로 기존 구현체는 그대로 유효하다.
+   */
+  addCableForWire?(c: Cable, wireId: Id): void;
+
   /** 라이브러리에서 쓴 부품을 문서 스냅샷(usedParts)에 추가 (중복 무시) */
   addUsedPart(part: PartLibraryItem): void;
 

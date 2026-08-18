@@ -89,6 +89,9 @@
   white-space: nowrap;
 }
 .pp-mini-btn:hover { background: var(--accent-tint); }
+/* 지우는 버튼만 빨강 — 빨강은 전선 색이라 UI 에서는 삭제에만 쓴다 */
+.pp-mini-btn.danger { color: var(--danger); border-color: var(--danger-line); }
+.pp-mini-btn.danger:hover { background: var(--danger-tint); }
 
 .pp-field { display: flex; align-items: center; gap: 8px; }
 .pp-flabel {
@@ -101,6 +104,9 @@
 
 .pp-hint { margin: 0; font-size: var(--fs-cap); color: var(--text-3); line-height: 1.45; }
 .pp-hint.indent { padding-left: 60px; }
+/* 참조가 깨졌거나 숫자가 서로 어긋난 상태 — 화면이 거짓을 말하지 않도록 눈에 띈다 */
+.pp-hint.broken { color: var(--danger); }
+.pp-hint.broken b { color: var(--danger); }
 
 /* ============================================================
    기본 컨트롤
@@ -213,7 +219,9 @@
   border: none;
   cursor: pointer;
 }
-.pp-stepper button:hover { background: var(--accent-tint); }
+.pp-stepper button:hover:not(:disabled) { background: var(--accent-tint); }
+/* 한계에 닿으면 눌리지 않는다 (심선 수 미만 · 상한 초과) */
+.pp-stepper button:disabled { color: var(--muted-2); cursor: not-allowed; }
 .pp-stepper span {
   width: 30px;
   height: 24px;

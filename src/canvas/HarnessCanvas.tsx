@@ -187,7 +187,7 @@ function Flow() {
 
   /* ── 라이브러리 → 캔버스 드래그 배치 ─────────────────────────────────
      클릭 배치(LibraryPanel.addPart)는 그대로 남아 있다. 여기서는 좌표만
-     "놓은 자리"로 바뀔 뿐, addUsedPart → instantiate → addConnector → select
+     "놓은 자리"로 바뀔 뿐, instantiate → addConnector → addUsedPart → select
      순서는 클릭 경로와 똑같이 지킨다. */
 
   const onDragOver = (e: React.DragEvent) => {
@@ -231,9 +231,12 @@ function Flow() {
     if (!item || item.category === 'terminal') return; // 단자는 캔버스에 놓지 않음
 
     const off = centerOffset(item);
-    addUsedPart(item);
     const conn = instantiate(item, { x: at.x - off.x, y: at.y - off.y });
+    // addConnector(히스토리 O) → addUsedPart(히스토리 X) 순서를 지킨다.
+    // 반대로 부르면 커넥터 스냅샷에 부품이 이미 들어 있어, ⌘Z 로 커넥터는
+    // 사라지는데 usedParts 는 되돌아오지 않는다(store/harnessStore.ts 주석).
     addConnector(conn);
+    addUsedPart(item);
     select(conn.id);
   };
 

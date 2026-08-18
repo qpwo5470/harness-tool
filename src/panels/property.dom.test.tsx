@@ -3,7 +3,7 @@
  * 색 칩 / 게이지 세그먼트 / 방향 카드 / 패드 다중 선택 후 일괄 지정 /
  * 스플라이스 대체 안내 / 단자 행 추가·삭제 / 빈 상태.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import { useHarnessStore } from '../store/harnessStore';
 import { PropertyPanel } from './PropertyPanel';
@@ -247,6 +247,124 @@ describe('(D) 미선택 — 빈 상태', () => {
     expect(screen.getByText(/미완성 1/)).toBeTruthy();
     // 빈 상태에서는 삭제할 대상이 없다
     expect(container.querySelector('.pp-danger')).toBeNull();
+  });
+});
+
+// ============================================================
+// (A) 와이어 — 케이블 (감사 A-1 ~ A-7)
+//
+// 이 카드에는 케이블을 만들 버튼만 있고 **길이를 넣을 칸도, 지울 길도 없었다.**
+// 그래서 "길이는 케이블을 따릅니다" 라는 이 기능의 존재 이유가 UI 만으로는
+// 성립하지 않았다 — 새 케이블에 심선을 넣는 순간 그 심선은 '길이 미입력'
+// error 가 되고, 고칠 길은 JSON 을 손으로 여는 것뿐이었다.
+// ============================================================
+describe('(A) 와이어 — 케이블', () => {
+  /** 케이블 하나(2C)에 w1 이 든 문서. 히스토리를 비우고 시작한다 */
+  function showCableDoc(over?: (d: HarnessDocument) => void) {
+    const d = makeDoc();
+    d.cables = [{ id: 'cb1', name: '2C 전원', coreCount: 2 }];
+    d.wires = d.wires.map((w) => ({ ...w, cableId: 'cb1', lengthMm: undefined }));
+    over?.(d);
+    useHarnessStore.getState().replaceDoc(d);   // 히스토리 초기화 겸용
+    useHarnessStore.setState({ selection: 'w1' });
+    return render(<PropertyPanel />);
+  }
+  const cable0 = () => doc().cables![0];
+
+  it('A-1 케이블 길이를 넣고 Enter 로 확정한다', () => {
+    showCableDoc();
+    const input = screen.getByLabelText('케이블 길이') as HTMLInputElement;
+    expect(input.value).toBe('');                       // 미입력이 0 으로 보이지 않는다
+    fireEvent.change(input, { target: { value: '300' } });
+    expect(cable0().lengthMm).toBeUndefined();          // 타이핑 중에는 쌓지 않는다
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(cable0().lengthMm).toBe(300);
+    // 심선 길이칸은 비어 있어도 이제 케이블 길이를 따른다고 말할 수 있다
+    expect(screen.getByText(/케이블 길이 300mm를 따릅니다/)).toBeTruthy();
+  });
+
+  it('A-1 비우고 확정하면 길이를 0 이 아니라 미입력으로 되돌린다', () => {
+    showCableDoc((d) => { d.cables![0].lengthMm = 300; });
+    const input = screen.getByLabelText('케이블 길이');
+    fireEvent.change(input, { target: { value: '' } });
+    fireEvent.blur(input);
+    expect(cable0().lengthMm).toBeUndefined();
+  });
+
+  it('A-2 케이블을 지우면 심선은 단선으로 남는다', () => {
+    showCableDoc();
+    fireEvent.click(screen.getByLabelText('케이블 삭제'));
+    expect(doc().cables).toEqual([]);
+    expect(doc().wires).toHaveLength(1);                // 배선까지 지우지 않는다
+    expect(doc().wires[0].cableId).toBeUndefined();
+  });
+
+  it('A-3 없는 케이블을 가리키면 화면이 그 사실을 말한다', () => {
+    showCableDoc((d) => { d.cables = []; });
+    // 고치기 전: '단선' 도 어느 케이블도 아닌 아무것도 안 눌린 상태로 보였다
+    expect(screen.getByRole('button', { name: '단선' }).getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByText(/문서에 없는 케이블/)).toBeTruthy();
+  });
+
+  it('A-4 코어 수는 실제 심선 수 아래로 내려가지 않는다', () => {
+    // 2C 케이블에 심선 2본 → 더는 줄일 수 없다 (1코어에 심선 2본은 존재할 수 없다)
+    showCableDoc((d) => {
+      d.wires = [
+        { ...d.wires[0] },
+        { ...d.wires[0], id: 'w2', from: { type: 'pin', connectorId: 'c1', pinId: 'p2' } },
+      ];
+    });
+    expect((screen.getByLabelText('코어 수 감소') as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByLabelText('코어 수 증가'));
+    expect(cable0().coreCount).toBe(3);
+    expect((screen.getByLabelText('코어 수 감소') as HTMLButtonElement).disabled).toBe(false);
+    // 예비심이 생겼다는 사실도 카드에 적힌다
+    expect(screen.getByText(/1심 예비/)).toBeTruthy();
+  });
+
+  it('A-4 코어 수 상한을 넘기지 않는다', () => {
+    showCableDoc((d) => { d.cables![0].coreCount = 64; });
+    expect((screen.getByLabelText('코어 수 증가') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('A-6 "+ 새 케이블" 을 연달아 눌러도 id 가 겹치지 않는다', () => {
+    // 연타는 **같은 밀리초**에 들어온다 — 시계를 세워야 그 상황이 재현된다.
+    // 고치기 전에는 id 가 `cbl-${Date.now()}` 뿐이라 두 케이블이 같은 id 를 갖고
+    // (목록 버튼 2개 · duplicate-id error · React key 경고) 배선이 어느 쪽을
+    // 가리키는지 정할 수 없었다.
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_800_000_000_000);
+    try {
+      showCableDoc((d) => { d.cables = []; d.wires = d.wires.map((w) => ({ ...w, cableId: undefined })); });
+      fireEvent.click(screen.getByText('+ 새 케이블'));
+      fireEvent.click(screen.getByText('+ 새 케이블'));
+      const list = doc().cables!;
+      expect(list).toHaveLength(2);
+      expect(new Set(list.map((c) => c.id)).size).toBe(2);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it('A-7 "+ 새 케이블" 은 ⌘Z 한 번으로 통째로 사라진다', () => {
+    showCableDoc((d) => { d.cables = []; d.wires = d.wires.map((w) => ({ ...w, cableId: undefined })); });
+    fireEvent.click(screen.getByText('+ 새 케이블'));
+    expect(doc().cables).toHaveLength(1);
+    expect(doc().wires[0].cableId).toBeTruthy();
+
+    useHarnessStore.getState().undo();
+    // 고치기 전: 한 번 되돌리면 심선 0본짜리 유령 케이블이 남았고, 그 케이블은
+    // 지울 수도 없는데 자재표에는 그대로 발주됐다.
+    expect(doc().cables).toHaveLength(0);
+    expect(doc().wires[0].cableId).toBeUndefined();
+  });
+
+  it('A-5 심선에 길이를 넣으면 문구가 이중 계상을 감추지 않는다', () => {
+    showCableDoc((d) => { d.cables![0].lengthMm = 300; });
+    fireEvent.change(screen.getByLabelText('길이'), { target: { value: '720' } });
+    expect(doc().wires[0].lengthMm).toBe(720);
+    // 고치기 전: 값을 넣은 뒤에도 "길이는 케이블을 따릅니다" 라고 적혀 있어
+    // 전선 720mm + 케이블 300mm 로 같은 가닥을 두 번 사는 것을 감췄다.
+    expect(screen.getByText('이 심선만 따로 재단 · 발주는 케이블로')).toBeTruthy();
   });
 });
 

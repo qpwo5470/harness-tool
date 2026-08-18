@@ -284,6 +284,22 @@ describe('하네스 탭 — 세트', () => {
     expect(screen.getAllByText(/발주 문구 복사/).length).toBeGreaterThan(0);
   });
 
+  /**
+   * 회귀(감사 B-4): ⌘Z 는 보고 있는 화면과 무관하게 활성 하네스를 되돌린다.
+   * 세트 개요에는 캔버스가 없어 **무엇이 사라졌는지 화면에 나타나지 않았다.**
+   * 화면을 빼앗지 않는 대신, 어느 하네스의 도면이 바뀌었는지 알린다.
+   */
+  it('세트 개요에서 ⌘Z 를 누르면 어느 도면을 되돌렸는지 알린다', () => {
+    const { container } = render(<App />);
+    const lib = within(container.querySelector('.panel.lib') as HTMLElement);
+    fireEvent.click(lib.getByText(/MDB VMC/));          // 되돌릴 도면 편집 하나
+
+    fireEvent.click(screen.getByText(/세트 개요/));
+    fireEvent.keyDown(window, { key: 'z', metaKey: true });
+
+    expect(screen.getByText(/도면을 되돌렸습니다/)).toBeTruthy();
+  });
+
   it('하네스를 추가하면 탭이 늘어난다', () => {
     render(<App />);
     const before = document.querySelectorAll('.htabs button').length;

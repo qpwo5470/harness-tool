@@ -28,6 +28,7 @@ vi.mock('@xyflow/react', async (importOriginal) => {
 
 import App from '../App';
 import { useHarnessStore } from '../store/harnessStore';
+import { sampleDoc } from '../fixtures/sampleDoc';
 import { PART_DND_MIME, DEVICE_DND_ID } from './LibraryPanel';
 
 /** 브라우저 DataTransfer 흉내 — setData/getData/types 만 있으면 충분하다 */
@@ -255,6 +256,29 @@ describe('드롭 가능 표시', () => {
 
     dragTo(rowOf(container, /MDB VMC/), canvas, 400, 300);
     expect(canvas.className).not.toContain('hz-dropping');
+  });
+});
+
+describe('드롭 실행취소 (감사 B-2)', () => {
+  /**
+   * 회귀: 드롭은 `addUsedPart` → `addConnector` 순서였는데 앞엣것이 스냅샷을
+   * 쌓지 않아, 뒤엣것이 찍는 스냅샷에 부품이 **이미 들어 있었다.** 그래서 ⌘Z 뒤
+   * 커넥터는 사라지는데 usedParts 는 3 → 4 로 남았고 더 되돌려도 안 사라졌다.
+   * (발주 수량은 커넥터 기준이라 틀리지 않지만 문서에 쓰레기가 쌓인다.)
+   */
+  it('⌘Z 한 번이 커넥터와 부품 스냅샷을 함께 되돌린다', () => {
+    const { container } = render(<App />);
+    useHarnessStore.getState().replaceDoc(structuredClone(sampleDoc)); // 히스토리·문서 초기화
+    const before = useHarnessStore.getState().doc.usedParts.length;
+
+    dragTo(rowOf(container, /RJ45 8P8C \(T568B\)/), canvasOf(container), 250, 250);
+    expect(useHarnessStore.getState().doc.usedParts).toHaveLength(before + 1);
+
+    useHarnessStore.getState().undo();
+    const doc = useHarnessStore.getState().doc;
+    expect(doc.connectors.some((c) => c.housingId === 'lib-rj45-t568b')).toBe(false);
+    expect(doc.usedParts).toHaveLength(before);
+    expect(doc.usedParts.some((p) => p.id === 'lib-rj45-t568b')).toBe(false);
   });
 });
 
