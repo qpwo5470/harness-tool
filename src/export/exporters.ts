@@ -23,6 +23,19 @@ export type PartRow = {
    * **전** 값이라는 점이 중요하다 — 도면값과 발주값을 나란히 적을 근거다.
    */
   drawingLengthMm?: number;
+  /**
+   * 이 행이 가리키는 **문서 안의 그것 하나** — 파트 탭에서 행을 눌러 고를 수 있게 한다.
+   *
+   * 케이블 행에만 있다. 그리고 그건 **집계 방식의 차이**지 인심이 아니다:
+   *  · 하우징 행 `MDB 6P ×3` 은 커넥터 세 **개**를 이름으로 묶은 것이다. 어느 하나를
+   *    고를 수 없다 — 셋 다 그 행에 들어 있다.
+   *  · 터미널 행은 한술 더 떠 **핀 수**를 센다(부품 인스턴스가 아예 없다).
+   *  · 와이어 행은 게이지+색으로 묶은 길이 합이다.
+   *  · 케이블만 `doc.cables` 를 1행 1개로 그대로 옮긴다(qty 는 언제나 1) —
+   *    그래서 행과 문서의 개체가 1:1 이고 id 를 실을 수 있다.
+   * CSV 에는 나가지 않는다(발주처가 쓸 값이 아니다 — toCsv 는 이 필드를 보지 않는다).
+   */
+  targetId?: string;
 };
 
 /** 와이어 한 그룹(게이지+색)의 길이 집계 상태 */
@@ -194,6 +207,8 @@ export function buildPartList(doc: HarnessDocument, opts: PartListOptions = {}):
       qty: 1,
       detail: spec.join(' · '),
       drawingLengthMm: cb.lengthMm,
+      // 이 행은 케이블 **하나**다 — 파트 탭이 이 id 로 도면의 케이블을 고른다
+      targetId: cb.id,
     });
   }
 

@@ -129,6 +129,58 @@ describe('레인 배정 — 구간 겹침 채색', () => {
 });
 
 /* ============================================================
+   같은 케이블 심선을 이웃 높이로 — groupLanesByCable
+   ------------------------------------------------------------
+   레인 채색은 케이블을 모른다. 그래서 한 케이블의 심선이 도면에서 멀찍이
+   떨어지거나 사이에 남의 배선이 끼고, 그러면 자켓이 한 획도 그려지지 않는다.
+   여기서 붙잡는 것은 **번호를 바꿔 달아도 채색의 성질이 깨지지 않는다**는 점이다.
+   ============================================================ */
+describe('레인 이웃 배치 — 같은 케이블 심선', () => {
+  const none = () => undefined;
+
+  it('케이블이 없으면 손대지 않는다 (좌표를 못박은 시험이 그대로 통과해야 한다)', async () => {
+    const { groupLanesByCable } = await import('./docToFlow');
+    expect(groupLanesByCable([0, 1, 2, 3, 4], none)).toEqual([0, 1, 2, 3, 4]);
+    expect(groupLanesByCable([], none)).toEqual([]);
+  });
+
+  it('심선이 오프셋 순으로 이웃이 된다 — 사이에 남의 배선이 끼지 않는다', async () => {
+    const { groupLanesByCable, laneOffset } = await import('./docToFlow');
+    // 배선 6본이 전부 겹쳐 레인 0..5 를 하나씩 쓴다. 심선은 0번과 3번 —
+    // 오프셋으로는 +0 과 +24 라 그 사이를 1번(+12)이 지난다.
+    const cable = (i: number) => (i === 0 || i === 3 ? 'cb' : undefined);
+    const out = groupLanesByCable([0, 1, 2, 3, 4, 5], cable);
+    const y = out.map((k) => laneOffset(k, 12));
+    const between = y.filter((_, i) => cable(i) === undefined)
+      .filter((v) => v > Math.min(y[0], y[3]) && v < Math.max(y[0], y[3]));
+    expect(between).toEqual([]);
+    expect(Math.abs(y[0] - y[3])).toBe(12);      // 딱 한 칸 — 붙여 놓지도 벌리지도 않는다
+  });
+
+  it('번호를 바꿔 달 뿐이다 — 레인 수도, 겹치던 배선이 갈라져 있다는 사실도 그대로', async () => {
+    const { groupLanesByCable } = await import('./docToFlow');
+    const lanes = [0, 1, 2, 3, 4, 5];
+    const out = groupLanesByCable(lanes, (i) => (i === 0 || i === 3 ? 'cb' : undefined));
+    // 치환(permutation)이므로 쓰인 레인 집합이 같다 = 도면이 더 벌어지지 않는다
+    expect([...out].sort((a, b) => a - b)).toEqual(lanes);
+    // 같은 레인을 나눠 쓰던 것끼리는 여전히 같고, 다르던 것끼리는 여전히 다르다
+    for (let i = 0; i < lanes.length; i++) {
+      for (let j = i + 1; j < lanes.length; j++) {
+        expect(out[i] === out[j]).toBe(lanes[i] === lanes[j]);
+      }
+    }
+  });
+
+  it('한 레인에 두 케이블이 섞이면 그 레인은 제자리에 둔다 (둘 다 이웃일 수는 없다)', async () => {
+    const { groupLanesByCable } = await import('./docToFlow');
+    // 배선 0·1 은 겹치지 않아 같은 레인 0 을 나눠 쓰는데 소속 케이블이 다르다
+    const out = groupLanesByCable([0, 0, 1, 2], (i) => (i === 0 ? 'a' : i === 1 ? 'b' : undefined));
+    expect([...out].sort((a, b) => a - b)).toEqual([0, 0, 1, 2]);
+    expect(out[0]).toBe(out[1]);
+  });
+});
+
+/* ============================================================
    밀도 시험 — 20본 두 열 팬아웃 (픽스처는 fixtures/fanoutDoc.ts)
    ------------------------------------------------------------
    getSmoothStepPath 시절 이 배치에서 세로 구간 겹침 123쌍(전부 같은 x 에 포개짐),

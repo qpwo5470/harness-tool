@@ -114,6 +114,14 @@ type AggRow = {
   unit: string;
   wire?: { base: string; stripe?: string };
   dim?: boolean;
+  /**
+   * 이 행이 가리키는 도면 개체 — 있으면 행을 눌러 고를 수 있다.
+   *
+   * 집계가 **딱 하나**를 덮을 때만 채운다. 세트 범위에서 같은 이름의 케이블이
+   * 하네스 둘에 있으면 한 행으로 합쳐지는데, 그때 어느 쪽을 고를지 정할 수 없다 —
+   * 아무거나 고르면 화면이 거짓말을 한다. 그래서 둘째가 들어오는 순간 지운다.
+   */
+  target?: { harnessId: string; id: Id };
 };
 
 /** 집계에 들어가는 하네스 하나 — mult 는 `perSet × orderQty`(하네스 범위면 1) */
@@ -166,13 +174,20 @@ function wireRowName(part: string): { name: string; color?: { base: string; stri
  * 수량은 전부 buildPartList 가 센 값이고, 여기서는 `× mult` 후 같은 품목끼리 더할 뿐이다.
  */
 function aggregate(parts: ScopePart[], withLetter: boolean): AggRow[] {
-  type Acc = { row: AggRow; count: number; len: number; refs: string[] };
+  type Acc = {
+    row: AggRow;
+    count: number;
+    len: number;
+    refs: string[];
+    /** 이 행에 합쳐진 도면 개체들 — 딱 하나일 때만 행을 눌러 고를 수 있다 */
+    targets: Map<string, { harnessId: string; id: Id }>;
+  };
   const map = new Map<string, Acc>();
 
   const take = (key: string, seed: () => AggRow): Acc => {
     let a = map.get(key);
     if (!a) {
-      a = { row: seed(), count: 0, len: 0, refs: [] };
+      a = { row: seed(), count: 0, len: 0, refs: [], targets: new Map() };
       map.set(key, a);
     }
     return a;
@@ -197,6 +212,8 @@ function aggregate(parts: ScopePart[], withLetter: boolean): AggRow[] {
       }));
       acc.count += r.qty * mult;
       acc.len += lenOfDetail(r.detail) * mult;
+      // 행 → 도면 개체. buildPartList 가 1행 1개로 옮긴 행(케이블)만 id 를 싣는다.
+      if (r.targetId) acc.targets.set(`${doc.id}:${r.targetId}`, { harnessId: doc.id, id: r.targetId });
       for (const u of usage.get(key) ?? []) acc.refs.push(withLetter ? `${letter} ${u}` : u);
       // 하우징의 detail 은 결합 성별(암/수/보드)이다 — 발주 화면에서 보여야 한다
       if (group === 'housing' && r.detail) acc.refs.push(r.detail);
@@ -218,7 +235,8 @@ function aggregate(parts: ScopePart[], withLetter: boolean): AggRow[] {
   }
 
   const out: AggRow[] = [];
-  for (const { row, count, len, refs } of map.values()) {
+  for (const { row, count, len, refs, targets } of map.values()) {
+    if (targets.size === 1) row.target = [...targets.values()][0];
     // 전선은 길이 합이 발주 단위다. 길이가 하나도 없으면 본수로 떨어뜨린다.
     if (row.group === 'wire' && len > 0) {
       row.qty = len;
@@ -582,7 +600,30 @@ export function PartsPanel(props: {
                     </div>
                   )}
                   {gr.map((r) => (
-                    <div className={`pt-row${r.dim ? ' dim' : ''}`} key={r.key}>
+                    /*
+                      행 클릭 = 그 부품을 도면에서 고른다. 대상이 **하나로 정해지는
+                      행에만** 붙인다(AggRow.target 주석) — 세 개를 이름으로 묶은
+                      하우징 행에 손잡이를 달면 어느 하나를 고른 척하게 된다.
+                      손동작·키보드는 아래 세트 구성 행(pt-item-head)과 같은 방식이다.
+                    */
+                    <div
+                      className={`pt-row${r.dim ? ' dim' : ''}${r.target ? ' go' : ''}`}
+                      key={r.key}
+                      {...(r.target
+                        ? {
+                          role: 'button',
+                          tabIndex: 0,
+                          title: '도면에서 고릅니다',
+                          onClick: () => onGoToBlocker(r.target!.harnessId, r.target!.id),
+                          onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              onGoToBlocker(r.target!.harnessId, r.target!.id);
+                            }
+                          },
+                        }
+                        : {})}
+                    >
                       <span
                         className={`pt-sw${r.wire ? ' wire' : ''}`}
                         style={r.wire ? wireSwatch(r.wire.base, r.wire.stripe) : undefined}
@@ -596,6 +637,7 @@ export function PartsPanel(props: {
                         <span className="pt-qty num">{fmt(r.qty)}</span>
                         <span className="pt-unit num">{r.unit}</span>
                       </span>
+                      {r.target ? <span className="pt-chev" aria-hidden>›</span> : null}
                     </div>
                   ))}
                 </div>

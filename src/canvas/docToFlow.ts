@@ -11,7 +11,7 @@ import {
 } from './geometry';
 // 세로 간선이 어디까지 뻗는지는 **상자를 비켜 간 뒤에야** 알 수 있다.
 // 그래서 레인을 정하기 전에 라우터를 한 번 돌려 본다(assignLanes 주석 참고).
-import { routeOrthogonal } from './route';
+import { routeOrthogonal, type Pt } from './route';
 
 function endpointNodeId(e: Endpoint): string {
   return e.type === 'pin' ? e.connectorId : e.deviceId;
@@ -227,6 +227,91 @@ export function colorLanes(spans: [number, number][], gap = 10): number[] {
   return out;
 }
 
+/** 가로 주행 구간 레인 간격 */
+export const LANE_Y_STEP = 12;
+/** 세로 간선 레인 간격 — 패드에서 바깥으로 밀어내는 거리라 항상 0 이상 */
+export const LANE_X_STEP = 10;
+
+/**
+ * 같은 케이블 심선이 **도면에서 이웃한 높이**에 오도록 레인 번호를 바꿔 단다.
+ *
+ * ── 왜 필요한가 (실측)
+ * 자켓은 심선 2본 이상이 **나란히 가는 구간**에만 그린다(wirePlan.planJackets).
+ * 그런데 레인 채색(colorLanes)은 케이블을 전혀 모른다 — x 로 겹치는 순서대로
+ * 번호를 나눠 줄 뿐이다. 그래서 한 케이블의 심선이 레인 0 과 레인 4 에 떨어지고
+ * 그 사이(레인 2)로 **남의 배선**이 지나가는 일이 생긴다. 그러면 자켓이 통째로
+ * 사라진다(bundleAt 이 사이에 낀 남의 전선에서 무리를 끊는다) — 케이블이 있는
+ * 도면과 없는 도면이 다시 같은 그림이 된다.
+ *
+ * ── 왜 "번호 바꿔 달기"(permutation) 인가 — 겹침 0 이 유지되는 근거
+ * 레인 채색은 **x 로 겹치는 배선끼리 서로 다른 번호**를 준 것이다(proper coloring).
+ * 색 이름을 통째로 맞바꾸는 것은 그 성질을 건드리지 않는다: 겹치던 두 배선은
+ * 바꾼 뒤에도 여전히 다른 번호를 갖는다. 레인 **수**도 그대로라 도면이 더
+ * 벌어지지도 않는다. 즉 이 함수는 "누가 어느 높이에 서는가" 만 바꾼다.
+ *
+ * ── 이웃은 **번호 순이 아니라 오프셋 순**이다
+ * laneOffset 은 중앙에서 위아래로 번갈아 벌린다(0, +12, -18, +24, -30 …).
+ * 그래서 번호 0 과 1 은 이웃이지만 1 과 2 는 사이에 0 이 낀다. 도면에서 이웃이
+ * 되려면 **오프셋으로 정렬한 순서**에서 붙어 있어야 한다 — slots 가 그 순서다.
+ *
+ * ── 케이블이 없으면 항등(identity)
+ * 어느 레인도 케이블에 묶이지 않으면 seq 는 slots 그대로가 되어 remap 이 항등이
+ * 된다. 케이블 없는 문서의 좌표를 못박은 시험이 그대로 통과해야 하기 때문이다.
+ *
+ * @param lanes  배선별 레인 번호 (colorLanes 결과)
+ * @param cableOf 배선 → 케이블 id (단선이면 undefined)
+ */
+export function groupLanesByCable(
+  lanes: number[],
+  cableOf: (wire: number) => string | undefined,
+  step = LANE_Y_STEP,
+): number[] {
+  const count = lanes.length ? Math.max(...lanes) + 1 : 0;
+  if (count < 2) return lanes.slice();
+
+  // 레인 → 그 레인에 든 케이블. 한 레인에 **서로 다른 케이블**이 섞이면 어느 쪽으로도
+  // 끌어당길 수 없다(둘 다 이웃으로 만들 수는 없다) — 그런 레인은 제자리에 둔다.
+  const cableOfLane: (string | undefined)[] = new Array(count).fill(undefined);
+  const mixed = new Set<number>();
+  lanes.forEach((l, i) => {
+    const c = cableOf(i);
+    if (!c) return;
+    if (cableOfLane[l] === undefined) cableOfLane[l] = c;
+    else if (cableOfLane[l] !== c) mixed.add(l);
+  });
+  for (const l of mixed) cableOfLane[l] = undefined;
+  if (cableOfLane.every((c) => c === undefined)) return lanes.slice();
+
+  // 레인 번호를 **도면 위에서 아래로** 늘어놓은 것 (오프셋 오름차순)
+  const slots = Array.from({ length: count }, (_, k) => k)
+    .sort((a, b) => laneOffset(a, step) - laneOffset(b, step));
+
+  // 위에서부터 훑다가 어느 케이블을 처음 만나면 그 케이블의 레인을 **그 자리에
+  // 몰아서** 내보낸다. 처음 만난 자리에 붙이므로 케이블은 원래 있던 높이 근처에
+  // 남고(도면이 크게 출렁이지 않는다), 케이블이 없으면 순서가 그대로다.
+  const done = new Set<number>();
+  const seq: number[] = [];
+  for (const l of slots) {
+    if (done.has(l)) continue;
+    const c = cableOfLane[l];
+    if (c == null) {
+      seq.push(l);
+      done.add(l);
+      continue;
+    }
+    for (const m of slots) {
+      if (done.has(m) || cableOfLane[m] !== c) continue;
+      seq.push(m);
+      done.add(m);
+    }
+  }
+
+  // i 번째로 놓기로 한 레인은 i 번째로 높은 자리(=slots[i] 번 레인)를 받는다
+  const remap = new Array<number>(count);
+  seq.forEach((l, i) => { remap[l] = slots[i]; });
+  return lanes.map((l) => remap[l]);
+}
+
 /** 한 배선이 차지하는 구간 하나. key 가 같은 것끼리만 겹침을 따진다. */
 export type LaneRun = { item: number; key: string; a: number; b: number };
 
@@ -276,10 +361,24 @@ export function colorRuns(count: number, runs: LaneRun[], gap = 4): number[] {
   return lanes;
 }
 
-/** 가로 주행 구간 레인 간격 */
-export const LANE_Y_STEP = 12;
-/** 세로 간선 레인 간격 — 패드에서 바깥으로 밀어내는 거리라 항상 0 이상 */
-export const LANE_X_STEP = 10;
+/**
+ * 배선 → **자켓을 그릴 수 있는** 케이블 id.
+ *
+ * 문서에 없는 케이블을 가리키는 배선(손으로 고친 JSON)과 심선이 1본뿐인 케이블은
+ * 뺀다. 둘 다 자켓이 그려질 수 없어(나란히 갈 상대가 없다) 레인을 흔들 이유가 없다 —
+ * 흔들면 그림만 달라지고 얻는 게 없다.
+ */
+export function coreCableOf(doc: HarnessDocument): (wire: number) => string | undefined {
+  const known = new Set((doc.cables ?? []).map((c) => c.id));
+  const cores = new Map<string, number>();
+  for (const w of doc.wires) {
+    if (w.cableId && known.has(w.cableId)) cores.set(w.cableId, (cores.get(w.cableId) ?? 0) + 1);
+  }
+  return (i) => {
+    const id = doc.wires[i]?.cableId;
+    return id && (cores.get(id) ?? 0) >= 2 ? id : undefined;
+  };
+}
 
 export type Anchor = { x: number; y: number; side: Position };
 
@@ -404,6 +503,90 @@ export type WireLanes = {
   obstacles: NodeBox[];
 };
 
+/** 한 경로의 가로 선분들 (레인 laneY 가 실제로 미는 것이 이 선분들이다) */
+function horizontals(points: Pt[]): { at: number; lo: number; hi: number }[] {
+  const out: { at: number; lo: number; hi: number }[] = [];
+  for (let k = 1; k < points.length; k++) {
+    const a = points[k - 1];
+    const b = points[k];
+    if (Math.abs(a.y - b.y) < 1e-6 && Math.abs(a.x - b.x) > 1e-6) {
+      out.push({ at: a.y, lo: Math.min(a.x, b.x), hi: Math.max(a.x, b.x) });
+    }
+  }
+  return out;
+}
+
+/**
+ * 레인 배정 하나를 **실제 경로로 재서** 매긴 값. 작을수록 좋다.
+ *
+ * 가중치를 지어내지 않으려고 **사전식(lexicographic)** 으로 비교한다 — 세 항목은
+ * 성질이 다르고, "겹침 한 쌍이 벌어진 몇 px 과 같다" 같은 환산은 근거가 없다.
+ *
+ *  [0] 포개지는 가로 주행 구간 쌍 — 0 이 아니면 어느 선이 어느 선인지 못 읽는다.
+ *      무엇보다 먼저다. 이 값이 늘어나면 다른 이득이 아무리 커도 받지 않는다.
+ *  [1] 케이블 심선들 **사이에 낀 남의 전선** — 자켓이 통째로 끊기는 자리다
+ *      (wirePlan.bundleAt 이 여기서 무리를 자른다).
+ *  [2] 한 케이블 심선들이 벌어진 몫(px) — 좁을수록 자켓이 이어진다.
+ *
+ * 세로 선분은 세지 않는다. 이 계산은 laneX = 0 으로 그려 본 것이라 같은 커넥터에서
+ * 나온 스텁들의 x 가 아직 겹쳐 있다 — 그 겹침을 푸는 것은 다음 단계(colorRuns)의
+ * 일이고, laneY 를 고르는 자리에서 세면 의미 없는 숫자만 나온다.
+ */
+function laneCost(
+  doc: HarnessDocument,
+  probes: Pt[][],
+  cableOf: (wire: number) => string | undefined,
+): [number, number, number] {
+  const segs = probes.map(horizontals);
+
+  let overlaps = 0;
+  for (let i = 0; i < segs.length; i++) {
+    for (let j = i + 1; j < segs.length; j++) {
+      const hit = segs[i].some((a) => segs[j].some((b) =>
+        Math.abs(a.at - b.at) < 2 && Math.min(a.hi, b.hi) - Math.max(a.lo, b.lo) > 2));
+      if (hit) overlaps++;
+    }
+  }
+
+  /** 배선의 **주행 구간** — 가장 긴 가로 선분. 레인이 미는 것도, 자켓이 감싸는 것도 그것이다. */
+  const trunk = segs.map((s) => s.reduce<{ at: number; lo: number; hi: number } | null>(
+    (best, seg) => (!best || seg.hi - seg.lo > best.hi - best.lo ? seg : best), null));
+
+  const byCable = new Map<string, number[]>();
+  doc.wires.forEach((_, i) => {
+    const c = cableOf(i);
+    if (c) byCable.set(c, [...(byCable.get(c) ?? []), i]);
+  });
+
+  let intruders = 0;
+  let spread = 0;
+  for (const cores of byCable.values()) {
+    const mine = cores.map((i) => trunk[i]).filter((t): t is NonNullable<typeof t> => !!t);
+    if (mine.length < 2) continue;
+    const lo = Math.min(...mine.map((t) => t.at));
+    const hi = Math.max(...mine.map((t) => t.at));
+    const x0 = Math.min(...mine.map((t) => t.lo));
+    const x1 = Math.max(...mine.map((t) => t.hi));
+    spread += hi - lo;
+    const own = new Set(cores);
+    doc.wires.forEach((_, i) => {
+      if (own.has(i)) return;
+      const t = trunk[i];
+      // 심선들이 만드는 띠 **안**을 남의 주행 구간이 지나면 그 자리에서 자켓이 끊긴다
+      if (t && t.at >= lo && t.at <= hi && Math.min(t.hi, x1) - Math.max(t.lo, x0) > 2) intruders++;
+    });
+  }
+  return [overlaps, intruders, spread];
+}
+
+/** 사전식 비교 — 앞 항목이 같을 때만 다음 항목을 본다 */
+function cheaper(a: [number, number, number], b: [number, number, number]): boolean {
+  for (let k = 0; k < a.length; k++) {
+    if (Math.abs(a[k] - b[k]) > 1e-6) return a[k] < b[k];
+  }
+  return false;   // 완전히 같으면 바꾸지 않는다 — 이득 없이 도면을 흔들지 않는다
+}
+
 /**
  * 배선 레인 두 축을 한꺼번에 배정한다.
  *
@@ -426,8 +609,37 @@ export function assignLanes(doc: HarnessDocument, view: ViewMode = 'logical'): W
   const obstacles = nodeBoxes(doc, view, at, refs).map((n) => n.box);
 
   // 1) 가로 주행 구간 — x 로 겹치는 배선끼리 y 를 달리한다.
+  //
+  //    채색이 끝난 뒤 **같은 케이블 심선을 이웃 높이로 몰아 본다**(groupLanesByCable).
+  //    채색 자체를 케이블로 흔들지 않는 이유: 겹침 0 은 채색이 지키는 성질이고,
+  //    번호를 바꿔 다는 것만으로는 그 성질이 깨지지 않는다(그 함수 머리말).
+  //
+  //    그리고 **그려 보고 고른다**. 레인 오프셋은 배선마다 다른 기준 y 위에 얹히므로
+  //    (주행 구간 기준 y = 두 패드의 중점 · L자면 도착 패드 쪽) "번호가 이웃"이
+  //    곧 "도면에서 이웃"은 아니다. 어떤 배치에서는 몰아 놓는 편이 오히려 남의
+  //    전선을 케이블 사이로 끌어들인다. 그래서 두 배정을 실제 경로로 재서
+  //    **나빠지지 않을 때만** 바꾼다 — 라우터의 자기 신고를 믿지 않는 것과 같은 태도다.
   const spans = doc.wires.map((_, i) => [from[i].x, to[i].x] as [number, number]);
-  const laneY = colorLanes(spans).map((k) => laneOffset(k, LANE_Y_STEP));
+  const cableOf = coreCableOf(doc);
+  const plain = colorLanes(spans);
+  const grouped = groupLanesByCable(plain, cableOf);
+  const probeAll = (ly: number[]) => doc.wires.map((_, i) => routeOrthogonal({
+    sourceX: from[i].x, sourceY: from[i].y, targetX: to[i].x, targetY: to[i].y,
+    sourcePosition: from[i].side, targetPosition: to[i].side,
+    laneY: ly[i], laneX: 0,
+    sourceBox: fromBox[i], targetBox: toBox[i], obstacles,
+  }).points);
+
+  let laneY = plain.map((k) => laneOffset(k, LANE_Y_STEP));
+  let probes = probeAll(laneY);
+  if (grouped.some((l, i) => l !== plain[i])) {
+    const altY = grouped.map((k) => laneOffset(k, LANE_Y_STEP));
+    const alt = probeAll(altY);
+    if (cheaper(laneCost(doc, alt, cableOf), laneCost(doc, probes, cableOf))) {
+      laneY = altY;
+      probes = alt;
+    }
+  }
 
   // 2) 세로 간선 — 같은 노드·같은 변에서 나온 세로 구간이 y 로 겹치면 x 를 벌린다.
   //
@@ -445,22 +657,17 @@ export function assignLanes(doc: HarnessDocument, view: ViewMode = 'logical'): W
   doc.wires.forEach((w, i) => {
     const s = from[i];
     const t = to[i];
-    const probe = routeOrthogonal({
-      sourceX: s.x, sourceY: s.y, targetX: t.x, targetY: t.y,
-      sourcePosition: s.side, targetPosition: t.side,
-      laneY: laneY[i], laneX: 0,
-      sourceBox: fromBox[i], targetBox: toBox[i], obstacles,
-    });
+    const probe = probes[i];
     if (isHorizontalSide(s.side)) {
       runs.push({
         item: i, key: `${endpointNodeId(w.from)}:${s.side}`,
-        a: s.y, b: turnY(probe.points, 'start'),
+        a: s.y, b: turnY(probe, 'start'),
       });
     }
     if (isHorizontalSide(t.side)) {
       runs.push({
         item: i, key: `${endpointNodeId(w.to)}:${t.side}`,
-        a: t.y, b: turnY(probe.points, 'end'),
+        a: t.y, b: turnY(probe, 'end'),
       });
     }
   });

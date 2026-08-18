@@ -21,7 +21,7 @@
 import { describe, it, expect } from 'vitest';
 import { sampleDoc } from '../fixtures/sampleDoc';
 import { fanoutDoc, labelOverhangDoc } from '../fixtures/fanoutDoc';
-import { cableDoc } from '../fixtures/cableDoc';
+import { cableDoc, laneSplitDoc } from '../fixtures/cableDoc';
 import { rowOfConnectorsDoc } from '../fixtures/rowOfConnectors';
 import { assignLanes, docToEdges, nodePositions, refLabels } from '../canvas/docToFlow';
 import { connectorLabelRects } from '../canvas/geometry';
@@ -154,6 +154,9 @@ describe('PDF 배선 = 화면 배선 (같은 문서 → 같은 꺾임점)', () =
     // 제3의 노드 회피가 들어간 배치 — 회피 결과가 화면에만 반영되고 PDF 는
     // 예전 경로를 그리면 여기서 깨진다(예전에 실제로 그런 사고가 있었다).
     ['한 줄 배치', rowOfConnectorsDoc()],
+    // 레인 배정이 **케이블을 보고** 순서를 바꾸는 배치(docToFlow.groupLanesByCable).
+    // 그 손질이 화면에만 들어가고 PDF 가 예전 순서를 그리면 두 그림이 갈린다.
+    ['레인 갈림(케이블)', laneSplitDoc()],
   ];
 
   it.each(docs)('%s: buildDrawing 의 꺾임점이 화면 경로와 완전히 같다', (_name, doc) => {

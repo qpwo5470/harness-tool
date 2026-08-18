@@ -14,10 +14,12 @@
  */
 import { describe, it, expect } from 'vitest';
 import type { HarnessDocument } from '../types';
-import { cableDoc } from '../fixtures/cableDoc';
+import { cableDoc, laneSplitDoc } from '../fixtures/cableDoc';
 import { fanoutDoc } from '../fixtures/fanoutDoc';
 import { sampleDoc } from '../fixtures/sampleDoc';
-import { JACKET_UNSPEC_COLOR, jacketPaint } from './docToFlow';
+import {
+  JACKET_UNSPEC_COLOR, assignLanes, colorLanes, jacketPaint, laneOffset, LANE_Y_STEP,
+} from './docToFlow';
 import { planJackets, planWires, type JacketRun, type PlannedJacket } from './wirePlan';
 
 /** 케이블만 걷어 낸 같은 문서 — "고치기 전" 그림을 만드는 데 쓴다 */
@@ -36,12 +38,48 @@ function inside(p: { x: number; y: number }, r: JacketRun, eps = 1e-6): boolean 
   return p.x > r.x + eps && p.x < r.x + r.w - eps && p.y > r.y + eps && p.y < r.y + r.h - eps;
 }
 
+/**
+ * 실제로 그려질 경로에서 **포개지는 선분 쌍**. 판정은 밀도 시험(docToFlow.test ·
+ * thirdNode.test)과 같은 규칙이다 — 같은 축에서 2px 안쪽이면 눈으로 구분되지 않는다.
+ */
+function overlapPairs(doc: HarnessDocument, tol = 2): string[] {
+  type Seg = { wire: string; axis: 'h' | 'v'; at: number; a: number; b: number };
+  const segs: Seg[] = [];
+  for (const r of planWires(doc)) {
+    for (let k = 1; k < r.points.length; k++) {
+      const p = r.points[k - 1];
+      const q = r.points[k];
+      if (Math.abs(p.y - q.y) < 1e-6 && Math.abs(p.x - q.x) > 1e-6) {
+        segs.push({ wire: r.id, axis: 'h', at: p.y, a: Math.min(p.x, q.x), b: Math.max(p.x, q.x) });
+      } else if (Math.abs(p.x - q.x) < 1e-6 && Math.abs(p.y - q.y) > 1e-6) {
+        segs.push({ wire: r.id, axis: 'v', at: p.x, a: Math.min(p.y, q.y), b: Math.max(p.y, q.y) });
+      }
+    }
+  }
+  const out: string[] = [];
+  for (let i = 0; i < segs.length; i++) {
+    for (let j = i + 1; j < segs.length; j++) {
+      const x = segs[i];
+      const y = segs[j];
+      if (x.wire === y.wire || x.axis !== y.axis) continue;
+      if (Math.abs(x.at - y.at) >= tol) continue;
+      if (Math.min(x.b, y.b) - Math.max(x.a, y.a) > tol) out.push(`${x.wire}/${y.wire}@${x.axis}${x.at}`);
+    }
+  }
+  return out;
+}
+
 // ============================================================
 describe('대조군 — 자켓이 없으면 케이블은 도면에서 사라진다', () => {
   it('케이블을 걷어 내도 배선 경로는 한 점도 달라지지 않는다', () => {
     const doc = cableDoc();
-    // 자켓은 **덧그리는 것**이지 라우팅이 아니다. 경로가 달라지면 기존 밀도 시험이
-    // 재는 겹침·관통 수치가 통째로 무의미해진다.
+    // 자켓 자체는 **덧그리는 것**이지 라우팅이 아니다 — 사각형이 경로를 밀지 않는다.
+    //
+    // 다만 레인 배정은 케이블을 본다(docToFlow.groupLanesByCable): 같은 케이블
+    // 심선이 이웃 높이에 오도록 **레인 번호를 바꿔 달** 수 있다. 그 손질은
+    // 실제로 그려 보고 **이득이 있을 때만** 들어간다(laneCost). 이 픽스처는
+    // 이미 심선끼리 이웃이라 바꿀 이득이 없어 경로가 그대로다 —
+    // 바뀌는 배치는 아래 `레인 갈림` describe 가 따로 잰다.
     expect(planWires(withoutCables(doc))).toEqual(planWires(doc));
   });
 
@@ -83,13 +121,111 @@ describe('나란히 가는 구간이 하나의 자켓으로 나온다', () => {
     }
   });
 
-  it('한 케이블의 심선이 도면에서 벌어져 있으면 자켓을 그리지 않는다', () => {
-    // 샘플 문서의 2심은 스플라이스에서 나오자마자 위·아래로 갈린다(178px).
-    // 그 둘을 한 사각형으로 묶으면 도면이 "이 둘은 같은 외피 안" 이라고 거짓말한다.
+  /**
+   * ── 왜 여기는 레인을 이웃에 놓아도 안 되나 (재서 확인한 값)
+   * 샘플 문서의 2심은 스플라이스에서 나오자마자 위·아래로 갈린다.
+   *   · w2 는 J2(o=90)의 **위쪽** 핸들로 들어가야 하고, 스플라이스 상자를 넘는
+   *     밀어내기는 언제나 바깥쪽이라(route.pushOut, dir=-1) 주행 구간이 y=68 위로
+   *     **고정**된다. 레인을 아무리 키워도 더 올라갈 뿐 내려오지 못한다.
+   *   · w3 는 장치(y=320)의 오른쪽 단자로 가므로 주행 구간이 y=246.25 다.
+   * 두 값을 나란히 만들려면 laneY 가 **±104px** (레인 8~9칸)이 필요하다 —
+   * laneY 를 −400..400 까지 4px 씩, laneX 를 0..30 까지 훑어 얻은 최솟값이다.
+   * 그건 레인 순서가 아니라 **다른 길로 돌아가라는 지시**이고, 심선 한 본을 240px
+   * 우회시켜 자켓을 만들어 내는 것은 도면을 위해 배선을 왜곡하는 짓이다.
+   *
+   * 즉 이 배치에서 자켓이 없는 것은 결함이 아니라 **사실**이다 — 두 심선은 정말로
+   * 함께 가는 구간이 없다. 속성 패널의 케이블 카드가 그 사실을 그대로 말한다.
+   */
+  it('심선이 서로 반대쪽으로 갈라져 나가면 자켓을 그리지 않는다 (샘플 문서)', () => {
     const j = jacketOf(planJackets(sampleDoc), 'cbl-1');
     expect(j.coreIds).toEqual(['w2', 'w3']);
     expect(j.runs).toEqual([]);
     expect(j.labelAt).toBeNull();
+  });
+});
+
+// ============================================================
+describe('레인 갈림 — 케이블 심선을 이웃 높이에 놓는다', () => {
+  const doc = laneSplitDoc();
+
+  /**
+   * 대조군. 케이블을 모르는 채색(colorLanes)이 실제로 심선을 갈라 놓는지 먼저 잰다 —
+   * 이 값이 0 이면 아래 시험은 아무것도 붙잡지 못한다.
+   */
+  it('케이블을 모르는 채색은 심선 사이에 남의 배선을 끼워 넣는다 (대조군)', () => {
+    const lanes = assignLanes(doc, 'logical');
+    const plain = colorLanes(doc.wires.map((_, i) => [lanes.from[i].x, lanes.to[i].x] as [number, number]))
+      .map((k) => laneOffset(k, LANE_Y_STEP));
+    const cores = doc.wires.map((w, i) => (w.cableId ? i : -1)).filter((i) => i >= 0);
+    expect(cores).toHaveLength(2);
+    const lo = Math.min(plain[cores[0]], plain[cores[1]]);
+    const hi = Math.max(plain[cores[0]], plain[cores[1]]);
+    const between = plain.filter((v, i) => !cores.includes(i) && v > lo && v < hi);
+    expect(between).toEqual([12]);   // w2 가 +12 로 두 심선(0, +24) 사이를 지난다
+  });
+
+  it('고친 뒤 — 심선이 한 칸 간격으로 나란히 서고 사이에 아무도 없다', () => {
+    const lanes = assignLanes(doc, 'logical');
+    const cores = doc.wires.map((w, i) => (w.cableId ? i : -1)).filter((i) => i >= 0);
+    const lo = Math.min(lanes.laneY[cores[0]], lanes.laneY[cores[1]]);
+    const hi = Math.max(lanes.laneY[cores[0]], lanes.laneY[cores[1]]);
+    expect(hi - lo).toBe(LANE_Y_STEP);
+    expect(lanes.laneY.filter((v, i) => !cores.includes(i) && v > lo && v < hi)).toEqual([]);
+  });
+
+  it('그래서 자켓이 한 토막으로 이어진다 (고치기 전에는 하나도 없었다)', () => {
+    const j = jacketOf(planJackets(doc), 'cb-s');
+    expect(j.coreIds).toEqual(['w1', 'w4']);
+    expect(j.runs).toHaveLength(1);
+    expect(j.runs[0].axis).toBe('h');
+    expect(j.runs[0].wireIds).toEqual(['w1', 'w4']);
+    // 두 커넥터 사이를 가로지르는 주행 구간 전체를 덮는다 (600px 넘는 몸통)
+    expect(j.runs[0].w).toBeGreaterThan(600);
+    expect(j.labelAt).not.toBeNull();
+  });
+
+  it('자켓 속에 남의 배선이 한 점도 들어오지 않는다', () => {
+    const routes = new Map(planWires(doc).map((r) => [r.id, r]));
+    const j = jacketOf(planJackets(doc), 'cb-s');
+    for (const r of j.runs) {
+      for (const w of doc.wires) {
+        if (j.coreIds.includes(w.id)) continue;
+        expect(routes.get(w.id)!.points.filter((p) => inside(p, r)), w.id).toEqual([]);
+      }
+    }
+  });
+
+  /**
+   * 심선을 이웃에 놓는 것은 **레인 순서를 바꾸는 것**이지 겹치게 놓는 것이 아니다.
+   * 번호를 바꿔 달아도 채색의 성질(겹치는 배선끼리 다른 레인)은 그대로이므로
+   * 이 배치의 여섯 본은 여전히 한 줄도 포개지지 않아야 한다.
+   */
+  it('겹침 0 — 심선을 붙여 놓아도 선끼리 포개지지 않는다', () => {
+    expect(overlapPairs(doc)).toEqual([]);
+  });
+});
+
+// ============================================================
+describe('케이블이 여럿이어도 서로를 흔들지 않는다', () => {
+  // cableDoc 은 케이블 2개 + 맨선 1본이고, CB-Y 의 심선은 **서로 다른 커넥터 쌍**을
+  // 잇는다(y1→J2 · y2·y3→J3). 레인을 케이블별로 몰아 놓는 손질이 다른 케이블의
+  // 자켓을 뺏거나 끊지 않는지 본다.
+  const doc = cableDoc();
+  const jackets = planJackets(doc);
+
+  it('두 케이블이 각자의 자켓을 갖고, 토막의 심선은 제 케이블 것뿐이다', () => {
+    expect(jackets.map((j) => j.cableId)).toEqual(['cb-p', 'cb-y']);
+    for (const j of jackets) {
+      expect(j.runs.length).toBeGreaterThan(0);
+      const mine = new Set(j.coreIds);
+      for (const r of j.runs) expect(r.wireIds.every((id) => mine.has(id))).toBe(true);
+    }
+  });
+
+  it('심선이 다른 커넥터로 갈라지면 갈라진 뒤 구간만 묶인다', () => {
+    const cbY = jacketOf(jackets, 'cb-y');
+    // y1 만 J2 로 빠지므로 셋이 다 든 토막은 없다
+    expect(cbY.runs.every((r) => r.wireIds.length >= 2 && r.wireIds.length < 3)).toBe(true);
   });
 });
 

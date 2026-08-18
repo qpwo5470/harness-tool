@@ -320,3 +320,120 @@ describe('파트 탭 — 하네스 단위', () => {
     expect(screen.getByText('도면 PDF (논리 · 물리 2매)')).toBeTruthy();
   });
 });
+
+// ================================================================
+// 케이블 행 — 눌러서 도면의 케이블을 고른다
+//
+// 왜 케이블만인가: 파트 탭의 행은 대부분 **이름으로 묶은 집계**다. `MDB 6P ×3`
+// 은 커넥터 세 개를, 터미널 행은 아예 핀 수를, 전선 행은 색·게이지별 길이 합을
+// 센다 — 어느 하나를 고를 수 없다. 케이블만 `doc.cables` 를 1행 1개로 옮기므로
+// (exporters.buildPartList) 행과 문서의 개체가 1:1 이고 id 를 실을 수 있다.
+// 손잡이는 새로 만들지 않고 이미 있는 통로(onGoToBlocker = 하네스 열기 + 선택)를 쓴다.
+// ================================================================
+
+function cabledHarness(id: string, letter: string, cableName: string): HarnessDocument {
+  return {
+    ...BASE,
+    id,
+    name: `케이블 하네스 ${letter}`,
+    drawingNo: `HRN-${letter}`,
+    letter,
+    connectors: [
+      {
+        id: `${id}-c1`, kind: 'connector', housingId: 'h2', orientation: 180,
+        positions: { logical: { x: 0, y: 0 } },
+        pins: [1, 2].map((i) => ({ id: `${id}-a${i}`, index: i, terminalId: 't1' })),
+      },
+      {
+        id: `${id}-c2`, kind: 'connector', housingId: 'h2', orientation: 0,
+        positions: { logical: { x: 400, y: 0 } },
+        pins: [1, 2].map((i) => ({ id: `${id}-b${i}`, index: i, terminalId: 't1' })),
+      },
+    ],
+    devices: [],
+    wires: [1, 2].map((i) => ({
+      id: `${id}-w${i}`,
+      from: { type: 'pin' as const, connectorId: `${id}-c1`, pinId: `${id}-a${i}` },
+      to: { type: 'pin' as const, connectorId: `${id}-c2`, pinId: `${id}-b${3 - i}` },
+      color: { base: 'red' },
+      gauge: { system: 'awg' as const, value: 22 },
+      cableId: `${id}-cb`,
+    })),
+    cables: [{ id: `${id}-cb`, name: cableName, coreCount: 2, lengthMm: 400 }],
+    usedParts: [housing2, term],
+  };
+}
+
+function cableKit(second?: HarnessDocument): KitDocument {
+  const harnesses = [cabledHarness('hX', 'X', '2C 전원'), ...(second ? [second] : [])];
+  return {
+    schemaVersion: 2,
+    id: 'kit-cb',
+    name: '케이블 세트',
+    createdAt: BASE.createdAt,
+    updatedAt: BASE.updatedAt,
+    harnesses,
+    set: {
+      id: 'set-cb',
+      pn: 'KIT-CB',
+      name: '케이블 세트',
+      items: harnesses.map((h) => ({ harnessId: h.id, perSet: 1 })),
+      orderQty: 1,
+    },
+  };
+}
+
+function renderCableKit(kit: KitDocument, scope: PartsScope) {
+  const h: Handlers = {
+    onChangeScope: vi.fn(),
+    onGoToBlocker: vi.fn(),
+    onChangeOrderQty: vi.fn(),
+    onChangePerSet: vi.fn(),
+    onOpenHarness: vi.fn(),
+  };
+  render(<PartsPanel kit={kit} activeHarnessId="hX" scope={scope} {...h} />);
+  return h;
+}
+
+describe('파트 탭 — 케이블 행을 눌러 고른다', () => {
+  it('케이블 행이 손잡이를 갖고, 누르면 그 하네스의 케이블이 선택된다', () => {
+    const h = renderCableKit(cableKit(), { kind: 'harness', harnessId: 'hX' });
+    const row = screen.getByText('2C 전원').closest('.pt-row') as HTMLElement;
+    expect(row.getAttribute('role')).toBe('button');
+
+    fireEvent.click(row);
+    expect(h.onGoToBlocker).toHaveBeenCalledWith('hX', 'hX-cb');
+  });
+
+  it('키보드로도 고를 수 있다 (Enter · Space)', () => {
+    const h = renderCableKit(cableKit(), { kind: 'harness', harnessId: 'hX' });
+    const row = screen.getByText('2C 전원').closest('.pt-row') as HTMLElement;
+    expect(row.getAttribute('tabIndex') ?? row.tabIndex).not.toBe(-1);
+
+    fireEvent.keyDown(row, { key: 'Enter' });
+    fireEvent.keyDown(row, { key: ' ' });
+    expect(h.onGoToBlocker).toHaveBeenCalledTimes(2);
+  });
+
+  it('집계로 묶인 행에는 손잡이를 달지 않는다 — 어느 것을 고를지 정할 수 없다', () => {
+    // 하우징 행은 커넥터 두 개를 이름으로 묶은 것이다(= 집계)
+    renderCableKit(cableKit(), { kind: 'harness', harnessId: 'hX' });
+    const housing = screen.getByText('SMH250 2P').closest('.pt-row') as HTMLElement;
+    expect(housing.getAttribute('role')).toBeNull();
+  });
+
+  it('세트 범위에서 이름이 같은 케이블이 둘이면 그 행도 손잡이를 잃는다', () => {
+    // 같은 이름이라 한 행으로 합쳐진다 — 아무거나 고르면 화면이 거짓말을 한다
+    const kit = cableKit(cabledHarness('hY', 'Y', '2C 전원'));
+    renderCableKit(kit, { kind: 'set' });
+    const row = screen.getByText('2C 전원').closest('.pt-row') as HTMLElement;
+    expect(row.getAttribute('role')).toBeNull();
+  });
+
+  it('이름이 다르면 세트 범위에서도 각 행이 제 케이블을 가리킨다', () => {
+    const kit = cableKit(cabledHarness('hY', 'Y', '2C 신호'));
+    const h = renderCableKit(kit, { kind: 'set' });
+    fireEvent.click(screen.getByText('2C 신호').closest('.pt-row') as HTMLElement);
+    expect(h.onGoToBlocker).toHaveBeenCalledWith('hY', 'hY-cb');
+  });
+});

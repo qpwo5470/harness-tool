@@ -230,6 +230,15 @@
 .pt-row.dim, .pt-row.empty { background: var(--bg-subtle); }
 .pt-row.dim .pt-qty, .pt-row.empty .pt-row-name { color: var(--muted); }
 
+/*
+  누르면 도면에서 고를 수 있는 행(지금은 케이블뿐). 손잡이가 있다는 것을
+  보이게 하되 강조색은 쓰지 않는다 — 파트 탭에서 스틸(--accent)은 "고른 상태"다.
+*/
+.pt-row.go { cursor: pointer; }
+.pt-row.go:hover { background: var(--bg-subtle); }
+.pt-row.go:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+.pt-row.go .pt-chev { align-self: center; }
+
 /* 색 스와치 — 전선만 실제 색, 나머지는 중립 상자 */
 .pt-sw {
   width: 14px;

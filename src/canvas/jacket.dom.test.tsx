@@ -15,10 +15,11 @@ import { useHoverStore } from '../store/hoverStore';
 import { validateHarness } from '../store/validate';
 import { buildPartList } from '../export/exporters';
 import { PropertyPanel } from '../panels/PropertyPanel';
+import { PartsPanel } from '../panels/PartsPanel';
 import { HarnessCanvas } from './HarnessCanvas';
 import { planJackets } from './wirePlan';
 import { cableDoc } from '../fixtures/cableDoc';
-import type { HarnessDocument } from '../types';
+import type { HarnessDocument, KitDocument } from '../types';
 
 const store = () => useHarnessStore.getState();
 const sel = () => useSelectionStore.getState();
@@ -183,5 +184,54 @@ describe('심선 0본 케이블도 닿을 수 있다', () => {
     // 그 자리에서 지울 수 있다 — 막다른 길이 사라졌다
     fireEvent.click(screen.getByText('케이블 삭제'));
     expect(store().doc.cables).toEqual([]);
+  });
+});
+
+// ============================================================
+describe('파트 탭에서도 케이블에 닿을 수 있다', () => {
+  /**
+   * 도면에서 자켓을 눌러 고르는 길은 **자켓이 그려질 때만** 있다. 발주 화면에서
+   * 케이블 행을 보고 있는데 거기서 손댈 수 없으면, 자켓이 안 그려지는 배치에서는
+   * 다시 막다른 길이 된다. 파트 탭의 행 클릭이 그 두 번째 문이다.
+   *
+   * 여기서는 App 이 그 행에 물리는 것과 **같은 함수**(goToBlocker → select)를 쓴다.
+   */
+  it('케이블 행 클릭 → 케이블 선택 → 속성 패널에 케이블 카드', () => {
+    const doc = store().doc;
+    const kit: KitDocument = {
+      schemaVersion: 2,
+      id: 'kit-j',
+      name: '자켓 시험 세트',
+      createdAt: doc.createdAt,
+      updatedAt: doc.updatedAt,
+      harnesses: [doc],
+      set: {
+        id: 'set-j', pn: 'KIT-J', name: '자켓 시험 세트',
+        items: [{ harnessId: doc.id, perSet: 1 }], orderQty: 1,
+      },
+    };
+    render(
+      <PartsPanel
+        kit={kit}
+        activeHarnessId={doc.id}
+        scope={{ kind: 'harness', harnessId: doc.id }}
+        onChangeScope={() => {}}
+        // App.tsx 의 goToBlocker 가 하는 일 그대로 (하네스는 하나뿐이라 선택만 남는다)
+        onGoToBlocker={(_h, targetId) => { if (targetId) store().select(targetId); }}
+        onChangeOrderQty={() => {}}
+        onChangePerSet={() => {}}
+        onOpenHarness={() => {}}
+      />,
+    );
+
+    fireEvent.click(screen.getByText('3C 제어').closest('.pt-row')!);
+    expect(store().selection).toBe('cb-p');
+    // §11 불변식: ids 는 0개이거나 2개 이상이다
+    expect(sel().ids).toEqual([]);
+
+    cleanup();
+    render(<PropertyPanel />);
+    expect(screen.getByText('CABLE')).toBeTruthy();
+    expect(screen.getByLabelText('케이블 길이')).toBeTruthy();
   });
 });

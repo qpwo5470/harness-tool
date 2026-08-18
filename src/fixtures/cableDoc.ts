@@ -91,3 +91,49 @@ export function cableDoc(opts: CableDocOptions = {}): HarnessDocument {
     usedParts: [h7, h4, h3],
   };
 }
+
+/**
+ * **레인 배정이 케이블을 갈라 놓던** 배치 — 자켓이 통째로 사라지던 자리다.
+ *
+ * ── 왜 이 모양인가 (숫자를 손으로 검산한 값이다)
+ * J-L(6P, 오른쪽으로) ↔ J-R(6P, 왼쪽으로) 를 **핀을 뒤집어** 잇는다. 그러면 여섯
+ * 본의 두 패드 중점 y 가 전부 같아져(=136) **레인 오프셋이 곧 도면 높이**가 된다.
+ * fanoutDoc 이 같은 이유로 뒤집어 물린다 — 레인만 따로 떼어 보는 배치다.
+ *
+ * 레인 채색은 케이블을 모르므로 배선 순서대로 번호를 나눠 준다:
+ *   w1→0(+0) · w2→1(+12) · w3→2(−18) · w4→3(+24) · w5→4(−30) · w6→5(+36)
+ * 도면 위에서 아래로 늘어놓으면  w5 · w3 · **w1** · w2 · **w4** · w6.
+ * 케이블 심선은 w1 과 w4 인데 **그 사이를 w2 가 지난다** — 자켓은 남의 전선을
+ * 삼킬 수 없으므로(wirePlan.bundleAt) 무리가 끊기고 사각형이 하나도 안 나온다.
+ *
+ * 심선을 이웃 높이로 몰면(docToFlow.groupLanesByCable) w1(+0) · w4(+12) 가 되어
+ * 12px 간격으로 나란히 달리고, 자켓이 한 토막으로 이어진다.
+ */
+export function laneSplitDoc(): HarnessDocument {
+  const h6 = strip('lib-strip-6', 6);
+  const L = conn('J-L', h6.id, 6, 180, 40, 40);
+  const R = conn('J-R', h6.id, 6, 0, 820, 40);
+  const cores = new Set(['w1', 'w4']);
+  const wires: Wire[] = Array.from({ length: 6 }, (_, k) => {
+    const id = `w${k + 1}`;
+    return core(
+      id,
+      ['J-L', L.pins[k].id],
+      ['J-R', R.pins[5 - k].id],
+      'red',
+      cores.has(id) ? 'cb-s' : undefined,
+    );
+  });
+  return {
+    schemaVersion: 1,
+    id: 'doc-lane-split',
+    name: '레인 갈림',
+    createdAt: '2026-08-18T00:00:00Z',
+    updatedAt: '2026-08-18T00:00:00Z',
+    connectors: [L, R],
+    devices: [],
+    wires,
+    cables: [{ id: 'cb-s', name: '2C 신호', coreCount: 2, lengthMm: 400 }],
+    usedParts: [h6],
+  };
+}
