@@ -7,7 +7,9 @@
  * 화면(docToFlow.test)과 PDF(pdfRoute.test)가 **같은 문서**를 봐야 두 그림을
  * 비교하는 뜻이 있어서 시험 파일이 아니라 픽스처로 뺐다.
  */
-import type { Connector, HarnessDocument, Orientation, PartLibraryItem, Wire } from '../types';
+import type {
+  Connector, Device, HarnessDocument, Orientation, PartLibraryItem, Wire,
+} from '../types';
 
 /**
  * **1행 N핀** 스트립 하우징 — 실제 부품표에서 가장 흔한 모양이다.
@@ -100,5 +102,49 @@ export function labelOverhangDoc(): HarnessDocument {
     schemaVersion: 1, id: 'labels', name: '이름표 가림',
     createdAt: '2026-08-13T00:00:00Z', updatedAt: '2026-08-13T00:00:00Z',
     connectors: [L, R], devices: [], wires, cables: [], usedParts: [h10],
+  };
+}
+
+/**
+ * **장치** 이름표 가림 시험용 픽스처 — 배선이 장치 옆을 지나간다.
+ *
+ * 왜 장치를 배선에 물리지 않았나: 이번 결함은 장치가 **제3의 노드**일 때 가장
+ * 잘 드러난다. 라우터도 검증 규칙(`wire-crosses-part`)도 장치의 **경계 상자**만
+ * 본다. 예전 상자는 단자 이름 길이로만 잡은 48px 이었고, 그 위에 붙는 이름표는
+ * 171px 이라 120px 넘게 상자 밖으로 나가 있었다 — 아무도 모르는 흰 띠다.
+ * 배선이 그 띠를 지나면 화면·PDF 에서 그 구간만 사라지는데 검증은 조용하다.
+ *
+ * 좌표를 이렇게 고른 근거(전부 손으로 검산한 값이다):
+ *   · 장치 (300, 300) · 이름표 띠 = x 300~471 · y 300~317
+ *   · J-A 핸들 (390, 200) → J-B 핸들 (760, 416) · 주행 구간 y = (200+416)/2 = 308
+ *   · 주행 구간 x = 404 ~ 746 → 이름표 띠와 x 404~471 에서 겹친다
+ *   · 예전 상자(300~348)는 주행 구간 x 범위(404~)에 닿지 않아 **비켜 주지 않았다**
+ * 그래서 고치기 전에는 이 한 본이 이름표를 정통으로 지나고, 상자를 이름표만큼
+ * 넓히면 주행 구간이 상자 위(y=288)로 밀려 띠를 벗어난다.
+ */
+export function deviceLabelDoc(): HarnessDocument {
+  const h1 = strip('lib-strip-1', 1);
+  const A = conn('J-A', h1.id, 1, 180, 352, 164);   // 핸들 (390, 200)
+  const B = conn('J-B', h1.id, 1, 0, 760, 380);     // 핸들 (760, 416)
+  const dev: Device = {
+    id: 'dev-1',
+    // 제조 도면에서 실제로 쓰는 길이의 이름. 자르면 조립 지시가 사라진다.
+    name: '리어 도어 락 액추에이터 모듈',
+    terminals: ['+B', 'GND'],
+    positions: { logical: { x: 300, y: 300 } },
+  };
+  return {
+    schemaVersion: 1, id: 'dev-labels', name: '장치 이름표 가림',
+    createdAt: '2026-08-13T00:00:00Z', updatedAt: '2026-08-13T00:00:00Z',
+    connectors: [A, B],
+    devices: [dev],
+    wires: [{
+      id: 'ab',
+      from: { type: 'pin', connectorId: A.id, pinId: A.pins[0].id },
+      to: { type: 'pin', connectorId: B.id, pinId: B.pins[0].id },
+      color: { base: 'red' },
+      gauge: { system: 'awg', value: 22 },
+    }],
+    cables: [], usedParts: [h1],
   };
 }

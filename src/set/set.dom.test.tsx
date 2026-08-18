@@ -7,8 +7,11 @@
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, within } from '@testing-library/react';
-import type { HarnessDocument, KitDocument, PartLibraryItem, Pin } from '../types';
-import { SetOverview } from './SetOverview';
+import type {
+  HarnessDocument, KitDocument, Orientation, PartLibraryItem, Pin,
+} from '../types';
+import { connectorLayout } from '../canvas/geometry';
+import { SetOverview, miniSchematic } from './SetOverview';
 
 const TERM = 'term-1';
 
@@ -294,6 +297,84 @@ describe('하네스 카드', () => {
     const { cb } = show();
     fireEvent.click(screen.getByLabelText('하네스 C LAN 연장'));
     expect(cb.onSelectHarness).toHaveBeenCalledWith('hC');
+  });
+});
+
+/**
+ * 썸네일 격자가 **캔버스와 같은 규칙**에서 나오는가.
+ *
+ * ── 실측한 결함
+ * 캔버스는 커넥터 격자를 방향에 맞춰 세운다(geometry.drawGrid: 배선이 나가는 변에
+ * 핀이 줄지어 서야 핸들이 벌어진다). 그런데 썸네일은 boxW/boxH/gridOf 를 제 파일에
+ * 베껴 두고 **저장된 pinLayout 을 그대로** 읽었다 — 방향을 통째로 무시했다.
+ * 1행 10P 를 0°(왼쪽)로 두면 캔버스는 38×308(세로로 김)인데 카드는 108×17
+ * (가로로 김)이었다. 같은 하네스인데 카드와 도면이 다르게 생겼다.
+ *
+ * 여기서는 **가로·세로 비율의 방향**만 못박는다. 썸네일은 축척도 칸 수도 줄이므로
+ * 크기가 같을 수 없지만, "어느 쪽이 긴가"는 커넥터 방향 그 자체라 달라지면 안 된다.
+ */
+describe('썸네일 격자 = 캔버스 격자 (방향 반영)', () => {
+  const strip10: PartLibraryItem = {
+    id: 'h10', category: 'housing', name: '10P 스트립', pinCount: 10,
+    pinLayout: Array.from({ length: 10 }, (_, i) => ({ index: i + 1, offset: { x: i, y: 0 } })),
+  };
+
+  /** 1행 10P 커넥터 하나만 놓은 문서 — 이번 결함의 재현 조건 */
+  const docFor = (o: Orientation): HarnessDocument => ({
+    schemaVersion: 1, id: `t${o}`, name: `10P ${o}°`,
+    createdAt: '2026-08-18T00:00:00Z', updatedAt: '2026-08-18T00:00:00Z',
+    connectors: [{
+      id: 'c1', kind: 'connector', housingId: 'h10', orientation: o,
+      positions: { logical: { x: 100, y: 100 } },
+      pins: Array.from({ length: 10 }, (_, i) => ({ id: `p${i + 1}`, index: i + 1 })),
+    }],
+    devices: [], wires: [], usedParts: [strip10],
+  });
+
+  /** 세로로 긴가(-1) · 정사각(0) · 가로로 긴가(+1) */
+  const shape = (w: number, h: number) => Math.sign(w - h);
+
+  it.each([[0], [90], [180], [270]] as [Orientation][])(
+    '%i° — 썸네일 하우징의 가로·세로 비율 방향이 캔버스와 같다',
+    (o) => {
+      const doc = docFor(o);
+      const g = connectorLayout(doc.connectors[0], strip10);
+      const box = miniSchematic(doc).boxes[0];
+      expect(shape(box.w, box.h), `캔버스 ${g.boxW}×${g.boxH} · 썸네일 ${box.w}×${box.h}`)
+        .toBe(shape(g.boxW, g.boxH));
+    },
+  );
+
+  /**
+   * 대조군 — 이 시험이 정말 무언가를 붙잡는지 보인다.
+   * 좌우로 나가는 0°/180° 는 세로로, 위아래로 나가는 90°/270° 는 가로로 서야 한다.
+   * 방향을 무시하던 예전 썸네일은 네 방향이 **전부 같은 모양**(108×17)이었다.
+   */
+  it('좌우 배치와 상하 배치의 모양이 서로 뒤집혀 있다', () => {
+    const s = (o: Orientation) => {
+      const b = miniSchematic(docFor(o)).boxes[0];
+      return `${b.w}x${b.h}`;
+    };
+    expect(s(0)).toBe(s(180));       // 둘 다 세로 열
+    expect(s(90)).toBe(s(270));      // 둘 다 가로 행
+    expect(s(0)).not.toBe(s(90));    // 예전에는 여기가 같았다
+    const left = miniSchematic(docFor(0)).boxes[0];
+    const up = miniSchematic(docFor(90)).boxes[0];
+    expect(left.w).toBeLessThan(left.h);
+    expect(up.w).toBeGreaterThan(up.h);
+  });
+
+  /**
+   * 칸 수를 줄이는 것은 **썸네일만의 사정**이다(카드가 320×112 뿐이다).
+   * 줄이는 규칙은 geometry.clampGrid 에 있고, 여기서는 그 결과가 카드 안에
+   * 들어오는지만 확인한다.
+   */
+  it('10P 를 줄여도 카드(320×112) 안에 들어간다', () => {
+    for (const o of [0, 90, 180, 270] as Orientation[]) {
+      const b = miniSchematic(docFor(o)).boxes[0];
+      expect(b.w).toBeLessThanOrEqual(320 - 12);
+      expect(b.h).toBeLessThanOrEqual(112 - 12);
+    }
   });
 });
 

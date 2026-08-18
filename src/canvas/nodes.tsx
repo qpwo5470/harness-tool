@@ -28,7 +28,9 @@ import type { Connector, Device, PartLibraryItem, ViewMode, Orientation } from '
  */
 import {
   PITCH, INSET, PIN_PHYS, PIN_PHYS_PITCH, REF_BLOCK_H, MPN_CAPTION_H,
+  DEV_PAD, DEV_ROW_H,
   connectorLayout, connectorRefParts, labelsAlignRight, layoutCells,
+  deviceSize, deviceRefParts, deviceCaption,
 } from './geometry';
 
 export type ConnectorNodeData = {
@@ -258,22 +260,52 @@ export function ConnectorNode({ data, selected }: NodeProps) {
   );
 }
 
+/**
+ * 장치 블록.
+ *
+ * 커넥터와 달리 **블록 자체를 이름표가 들어갈 만큼 넓힌다**(geometry.deviceSize).
+ * 커넥터는 넘치는 폭을 경계 상자에만 더하고 그 방향을 핸들 반대쪽으로 몰지만,
+ * 장치는 단자 핸들이 오른쪽 변·기본 핸들(`__node`)이 왼쪽 변이라 **양쪽 다 핸들**이라
+ * 그 수가 안 통한다. 블록을 넓히면 핸들이 넓어진 변 위로 함께 옮겨 가므로
+ * (deviceAnchor 가 같은 폭을 쓴다) 스텁 불변식이 유지되고, 이름을 자를 일도 없다.
+ * 자세한 근거는 geometry.deviceSize 머리말.
+ */
 export function DeviceNode({ data, selected }: NodeProps) {
   const { device, ref: refLabel } = data as unknown as DeviceNodeData;
   const terminals = device.terminals ?? [];
+  // 크기·글자는 전부 geometry 에서 온다 — 라우터가 피하는 상자(deviceBox)와
+  // 화면이 같은 숫자를 봐야 이름표 뒤로 배선이 들어가지 않는다.
+  const { w: boxW, h: boxH } = deviceSize(device, refLabel);
+  const parts = deviceRefParts(device, refLabel);
+
+  /**
+   * 이름표·캡션 슬롯 — 커넥터와 같은 수법(폭을 블록과 똑같이 두고 글자는 그 안에서
+   * absolute). 글꼴 실측이 어림(estimateTextWidth)보다 조금 넓어도 **노드 폭이 늘지
+   * 않아** "노드 좌상단 x == 블록 x" 전제가 유지된다(geometry 가 그걸 쓴다).
+   */
+  const slot = (h: number): CSSProperties => ({ position: 'relative', width: boxW, height: h });
+  const at: CSSProperties = { position: 'absolute', top: 0, left: 0 };
+
   return (
     <div className={`hz-node hz-node-device${selected ? ' on' : ''}`}>
-      <div className="hz-ref">
-        <b className="num">{refLabel ?? 'D'}</b>
-        <span className="hz-ref-name">{device.name}</span>
+      <div className="hz-label-slot" style={slot(REF_BLOCK_H)}>
+        <div className="hz-ref" style={at} title={device.name}>
+          <b className="num">{parts.ref}</b>
+          <span className="hz-ref-name">{parts.name}</span>
+        </div>
       </div>
-      <div className="hz-housing hz-housing-dev" style={{ padding: 6 }}>
+      <div
+        className="hz-housing hz-housing-dev"
+        style={{ width: boxW, height: boxH, padding: DEV_PAD }}
+      >
         {/* 단자 없을 때도 연결 가능한 기본 핸들 */}
         <Handle id="__node" type="target" position={Position.Left} style={{ opacity: 0 }} />
         <Handle id="__node" type="source" position={Position.Left} style={{ opacity: 0 }} />
         <div className="hz-dev-terms">
+          {/* 줄 높이는 geometry 가 정한다 — 단자 핸들 y(deviceAnchor)와 PDF 의
+              글자 베이스라인이 같은 DEV_ROW_H 를 쓴다 */}
           {terminals.map((t) => (
-            <div key={t} className="hz-dev-term">
+            <div key={t} className="hz-dev-term" style={{ height: DEV_ROW_H }}>
               <Handle id={t} type="target" position={Position.Right} style={{ opacity: 0 }} />
               <Handle id={t} type="source" position={Position.Right} className="hz-dev-handle" />
               <span className="num">{t}</span>
@@ -281,7 +313,9 @@ export function DeviceNode({ data, selected }: NodeProps) {
           ))}
         </div>
       </div>
-      <div className="hz-mpn">장치 · 단자 {terminals.length}</div>
+      <div className="hz-label-slot" style={slot(MPN_CAPTION_H)}>
+        <div className="hz-mpn" style={at}>{deviceCaption(device)}</div>
+      </div>
     </div>
   );
 }

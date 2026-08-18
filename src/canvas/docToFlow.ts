@@ -264,15 +264,21 @@ export type Anchor = { x: number; y: number; side: Position };
  * 오른쪽 변에서 나가는 배선의 구간이 통째로 어긋났고, 그 위에서 돌린 레인 채색은
  * 화면과 무관한 값이 됐다. 이제 geometry.ts 의 핸들 식을 그대로 쓴다.
  *
- * "근사"인 이유: 라벨 블록 높이(REF_BLOCK_H)가 CSS 실측 상수라서다. 커넥터는
- * 이제 그 높이를 슬롯에 인라인으로 박아(nodes.tsx) 오차가 없지만, 장치 노드는
- * 아직 흐름 배치라 몇 px 어긋난다. 레인 간격이 10px 단위라 배정 결과는 안 바뀐다.
+ * "근사"인 이유: 라벨 블록 높이(REF_BLOCK_H)가 CSS 실측 상수라서다. 커넥터도
+ * 장치도 이제 그 높이·폭·단자 줄 높이를 인라인으로 박아(nodes.tsx) 쓰므로 남는
+ * 오차는 테두리 1.5px 과 장치 단자 줄의 좌우 padding 정도다. 레인 간격이 10px
+ * 단위라 배정 결과는 안 바뀐다.
+ *
+ * `refs` 를 받는 이유: **장치** 블록 폭이 이름표 글자 폭에 달렸고(geometry.deviceSize)
+ * 오른쪽 변 단자 핸들의 x 가 곧 그 폭이다. 경계 상자(endpointBox)와 다른 ref 를
+ * 쓰면 핸들이 상자 변에서 어긋난다. 기본값을 두어 예전 호출부는 그대로 돌아간다.
  */
 export function endpointAnchor(
   doc: HarnessDocument,
   e: Endpoint,
   view: ViewMode,
   at: Map<string, Vec2> = nodePositions(doc, view),
+  refs: Map<string, string> = refLabels(doc),
 ): Anchor {
   const p = at.get(endpointNodeId(e)) ?? { x: 0, y: 0 };
   if (e.type === 'pin') {
@@ -287,7 +293,7 @@ export function endpointAnchor(
   }
   const d = doc.devices.find((x) => x.id === e.deviceId);
   if (!d) return { x: p.x, y: p.y, side: Position.Left };
-  return deviceAnchor(d, e.terminal, p);
+  return deviceAnchor(d, e.terminal, p, refs.get(d.id));
 }
 
 /**
@@ -298,9 +304,9 @@ export function endpointAnchor(
  * 상자를 못 구하면(끝점이 문서에 없는 등) undefined 를 준다: 라우터는 그때
  * 회피 없이 예전대로 그린다.
  *
- * `refs` 를 받는 이유: 상자 폭이 **이름표 글자 폭**까지 포함하는데(connectorBox),
- * 이름표 첫 조각이 도면 레퍼런스("J1"·"SP12")라 그 글자를 알아야 폭이 맞는다.
- * 기본값을 두어 예전 호출부는 그대로 돌아간다.
+ * `refs` 를 받는 이유: 상자 폭이 **이름표 글자 폭**까지 포함하는데(connectorBox ·
+ * deviceBox), 이름표 첫 조각이 도면 레퍼런스("J1"·"SP12"·"D3")라 그 글자를 알아야
+ * 폭이 맞는다. 기본값을 두어 예전 호출부는 그대로 돌아간다.
  */
 export function endpointBox(
   doc: HarnessDocument,
@@ -317,7 +323,7 @@ export function endpointBox(
     return connectorBox(c, doc.usedParts.find((x) => x.id === c.housingId), p, view, refs.get(c.id));
   }
   const d = doc.devices.find((x) => x.id === e.deviceId);
-  return d ? deviceBox(d, p) : undefined;
+  return d ? deviceBox(d, p, refs.get(d.id)) : undefined;
 }
 
 /**
@@ -348,7 +354,7 @@ export function nodeBoxes(
   }
   for (const d of doc.devices) {
     const p = at.get(d.id);
-    if (p) out.push({ id: d.id, box: deviceBox(d, p) });
+    if (p) out.push({ id: d.id, box: deviceBox(d, p, refs.get(d.id)) });
   }
   return out;
 }
@@ -380,12 +386,14 @@ export type WireLanes = {
  */
 export function assignLanes(doc: HarnessDocument, view: ViewMode = 'logical'): WireLanes {
   const at = nodePositions(doc, view);
-  const from = doc.wires.map((w) => endpointAnchor(doc, w.from, view, at));
-  const to = doc.wires.map((w) => endpointAnchor(doc, w.to, view, at));
-
   // 레퍼런스는 한 번만 매긴다 — 상자 폭에 이름표 글자가 들어가므로 배선마다
   // 다시 세면 같은 문서에서 O(n²) 이 된다(결과는 같다).
+  // **핸들 좌표보다 먼저** 구한다: 장치 블록은 이름표 폭만큼 넓어지고(deviceSize)
+  // 오른쪽 변 단자 핸들의 x 가 곧 그 폭이라, 상자와 같은 ref 를 써야 어긋나지 않는다.
   const refs = refLabels(doc);
+  const from = doc.wires.map((w) => endpointAnchor(doc, w.from, view, at, refs));
+  const to = doc.wires.map((w) => endpointAnchor(doc, w.to, view, at, refs));
+
   const fromBox = doc.wires.map((w) => endpointBox(doc, w.from, view, at, refs));
   const toBox = doc.wires.map((w) => endpointBox(doc, w.to, view, at, refs));
   // 제3의 노드 회피용. 문서당 한 번만 만들어 배선 전체가 같은 배열을 나눠 쓴다.

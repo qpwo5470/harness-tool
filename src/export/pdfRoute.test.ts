@@ -358,9 +358,15 @@ describe('PDF 라벨 자리 = 화면 라벨 자리', () => {
     }
   });
 
-  it.each(docs)('%s: PDF 배선이 라벨 사각형을 지나지 않는다', (_name, doc) => {
+  /**
+   * 장치 노드도 함께 잰다. 예전에는 여기서 `kind !== 'device'` 로 빼 두었다 —
+   * 장치 상자가 하우징 폭만 쓰던 시절에는 이름표가 상자 밖으로 나가 있어
+   * 통과할 수가 없었기 때문이다. 이제 블록 자체를 이름표 폭까지 넓혀
+   * (geometry.deviceSize) 라우터가 그 자리를 피하므로 뺄 이유가 없다.
+   */
+  it.each(docs)('%s: PDF 배선이 라벨 사각형을 지나지 않는다 (장치 포함)', (_name, doc) => {
     const dr = buildDrawing(doc);
-    const rects = dr.nodes.filter((n) => n.kind !== 'device').flatMap((n) => n.labelRects);
+    const rects = dr.nodes.flatMap((n) => n.labelRects);
     let hits = 0;
     for (const w of dr.wires) {
       for (const r of rects) {

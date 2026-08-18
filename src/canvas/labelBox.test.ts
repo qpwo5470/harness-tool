@@ -18,19 +18,23 @@
  *      실제로 가려진다. 고친 것이 무엇인지 시험이 증명해야 한다.
  *   4) 상자를 넓혀도 **핸들은 상자 변 위**에 남는다. 핸들이 상자 속으로 들어가면
  *      스텁부터 회피 대상이 돼 경로가 망가진다(route.ts 머리말).
+ *   5) **장치 블록**도 같은 성질(파일 끝 describe). 장치는 양쪽 변에 다 핸들이 있어
+ *      상자를 옆으로 넓힐 수 없으므로 블록 자체를 이름표 폭까지 넓혔다 —
+ *      대조군으로 예전 폭에서는 실제로 관통했음을 보인다.
  */
 import { describe, it, expect } from 'vitest';
-import { assignLanes, refLabels, nodePositions } from './docToFlow';
+import { assignLanes, refLabels, nodePositions, nodeBoxes } from './docToFlow';
 import { planWires } from './wirePlan';
 import { routeOrthogonal, type Box, type Pt } from './route';
 import {
-  REF_BLOCK_H, MPN_CAPTION_H,
+  REF_BLOCK_H, MPN_CAPTION_H, DEV_ROW_H, DEV_PAD,
   connectorBox, connectorLabelRects, connectorLayout, connectorRefParts,
   housingOrigin, pinAnchor, refLabelWidth, mpnCaptionWidth,
+  deviceAnchor, deviceBox, deviceLabelRects, deviceSize,
 } from './geometry';
-import { fanoutDoc, labelOverhangDoc, conn, strip } from '../fixtures/fanoutDoc';
+import { fanoutDoc, labelOverhangDoc, deviceLabelDoc, conn, strip } from '../fixtures/fanoutDoc';
 import { sampleDoc } from '../fixtures/sampleDoc';
-import type { HarnessDocument, Orientation, PartLibraryItem } from '../types';
+import type { Device, HarnessDocument, Orientation, PartLibraryItem, Vec2 } from '../types';
 
 /* ── 판정기 — 라우터를 믿지 않고 직접 쓴다 ───────────────────────────────────── */
 
@@ -331,5 +335,144 @@ describe('기존 문서도 라벨에 안 가린다', () => {
 
   it('샘플 문서 — 0본', () => {
     expect(coverage(routesNow(sampleDoc), labelRectsOf(sampleDoc)).wires).toBe(0);
+  });
+});
+
+/* ── 장치 블록 ───────────────────────────────────────────────────────────────
+ *
+ * 커넥터는 이름표가 삐져나온 폭을 **경계 상자에만** 더하고 그 방향을 핸들
+ * 반대쪽으로 몰아 고쳤다(labelsAlignRight). 장치는 그 수가 안 통한다 —
+ * 단자 핸들이 오른쪽 변, 기본 핸들(`__node`)이 왼쪽 변이라 양쪽 다 핸들이다.
+ * 그래서 **블록 자체를 이름표가 들어갈 만큼 넓힌다**(geometry.deviceSize).
+ * 여기서 재는 것: (1) 고치기 전에는 실제로 관통했다 (2) 지금은 0
+ * (3) 넓힌 뒤에도 핸들이 상자 변 위에 있다 (4) 이름을 자르지 않는다.
+ */
+
+/** 문서 안 모든 장치의 이름표·캡션 사각형 (지금 구현이 그리는 자리) */
+function deviceRectsOf(doc: HarnessDocument): { id: string; rect: Box }[] {
+  const at = nodePositions(doc, 'logical');
+  const refs = refLabels(doc);
+  const out: { id: string; rect: Box }[] = [];
+  for (const d of doc.devices) {
+    const r = deviceLabelRects(d, at.get(d.id)!, refs.get(d.id));
+    out.push({ id: d.id, rect: r.ref }, { id: d.id, rect: r.caption });
+  }
+  return out;
+}
+
+/**
+ * **대조군 재료** — 고치기 전 장치 경계 상자.
+ * 폭을 단자 이름 **글자 수**로만 어림했다(`longest * 6.5`). 이름표는 그보다
+ * 훨씬 넓은데 그 폭이 상자에 안 들어가 있었다.
+ */
+function legacyDeviceBox(d: Device, p: Vec2): Box {
+  const terms = d.terminals ?? [];
+  const longest = terms.reduce((m, t) => Math.max(m, t.length), 3);
+  return {
+    x: p.x, y: p.y,
+    w: Math.max(48, longest * 6.5 + 8 + DEV_PAD * 2),
+    h: REF_BLOCK_H + Math.max(20, terms.length * DEV_ROW_H + DEV_PAD * 2) + MPN_CAPTION_H,
+  };
+}
+
+/**
+ * 장치 상자**만** 예전 것으로 바꿔 끼운 경로.
+ * 끝점·레인·커넥터 상자는 지금과 같게 둔다 — 달라진 것 하나만 보이게.
+ * (픽스처의 배선은 장치에 물려 있지 않으므로 sourceBox/targetBox 는 그대로다)
+ */
+function routesLegacyDevice(doc: HarnessDocument): Pt[][] {
+  const at = nodePositions(doc, 'logical');
+  const lanes = assignLanes(doc, 'logical');
+  const devOf = new Map(doc.devices.map((d) => [d.id, d]));
+  const obstacles = nodeBoxes(doc, 'logical').map((n) => {
+    const d = devOf.get(n.id);
+    return d ? legacyDeviceBox(d, at.get(n.id)!) : n.box;
+  });
+  return doc.wires.map((w, i) => routeOrthogonal({
+    sourceX: lanes.from[i].x, sourceY: lanes.from[i].y,
+    targetX: lanes.to[i].x, targetY: lanes.to[i].y,
+    sourcePosition: lanes.from[i].side, targetPosition: lanes.to[i].side,
+    laneY: lanes.laneY[i], laneX: lanes.laneX[i],
+    sourceBox: lanes.fromBox[i], targetBox: lanes.toBox[i],
+    obstacles,
+  }).points);
+}
+
+describe('장치 이름표가 배선을 덮지 않는다', () => {
+  const doc = deviceLabelDoc();
+  const dev = doc.devices[0];
+  const devAt = { x: 300, y: 300 };
+
+  /**
+   * 대조군이 먼저다. 이 배치가 정말 결함을 재현하는지 보이지 않으면
+   * 아래 0 이 무엇을 뜻하는지 알 수 없다.
+   * (검산: 예전 상자는 300~348, 주행 구간은 x 404~746 이라 서로 안 닿는다.
+   *  그런데 이름표는 300~471 까지 뻗어 주행 구간과 x 404~471 에서 겹친다.)
+   */
+  it('대조군 — 예전 장치 상자로는 이름표를 정통으로 지난다', () => {
+    const hit = coverage(routesLegacyDevice(doc), deviceRectsOf(doc));
+    expect(hit.wires).toBe(1);
+    expect(hit.segs).toBeGreaterThan(0);
+  });
+
+  it('지금 구현 — 장치 이름표·캡션에 가려지는 배선 0본', () => {
+    const hit = coverage(routesNow(doc), deviceRectsOf(doc));
+    expect(hit.wires).toBe(0);
+    expect(hit.segs).toBe(0);
+  });
+
+  it('샘플 문서(장치 포함) — 0본', () => {
+    expect(coverage(routesNow(sampleDoc), deviceRectsOf(sampleDoc)).segs).toBe(0);
+  });
+
+  /**
+   * 이름을 **자르지 않는다**. 제조 도면에서 장치 이름은 조립 지시라
+   * 말줄임(…)이나 줄바꿈으로 뭉개면 안 된다 — 그래서 블록을 이름표 폭까지 넓힌다.
+   */
+  it('블록 폭이 이름표·캡션을 모두 담는다 (이름을 자르지 않는다)', () => {
+    const { w } = deviceSize(dev, 'D1');
+    const r = deviceLabelRects(dev, devAt, 'D1');
+    expect(w).toBeGreaterThanOrEqual(r.ref.w);
+    expect(w).toBeGreaterThanOrEqual(r.caption.w);
+    // 이름표가 예전 폭(48px)보다 훨씬 넓다는 것 — 이 시험이 헛돌지 않는 근거
+    expect(r.ref.w).toBeGreaterThan(150);
+  });
+
+  it('이름표·캡션 사각형이 경계 상자 안에 들어간다', () => {
+    const b = deviceBox(dev, devAt, 'D1');
+    const r = deviceLabelRects(dev, devAt, 'D1');
+    for (const rect of [r.ref, r.caption]) {
+      expect(rect.x).toBeGreaterThanOrEqual(b.x - 1e-6);
+      expect(rect.x + rect.w).toBeLessThanOrEqual(b.x + b.w + 1e-6);
+      expect(rect.y).toBeGreaterThanOrEqual(b.y - 1e-6);
+      expect(rect.y + rect.h).toBeLessThanOrEqual(b.y + b.h + 1e-6);
+    }
+  });
+
+  /**
+   * 블록을 넓혀도 **핸들은 상자 변 위**에 남는다. 핸들이 상자 속으로 들어가면
+   * 스텁부터 회피 대상이 돼 "핸들 방향으로 stub 만큼 곧게" 라는 약속이 깨진다
+   * (route.ts 머리말). 커넥터에서 이미 확인한 것과 같은 성질이다.
+   *
+   * 이름 길이를 셋으로 바꿔 가며 잰다 — 폭을 정하는 항(단자 이름 / 이름표 /
+   * 캡션)이 바뀌어도 핸들이 따라와야 한다.
+   */
+  it.each([
+    ['짧은 이름', 'M1'],
+    ['긴 한글 이름', '리어 도어 락 액추에이터 모듈'],
+    ['아주 긴 이름', 'Rear Door Lock Actuator Control Module Assembly'],
+  ])('%s — 단자·기본 핸들이 상자 좌·우 변 위에 있다', (_name, deviceName) => {
+    const d: Device = { ...dev, name: deviceName };
+    const b = deviceBox(d, devAt, 'D1');
+    for (const t of d.terminals ?? []) {
+      const a = deviceAnchor(d, t, devAt, 'D1');
+      expect(a.x, `단자 ${t}`).toBeCloseTo(b.x + b.w, 6);   // 오른쪽 변
+      expect(a.y).toBeGreaterThanOrEqual(b.y);
+      expect(a.y).toBeLessThanOrEqual(b.y + b.h);
+    }
+    const base = deviceAnchor(d, undefined, devAt, 'D1');
+    expect(base.x).toBeCloseTo(b.x, 6);                     // 왼쪽 변
+    expect(base.y).toBeGreaterThanOrEqual(b.y);
+    expect(base.y).toBeLessThanOrEqual(b.y + b.h);
   });
 });

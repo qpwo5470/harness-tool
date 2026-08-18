@@ -212,12 +212,53 @@ export function gridOf(connector: Connector, housing?: PartLibraryItem) {
   };
 }
 
-/** 격자 칸 수 → 하우징 박스 크기 */
-export function housingSize(cols: number, rows: number): { w: number; h: number } {
+/**
+ * 격자 한 칸의 치수. 캔버스와 세트 개요 썸네일이 **같은 식**을 다른 축척으로 쓴다.
+ *
+ * 왜 축척을 밖에서 받나: 썸네일(SetOverview)이 이 식을 제 파일에 베껴 두고 있었다.
+ * 그래서 커넥터 격자를 방향에 맞춰 세우도록 고친 뒤에도(drawGrid) 썸네일만 옛 모양을
+ * 그렸다 — 같은 하네스인데 카드와 도면이 다르게 생겼다. 식은 여기 하나뿐이고
+ * 썸네일은 숫자(pad/pitch/inset)만 줄여 쓴다.
+ */
+export type GridMetrics = { pad: number; pitch: number; inset: number };
+
+/** 캔버스(논리 뷰) 축척 */
+export const CANVAS_GRID: GridMetrics = { pad: PAD, pitch: PITCH, inset: INSET };
+
+/** 격자 칸 수 → 박스 크기 */
+export function gridBoxSize(
+  cols: number,
+  rows: number,
+  m: GridMetrics = CANVAS_GRID,
+): { w: number; h: number } {
   return {
-    w: cols * PITCH + INSET * 2 - (PITCH - PAD),
-    h: rows * PITCH + INSET * 2 - (PITCH - PAD),
+    w: cols * m.pitch + m.inset * 2 - (m.pitch - m.pad),
+    h: rows * m.pitch + m.inset * 2 - (m.pitch - m.pad),
   };
+}
+
+/** 격자 칸 수 → 하우징 박스 크기 (캔버스 축척) */
+export function housingSize(cols: number, rows: number): { w: number; h: number } {
+  return gridBoxSize(cols, rows, CANVAS_GRID);
+}
+
+/**
+ * 격자 칸 수를 **긴 축 기준**으로 줄인다 — 세트 개요 썸네일처럼 작은 그림에서만 쓴다.
+ *
+ * 왜 여기 있나: 썸네일은 캔버스와 **같은 격자**(방향까지 반영한 drawGrid 결과)를
+ * 축소해 그려야 한다. 자르는 규칙까지 썸네일 파일에 두면 "20P 는 카드에서 몇 칸인가"가
+ * 두 곳에서 갈린다 — 격자 규칙이 한 곳에서만 나온다는 약속이 다시 깨진다.
+ *
+ * 왜 축마다 다른 상한을 두지 않나: 가로 상한과 세로 상한이 다르면 **가로·세로 비율의
+ * 방향이 뒤집힌다**. 예전 썸네일은 MAX_COLS 8 · MAX_ROWS 3 이었고, 1열 10행 커넥터가
+ * 1×3 으로 눌려 세로로 긴 커넥터가 카드에서는 세로로 짧아 보였다. 긴 축만 잘라
+ * 비례로 줄이면 어느 쪽이 긴지가 보존된다(전치는 곧 방향 표시라 뭉개면 안 된다).
+ */
+export function clampGrid(cols: number, rows: number, max: number): { cols: number; rows: number } {
+  const long = Math.max(cols, rows);
+  if (long <= max) return { cols, rows };
+  const s = max / long;
+  return { cols: Math.max(1, Math.round(cols * s)), rows: Math.max(1, Math.round(rows * s)) };
 }
 
 /**
@@ -525,13 +566,61 @@ export function pinAnchorPhysical(
 export const DEV_ROW_H = 19;
 /** 장치 블록 하우징 padding (.hz-housing-dev) */
 export const DEV_PAD = 6;
+/** 단자 이름 글꼴 크기 (.hz-dev-term) */
+const DEV_TERM_FS = 11;
+/** 단자 줄 좌우 padding 한쪽 (.hz-dev-term) */
+const DEV_TERM_PAD_X = 4;
 
-/** 장치 블록 크기 — 단자 이름 길이로 폭을 어림한다(글꼴 폭 ≈ 6.5px/글자) */
-export function deviceSize(device: Device): { w: number; h: number } {
+/**
+ * 장치 이름표(.hz-ref) 글자. 커넥터와 같은 세 조각 구조를 쓰되 방향 칸은 비운다 —
+ * 장치 블록은 회전하지 않으므로(핸들이 좌·우로 고정) 적을 방향이 없다.
+ * 폭 계산과 렌더가 **같은 문자열**을 봐야 상자가 글자를 정확히 덮는다.
+ */
+export function deviceRefParts(device: Device, ref?: string): RefLabelParts {
+  return { ref: ref ?? 'D', name: device.name, dir: '' };
+}
+
+/** 장치 캡션(.hz-mpn) 글자 — DeviceNode 와 PDF 가 같은 문자열을 그린다 */
+export function deviceCaption(device: Device): string {
+  return `장치 · 단자 ${(device.terminals ?? []).length}`;
+}
+
+/**
+ * 장치 블록 크기.
+ *
+ * ── 왜 이름표 폭까지 재나 (실측한 결함)
+ * 예전에는 **단자 이름 길이**로만 폭을 잡았다("longest * 6.5"). 그런데 화면에서
+ * 실제로 넓은 것은 블록 위에 붙는 이름표다("D1 리어 도어 락 액추에이터 모듈" 은
+ * 200px 을 넘는데 블록은 48px 이었다). 이름표는 흰 배경이고 배선은 노드보다
+ * 아래층(zIndex 0)이라, 라우터가 모르는 그 폭 뒤로 배선이 들어가면 화면에서
+ * 통째로 사라진다. 커넥터에서 이미 겪은 그대로다(connectorBox 머리말).
+ *
+ * ── 왜 상자를 옆으로 넓히지 않고 **블록 자체**를 넓히나
+ * 커넥터는 이름표가 삐져나온 만큼을 경계 상자에만 더하고 그 방향을 핸들 반대쪽으로
+ * 몰았다(labelsAlignRight). 장치는 그 수가 안 통한다 — 단자 핸들이 오른쪽 변,
+ * 기본 핸들(`__node`)이 왼쪽 변이라 **양쪽 다 핸들**이어서 어느 쪽으로 넓혀도
+ * 핸들이 상자 속으로 들어가고, 그러면 스텁부터 회피 대상이 돼 경로가 망가진다.
+ *
+ * 블록 자체를 넓히면 핸들이 **넓어진 변 위로 함께 옮겨 간다**(deviceAnchor 가
+ * 같은 w 를 쓴다). 상자 = 블록이므로 핸들은 언제나 변 위에 남고, 이름표는 상자
+ * 안에 들어가며, 이름을 자르거나 줄바꿈할 일도 없다. 제조 도면에서 장치 이름을
+ * 생략(…)하는 것은 선택지가 아니다 — 그 이름이 곧 조립 지시다.
+ *
+ * 단자 이름 폭도 글자 수가 아니라 estimateTextWidth 로 잰다. 한글 단자명("전원",
+ * "접지")은 글자 수가 절반이라 예전 식(6.5px/글자)으로는 상자보다 넓게 그려져
+ * 같은 이유로 배선을 덮었다.
+ */
+export function deviceSize(device: Device, ref?: string): { w: number; h: number } {
   const terms = device.terminals ?? [];
-  const longest = terms.reduce((m, t) => Math.max(m, t.length), 3);
+  const termW = terms.reduce((m, t) => Math.max(m, estimateTextWidth(t, DEV_TERM_FS)), 0)
+    + DEV_TERM_PAD_X * 2 + DEV_PAD * 2;
   return {
-    w: Math.max(48, longest * 6.5 + 8 + DEV_PAD * 2),
+    w: Math.max(
+      48,
+      termW,
+      refLabelWidth(deviceRefParts(device, ref)),
+      mpnCaptionWidth(deviceCaption(device)),
+    ),
     h: Math.max(20, terms.length * DEV_ROW_H + DEV_PAD * 2),
   };
 }
@@ -539,13 +628,18 @@ export function deviceSize(device: Device): { w: number; h: number } {
 /**
  * 장치 블록 핸들의 절대 좌표.
  * 단자 핸들은 오른쪽 변, 단자 없는 기본 핸들(`__node`)은 왼쪽 변 가운데다.
+ *
+ * `ref` 를 받는 이유: 블록 폭이 이름표 글자 폭에 달렸고(deviceSize) 이름표 첫
+ * 조각이 도면 레퍼런스("D1"·"D12")다. 상자와 다른 ref 로 여기를 부르면 오른쪽
+ * 변 핸들이 상자 변에서 몇 px 어긋난다 — 그래서 호출부가 같은 값을 넘긴다.
  */
 export function deviceAnchor(
   device: Device,
   terminal: string | undefined,
   nodePos: Vec2,
+  ref?: string,
 ): { x: number; y: number; side: Position } {
-  const { w, h } = deviceSize(device);
+  const { w, h } = deviceSize(device, ref);
   const top = nodePos.y + REF_BLOCK_H;
   const terms = device.terminals ?? [];
   const i = terminal ? terms.indexOf(terminal) : -1;
@@ -558,16 +652,42 @@ export function deviceAnchor(
 }
 
 /**
+ * 논리 뷰에서 장치 이름표·캡션이 차지하는 사각형 (절대 좌표).
+ * 커넥터의 connectorLabelRects 와 같은 자리 — 화면·PDF·경계 상자가 한 함수를 본다.
+ *
+ * 세로 순서는 언제나 [이름표] [블록] [캡션] 이다. 장치는 회전하지 않으므로
+ * 커넥터처럼 90° 에서 순서를 뒤집는 경우가 없다.
+ *
+ * 두 사각형 모두 **왼쪽 정렬**이다. 블록이 이미 둘보다 넓게 잡혀 있어(deviceSize)
+ * 어느 쪽으로도 삐져나오지 않는다 — 커넥터처럼 넘치는 방향을 고를 필요가 없다.
+ */
+export function deviceLabelRects(
+  device: Device,
+  nodePos: Vec2,
+  ref?: string,
+): { ref: NodeBox; caption: NodeBox } {
+  const { h } = deviceSize(device, ref);
+  return {
+    ref: {
+      x: nodePos.x, y: nodePos.y,
+      w: refLabelWidth(deviceRefParts(device, ref)), h: REF_BLOCK_H,
+    },
+    caption: {
+      x: nodePos.x, y: nodePos.y + REF_BLOCK_H + h,
+      w: mpnCaptionWidth(deviceCaption(device)), h: MPN_CAPTION_H,
+    },
+  };
+}
+
+/**
  * 장치 노드의 경계 상자 — 커넥터와 같은 이유로 이름표·캡션 높이를 포함한다.
  * DeviceNode 는 캡션("장치 · 단자 N")을 항상 그리므로 조건 없이 더한다.
  *
- * 폭은 커넥터와 달리 **넓히지 않는다**. 장치 블록은 단자 핸들이 오른쪽 변에,
- * 단자 없을 때의 기본 핸들(`__node`)이 왼쪽 변에 있어 **양쪽 다 핸들이 있다** —
- * 어느 쪽으로 넓혀도 핸들이 상자 속으로 들어가 스텁부터 회피 대상이 된다
- * (labelsAlignRight 의 근거와 같다). 이름표가 상자보다 길면 그만큼은 여전히
- * 배선을 덮을 수 있다. 남은 한계.
+ * 폭은 블록 폭 그대로다. 블록이 이미 이름표·캡션을 담을 만큼 넓기 때문이다
+ * (deviceSize 머리말). 그래서 상자를 옆으로 늘리지 않아도 라벨이 상자 밖으로
+ * 나가지 않고, 좌·우 변의 핸들은 상자 변 위에 그대로 남는다.
  */
-export function deviceBox(device: Device, nodePos: Vec2): NodeBox {
-  const { w, h } = deviceSize(device);
+export function deviceBox(device: Device, nodePos: Vec2, ref?: string): NodeBox {
+  const { w, h } = deviceSize(device, ref);
   return { x: nodePos.x, y: nodePos.y, w, h: REF_BLOCK_H + h + MPN_CAPTION_H };
 }

@@ -12,13 +12,23 @@
 import { useMemo, useState } from 'react';
 import type { MouseEvent } from 'react';
 import type {
-  Endpoint, HarnessDocument, HarnessSet, Id, KitDocument,
+  Connector, Device, Endpoint, HarnessDocument, HarnessSet, Id, KitDocument,
 } from '../types';
 import {
   blockersOf, letterAt, perSetOf, statsOf, totalHarnesses, totalOf,
 } from '../store/kit';
 import { lengthResolver } from '../store/wireLength';
 import { strokeColor } from '../canvas/docToFlow';
+/**
+ * 격자·방향·크기의 규칙은 **캔버스와 같은 출처**에서 받는다.
+ * 예전에는 boxW/boxH 식과 gridOf 를 이 파일에 통째로 베껴 뒀다. 그래서 캔버스가
+ * 커넥터 격자를 "배선이 나가는 변에 핀이 줄지어 서게" 세우도록 고친 뒤에도
+ * (geometry.drawGrid) 썸네일만 옛 모양을 그렸다 — 같은 하네스인데 카드와 도면이
+ * 다르게 생겼다. 축척(칸 크기)만 여기서 줄이고 규칙은 geometry 에 둔다.
+ */
+import {
+  clampGrid, connectorLayout, gridBoxSize, type GridMetrics,
+} from '../canvas/geometry';
 import './set.css';
 
 // ================================================================
@@ -33,8 +43,17 @@ const MARGIN = 6;
 const PAD = 9;           // 핀 패드 한 변
 const PITCH = 13;        // 패드 피치
 const INSET = 4;         // 하우징 안쪽 여백
-const MAX_COLS = 8;
-const MAX_ROWS = 3;
+/** 썸네일 축척 — 식은 geometry.gridBoxSize 하나뿐이고 여기서는 숫자만 줄인다 */
+const THUMB_GRID: GridMetrics = { pad: PAD, pitch: PITCH, inset: INSET };
+/**
+ * 한 축이 가질 수 있는 최대 칸 수 — **썸네일에만 있는 사정**이다.
+ *
+ * 카드 그림이 320×112 뿐이라 20P 커넥터를 칸 그대로 그리면 하우징 하나가 카드를
+ * 다 먹는다. 자르는 **방법**은 geometry.clampGrid 에 두었다(긴 축만 잘라 비례로
+ * 줄이므로 어느 쪽이 긴지 = 커넥터 방향이 보존된다). 5 인 이유: 5칸이면
+ * 69px(= 5·13 + 8 − 4)로 카드 높이에서 쓸 수 있는 100px 의 3분의 2 다.
+ */
+const MAX_CELLS = 5;
 const MAX_WIRES = 14;    // 이보다 많으면 읽히지 않는다 — 앞에서부터 그린다
 
 type MiniNode = {
@@ -58,22 +77,37 @@ export type MiniSchematic = {
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 const r1 = (n: number) => Math.round(n * 10) / 10;
-const boxW = (cols: number) => cols * PITCH - (PITCH - PAD) + INSET * 2;
-const boxH = (rows: number) => rows * PITCH - (PITCH - PAD) + INSET * 2;
+/** 썸네일 박스 크기 — 식은 캔버스와 같고 축척만 다르다 */
+const thumbBox = (cols: number, rows: number) => gridBoxSize(cols, rows, THUMB_GRID);
 
-/** 하우징 격자 크기 — pinLayout 이 있으면 실제 배치를, 없으면 핀 수로 추정한다 */
-function gridOf(h: HarnessDocument, housingId: Id, pinCount: number): { cols: number; rows: number } {
-  const layout = h.usedParts.find((p) => p.id === housingId)?.pinLayout;
-  if (layout && layout.length) {
-    const cols = Math.max(...layout.map((s) => s.offset.x)) + 1;
-    const rows = Math.max(...layout.map((s) => s.offset.y)) + 1;
-    return {
-      cols: clamp(Math.round(cols) || 1, 1, MAX_COLS),
-      rows: clamp(Math.round(rows) || 1, 1, MAX_ROWS),
-    };
-  }
-  const cols = clamp(pinCount || 1, 1, 4);
-  return { cols, rows: clamp(Math.ceil((pinCount || 1) / cols), 1, MAX_ROWS) };
+/**
+ * 커넥터 썸네일 격자 — **캔버스와 같은 규칙**에서 받는다.
+ *
+ * `connectorLayout` 이 부품 정의 격자를 방향에 맞춰 세운 결과(cols/rows)를 주므로
+ * (geometry.drawGrid: 배선이 나가는 변에 핀이 줄지어 선다) 1행 10P 를 0°/180° 로
+ * 두면 카드에서도 세로로 긴 커넥터가, 90°/270° 로 두면 가로로 긴 커넥터가 나온다.
+ * 예전에는 저장된 pinLayout 을 여기서 직접 읽어 **방향을 통째로 무시했다**.
+ *
+ * 하우징이 문서에 없으면 connectorLayout 이 핀 수만큼 1행으로 편다 — 그 폴백도
+ * 캔버스와 같은 자리에서 나온다.
+ */
+function connectorGrid(h: HarnessDocument, c: Connector): { cols: number; rows: number } {
+  const g = connectorLayout(c, h.usedParts.find((p) => p.id === c.housingId));
+  return clampGrid(g.cols, g.rows, MAX_CELLS);
+}
+
+/**
+ * 장치 썸네일 격자 — 캔버스와 같이 단자를 **세로로 쌓는다**(1열 N행).
+ * 예전에는 가로 1행으로 폈는데, 캔버스의 장치 블록은 단자 줄을 세로로 쌓으므로
+ * (nodes.tsx `.hz-dev-terms`) 카드와 도면의 모양이 달랐다.
+ *
+ * 폭을 캔버스처럼 **이름표 폭**으로 잡지 않는 것이 유일한 차이다(geometry.deviceSize
+ * 는 이름표가 상자 밖으로 나가지 않게 블록을 넓힌다). 썸네일은 글자를 하나도 그리지
+ * 않으므로 그 폭을 옮기면 아무것도 안 든 빈 상자만 넓어진다.
+ */
+function deviceGrid(d: Device): { cols: number; rows: number } {
+  const n = Math.max(1, d.terminals?.length ?? 0);
+  return clampGrid(1, n, MAX_CELLS);
 }
 
 /** 하네스 하나를 320×112 썸네일로 축소한다 */
@@ -81,13 +115,14 @@ export function miniSchematic(h: HarnessDocument): MiniSchematic {
   const nodes: MiniNode[] = [];
 
   h.connectors.forEach((c, i) => {
-    const { cols, rows } = gridOf(h, c.housingId, c.pins.length);
+    const { cols, rows } = connectorGrid(h, c);
+    const { w, h: bh } = thumbBox(cols, rows);
     nodes.push({
       id: c.id,
       cols,
       rows,
-      w: boxW(cols),
-      h: boxH(rows),
+      w,
+      h: bh,
       x: c.positions.logical?.x ?? c.positions.physical?.x ?? i * 140,
       y: c.positions.logical?.y ?? c.positions.physical?.y ?? i * 70,
       dashed: false,
@@ -97,13 +132,14 @@ export function miniSchematic(h: HarnessDocument): MiniSchematic {
 
   h.devices.forEach((d, i) => {
     const terms = d.terminals && d.terminals.length ? d.terminals : ['__node'];
-    const cols = clamp(terms.length, 1, 4);
+    const { cols, rows } = deviceGrid(d);
+    const { w, h: bh } = thumbBox(cols, rows);
     nodes.push({
       id: d.id,
       cols,
-      rows: 1,
-      w: boxW(cols),
-      h: boxH(1),
+      rows,
+      w,
+      h: bh,
       x: d.positions.logical?.x ?? d.positions.physical?.x ?? (h.connectors.length + i) * 140,
       y: d.positions.logical?.y ?? d.positions.physical?.y ?? (h.connectors.length + i) * 70,
       dashed: true,        // 장치는 점선 — 캔버스와 같은 규칙
