@@ -7,6 +7,7 @@ import { useHarnessStore } from './store/harnessStore';
 import { useHoverStore } from './store/hoverStore';
 import {
   emptyDoc, clearSaved, parseDocument, setStorageProblemHandler,
+  readSuperseded, clearSuperseded,
 } from './store/persistence';
 import { mergeDocumentParts } from './library/customParts';
 import { HarnessCanvas } from './canvas/HarnessCanvas';
@@ -39,8 +40,10 @@ type HarnessTab = 'set' | string;
  *  - URL 회수를 다음 틱으로 미룬다: 수 MB 짜리 ZIP 은 click() 이 돌아온 뒤에도
  *    브라우저가 읽고 있어, 곧바로 revoke 하면 빈 파일이 떨어지거나 취소된다.
  */
-function saveBytes(name: string, data: string | Uint8Array<ArrayBuffer>, mime: string) {
-  if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') return;
+function saveBytes(name: string, data: string | Uint8Array<ArrayBuffer>, mime: string): boolean {
+  // 내려받기가 실제로 일어났는지 부르는 쪽이 알아야 할 때가 있다 —
+  // 되찾기(밀려난 저장본)는 내려받은 뒤에야 원본을 지울 수 있다.
+  if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') return false;
   const url = URL.createObjectURL(new Blob([data], { type: mime }));
   const a = document.createElement('a');
   a.href = url;
@@ -50,10 +53,11 @@ function saveBytes(name: string, data: string | Uint8Array<ArrayBuffer>, mime: s
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  return true;
 }
 
-function saveBlob(name: string, text: string, mime: string) {
-  saveBytes(name, text, mime);
+function saveBlob(name: string, text: string, mime: string): boolean {
+  return saveBytes(name, text, mime);
 }
 
 /**
@@ -167,6 +171,23 @@ export default function App() {
   }, [selection, remove, undo, redo, hTab]);
 
   /**
+   * 다른 탭에 밀려난 저장본 되찾기.
+   *
+   * 앱 안으로 불러들이지 않고 파일로 내린다 — 불러들이면 이번엔 **이 탭의**
+   * 작업이 화면에서 사라지고, 그건 고치려던 사고와 같은 사고다.
+   * 내려받은 뒤 자리를 비워, 다음에 밀려나는 판본이 이것과 섞이지 않게 한다.
+   */
+  function downloadSuperseded() {
+    const raw = readSuperseded();
+    if (!raw) {
+      showToast('보관해 둔 저장본이 이미 없습니다');
+      return;
+    }
+    // 내려받지 못했으면 지우지 않는다 — 지우면 그때야말로 되찾을 길이 없다
+    if (saveBlob('밀려난-자동저장.json', raw, 'application/json')) clearSuperseded();
+  }
+
+  /**
    * 자동저장 사고 알림.
    * 저장 용량 초과와 "저장된 작업을 못 읽음"은 조용히 넘기면 **작업을 잃는** 사고다.
    * 용량이 찬 뒤로는 저장이 멈춘 채 화면만 멀쩡하고, 못 읽은 자동저장은 다음 저장에
@@ -174,6 +195,19 @@ export default function App() {
    */
   useEffect(() => {
     setStorageProblemHandler((p) => {
+      if (p.kind === 'superseded') {
+        showToast(
+          p.rescued
+            ? '다른 탭에서 저장한 내용을 이 탭 작업이 밀어냈습니다 — 밀려난 저장본은 보관해 두었습니다'
+            : '다른 탭에서 저장한 내용이 있어 이 탭의 자동저장을 멈췄습니다 — JSON 으로 저장해 두세요',
+          undefined,
+          12000,
+          // 되찾을 길을 그 자리에서 준다. 파일로 내려주는 이유는 지금 편집 중인
+          // 세트를 건드리지 않기 때문이다 — 되찾다가 이쪽을 잃으면 같은 사고다.
+          p.rescued ? { label: '밀려난 저장본 내려받기', run: downloadSuperseded } : undefined,
+        );
+        return;
+      }
       showToast(
         p.kind === 'quota'
           ? '브라우저 저장 공간이 가득 차 자동저장이 멈췄습니다 — JSON 으로 저장해 두세요'

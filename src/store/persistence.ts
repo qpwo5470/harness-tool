@@ -33,6 +33,19 @@ const KEY_KIT = 'harness-tool:kit:v2';
  * 원본을 여기로 피신시킨 뒤에야 새로 저장한다.
  */
 const KEY_KIT_BROKEN = 'harness-tool:kit:v2:broken';
+/**
+ * 다른 탭이 저장해 둔 것을 이 탭이 밀어낼 때, 밀려나는 쪽을 옮겨 두는 자리.
+ * `:broken` 과 같은 원칙이다 — 사용자의 작업을 지우기 전에 먼저 피신시킨다.
+ * (여기엔 **마지막으로 밀려난 한 벌**만 남는다. 저장본은 그 탭의 전체 상태
+ *  스냅샷이라 가장 나중 것이 그 탭에서 가장 완전한 판본이기 때문이다.)
+ */
+const KEY_KIT_SUPERSEDED = 'harness-tool:kit:v2:superseded';
+/**
+ * 저장본에 찍는 세대 표식 (`탭id:순번`). 본문과 **분리된 키**에 둔다 —
+ * 저장 형식(`KEY_KIT` 의 JSON)을 건드리지 않으므로 옛 저장본도, 옛 빌드도
+ * 그대로다. 표식이 없는 저장본은 "아직 아무도 안 찍음" 으로만 읽힌다.
+ */
+const KEY_KIT_STAMP = 'harness-tool:kit:v2:stamp';
 
 /** 이 빌드가 읽을 수 있는 가장 높은 스키마 버전 */
 export const MAX_SCHEMA_VERSION = 2;
@@ -50,7 +63,14 @@ export type StorageProblem =
   /** 저장 공간이 꽉 참 — 이제부터 자동저장이 안 된다 */
   | { kind: 'quota' }
   /** 저장된 자동저장을 읽지 못함 (원본은 백업 키로 피신시켰다) */
-  | { kind: 'unreadable'; reason: string };
+  | { kind: 'unreadable'; reason: string }
+  /**
+   * 다른 탭이 그 사이에 저장해 둔 것이 있었다.
+   * - `rescued: true`  — 밀려나는 쪽을 피신시키고 이 탭 내용을 저장했다
+   * - `rescued: false` — 피신조차 못 해서(저장 공간 부족 등) **저장을 멈췄다**.
+   *   되돌릴 길 없이 남의 작업을 지우느니 이쪽 자동저장을 포기한다.
+   */
+  | { kind: 'superseded'; rescued: boolean };
 
 let onProblem: ((p: StorageProblem) => void) | null = null;
 let pending: StorageProblem[] = [];
@@ -69,10 +89,19 @@ export function setStorageProblemHandler(fn: ((p: StorageProblem) => void) | nul
   for (const p of q) fn(p);
 }
 
-/** 시험용 — 버퍼와 핸들러를 비운다 */
+/**
+ * 시험용 — 버퍼와 핸들러를 비운다.
+ * 탭 추적 상태(다른 탭이 저장했는지)도 함께 비운다: 한 프로세스 안에서 시험이
+ * 이어 도는데 앞 시험이 남긴 세대 표식이 남아 있으면, 뒤 시험이 자기 저장을
+ * "남의 탭이 쓴 것" 으로 오해한다.
+ */
 export function resetStorageProblems() {
   onProblem = null;
   pending = [];
+  lastKnownRaw = null;
+  foreignRaw = null;
+  lastStamp = null;
+  stampUsable = true;
 }
 
 /**
@@ -530,6 +559,151 @@ export function clearSaved() {
     const ls = safeStorage();
     ls?.removeItem(KEY);
     ls?.removeItem(KEY_KIT);
+    // 지운 자리는 내가 아는 상태다 — 이걸 비우지 않으면 다음 저장이 스스로를
+    // "남이 쓴 것" 으로 오해해 헛되이 피신시킨다.
+    // 피신해 둔 `:superseded` 는 건드리지 않는다(readSuperseded 주석 참고).
+    lastKnownRaw = null;
+    foreignRaw = null;
+  } catch {
+    /* noop */
+  }
+}
+
+// ================================================================
+// 탭 사이 덮어쓰기 감지
+//
+// ## 무엇이 문제였나
+// 같은 브라우저에서 탭을 두 개 열면 각 탭이 **자기 메모리 상태를 그대로**
+// localStorage 에 덮어썼다. 다른 탭이 그 사이에 저장했는지 보지 않으므로
+// 나중에 편집한 탭이 앞 탭의 작업을 통째로 지웠고, 경고도 흔적도 없었다.
+// 도면을 두 탭에 띄워 놓고 각각 만지는 건 실무에서 흔한 일이다.
+//
+// ## 왜 이 방식인가
+// 후보는 셋이었다.
+//  (a) 탭 하나만 편집권 — 나머지가 읽기 전용이 되면 이미 손대고 있던 탭의
+//      작업이 저장될 곳을 잃는다. 백엔드가 없어 되찾을 곳도 없다.
+//  (b) 덮어쓰기 직전에 멈추고 사용자에게 묻기 — 자동저장은 타이핑마다 도는
+//      경로다. 여기에 대화상자를 걸면 편집이 멈춘다.
+//  (c) **밀려나는 쪽을 피신시키고 덮어쓴 뒤, 무슨 일이 났는지 알린다** ← 채택.
+//      편집은 그대로 흐르고(요구 4: 탭 하나면 아무 것도 안 달라진다),
+//      잃을 뻔한 판본은 `:superseded` 에서 되찾을 수 있다(요구 3).
+//
+// ## 어떻게 알아채나 — 값싼 순서로 두 겹
+//  1. `storage` 이벤트: 다른 탭의 저장을 **공짜로** 알려준다. 표식을 모르는
+//     옛 빌드가 쓴 것까지 잡힌다.
+//  2. 세대 표식(`KEY_KIT_STAMP`): 이벤트를 놓쳤을 때를 위한 뒷받침. 짧은
+//     문자열 하나를 읽고 쓸 뿐이라 탭이 하나뿐인 경우에도 체감 지연이 없다.
+//     (본문 전체를 다시 읽는 비싼 확인은 표식이 어긋났을 때만 한다.)
+// ================================================================
+
+/**
+ * 이 탭이 마지막으로 읽거나 쓴 저장본 **원문**.
+ * 남이 쓴 것과 내가 쓴 것을 가르는 유일한 기준이다.
+ */
+let lastKnownRaw: string | null = null;
+/** 이 탭이 마지막으로 본 세대 표식 (없으면 null = "아무도 안 찍은 상태") */
+let lastStamp: string | null = null;
+/** 표식을 남기지 못했으면(용량 부족 등) 표식 비교는 못 믿는다 — 이벤트만 본다 */
+let stampUsable = true;
+/** storage 이벤트로 잡아 둔, 아직 밀어내지 않은 남의 저장본 */
+let foreignRaw: string | null = null;
+
+/** 탭 식별자 — 표식이 누구 것인지 구분하는 데만 쓴다(저장 형식과 무관) */
+const tabId = `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+let stampSeq = 0;
+
+/**
+ * 다른 탭의 저장을 실시간으로 잡는다.
+ * 이 이벤트는 **쓴 탭 자신에게는 오지 않지만**, 그 사실에 기대지 않고
+ * 원문을 대조해 걸러낸다(시험에서 한 창을 여러 탭처럼 쓰기 때문이기도 하다).
+ */
+function onForeignStorage(e: StorageEvent) {
+  if (e.key !== KEY_KIT) return;
+  if (e.newValue == null) {
+    // 다른 탭이 '새 문서' 로 자동저장을 지웠다 — 밀어낼 것도, 되찾을 것도 없다
+    lastKnownRaw = null;
+    foreignRaw = null;
+    return;
+  }
+  if (e.newValue === lastKnownRaw) return;  // 내가 쓴 것(또는 같은 내용)
+  foreignRaw = e.newValue;
+}
+
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+  window.addEventListener('storage', onForeignStorage);
+}
+
+/** 저장본에 새 세대 표식을 찍는다 */
+function stampNow(ls: Storage) {
+  const s = `${tabId}:${(stampSeq += 1)}`;
+  try {
+    ls.setItem(KEY_KIT_STAMP, s);
+    lastStamp = s;
+    stampUsable = true;
+  } catch {
+    // 표식을 못 남기면 이후 비교가 거짓 경보를 낸다 — 아예 끄고 이벤트만 믿는다
+    stampUsable = false;
+  }
+}
+
+/** 내가 마지막으로 본 표식과 다른가 = 그 사이 다른 탭이 저장했는가 */
+function stampMoved(ls: Storage): boolean {
+  if (!stampUsable) return false;
+  try {
+    return ls.getItem(KEY_KIT_STAMP) !== lastStamp;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 지금 저장하면 밀려나는 남의 저장본. 없으면 null.
+ * 비싼 본문 읽기는 표식이 어긋났을 때만 한다.
+ */
+function foreignSnapshot(ls: Storage, raw: string): string | null {
+  let f = foreignRaw;
+  foreignRaw = null;
+  if (f == null && stampMoved(ls)) {
+    try {
+      f = ls.getItem(KEY_KIT);
+    } catch {
+      f = null;
+    }
+  }
+  // 내가 이미 알고 있던 내용이거나 지금 쓰려는 내용과 같으면 밀려나는 작업이 없다
+  if (f == null || f === lastKnownRaw || f === raw) return null;
+  return f;
+}
+
+/** 밀려나는 저장본을 피신시킨다. 실패하면 되찾을 길이 없다는 뜻이다. */
+function rescueForeign(ls: Storage, foreign: string): boolean {
+  try {
+    ls.setItem(KEY_KIT_SUPERSEDED, foreign);
+    return true;
+  } catch {
+    // 다음 저장에서 다시 시도해야 한다 — 여기서 잊으면 그때 조용히 덮어쓴다
+    foreignRaw = foreign;
+    return false;
+  }
+}
+
+/**
+ * 밀려난 저장본 원문. 되찾기(내려받기)용 — 파싱은 부르는 쪽이 한다.
+ * 앱이 지우지 않는 한 남아 있다. '새 문서' 도 이것은 건드리지 않는다:
+ * 내 문서를 새로 만드는 것과 남의 탭 작업을 버리는 것은 다른 일이다.
+ */
+export function readSuperseded(): string | null {
+  try {
+    return safeStorage()?.getItem(KEY_KIT_SUPERSEDED) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** 되찾은 뒤 자리를 비운다 */
+export function clearSuperseded() {
+  try {
+    safeStorage()?.removeItem(KEY_KIT_SUPERSEDED);
   } catch {
     /* noop */
   }
@@ -549,10 +723,17 @@ export function loadSavedKit(): KitDocument | null {
   try {
     const ls = safeStorage();
     if (!ls) return null;
+    // 지금 저장소에 있는 것이 이 탭의 출발점이다 — 이후 이 값이 바뀌면 남이 쓴 것이다.
+    // (표식이 없는 옛 저장본이면 lastStamp 는 null 이고, 그것 역시 "아무도 안 찍음"
+    //  이라는 정확한 출발점이라 거짓 경보가 나지 않는다.)
+    lastStamp = ls.getItem(KEY_KIT_STAMP);
     const raw = ls.getItem(KEY_KIT);
     if (raw) {
       const r = parseDocument(raw);
-      if (r.ok) return r.kit;
+      if (r.ok) {
+        lastKnownRaw = raw;
+        return r.kit;
+      }
       try {
         ls.setItem(KEY_KIT_BROKEN, raw);
         ls.removeItem(KEY_KIT);
@@ -578,19 +759,40 @@ let quotaNotified = false;
 export function saveKit(kit: KitDocument): boolean {
   const ls = safeStorage();
   if (!ls) return false;      // 저장소 자체가 없는 환경(file://)은 이미 알려진 상태다
+  const raw = JSON.stringify(kit);
+
+  // 그 사이 다른 탭이 저장했다면 **조용히 덮지 않는다** — 먼저 피신시키고 알린다.
+  const foreign = foreignSnapshot(ls, raw);
+  if (foreign != null) {
+    if (!rescueForeign(ls, foreign)) {
+      // 피신에 실패했다 = 지금 덮어쓰면 남의 작업을 되돌릴 길이 없다.
+      // 그럴 바엔 이쪽 자동저장을 멈춘다. 이 탭 내용은 아직 화면에 있고
+      // JSON 으로 내보낼 수 있지만, 덮어써진 남의 작업은 아무 데도 없다.
+      reportStorageProblem({ kind: 'superseded', rescued: false });
+      return false;
+    }
+    reportStorageProblem({ kind: 'superseded', rescued: true });
+  }
+
+  const prevRaw = lastKnownRaw;
+  // 쓰기 **전에** 세워 둔다 — storage 이벤트가 같은 창의 다른 문서로 되돌아와도
+  // 내가 쓴 것을 남의 저장으로 오해하지 않는다.
+  lastKnownRaw = raw;
   try {
-    ls.setItem(KEY_KIT, JSON.stringify(kit));
-    quotaNotified = false;
-    return true;
+    ls.setItem(KEY_KIT, raw);
   } catch {
     // 용량 초과면 **이 시점부터 자동저장이 멈춘다**. 조용히 두면 사용자는
     // 저장되고 있다고 믿은 채 작업하다 새로고침에서 전부 잃는다.
+    lastKnownRaw = prevRaw;
     if (!quotaNotified) {
       quotaNotified = true;
       reportStorageProblem({ kind: 'quota' });
     }
     return false;
   }
+  stampNow(ls);
+  quotaNotified = false;
+  return true;
 }
 
 /**

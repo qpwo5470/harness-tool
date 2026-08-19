@@ -23,6 +23,14 @@ export type ToastItem = {
   message: string;
   /** 있으면 "실행취소 ⌘Z" 버튼이 붙는다 */
   undo?: () => void;
+  /**
+   * 실행취소가 아닌 행동 하나 (선택). 라벨을 직접 준다.
+   *
+   * 되돌리기가 아닌 일(예: 밀려난 저장본 내려받기)을 "실행취소 ⌘Z" 버튼에
+   * 실으면 라벨이 거짓말이 되고, ⌘Z 로도 그 일이 일어난다. 그래서 통로를
+   * 따로 두고 **키는 걸지 않는다** — 취소가 아니므로 키로 부를 일이 없다.
+   */
+  action?: { label: string; run: () => void };
   /** 표시 시간(ms) */
   ms: number;
 };
@@ -39,8 +47,13 @@ function emit() {
  * 파괴적 동작(삭제 · 일괄 지정) 뒤에만 부른다.
  * 되돌릴 수 없는 동작이면 undo 를 넘기지 않는다 — 버튼이 빠진다.
  */
-export function showToast(message: string, undo?: () => void, ms = 6000): number {
-  current = { id: ++seq, message, undo, ms };
+export function showToast(
+  message: string,
+  undo?: () => void,
+  ms = 6000,
+  action?: ToastItem['action'],
+): number {
+  current = { id: ++seq, message, undo, ms, ...(action ? { action } : {}) };
   emit();
   return current.id;
 }
@@ -126,6 +139,18 @@ export function ToastHost() {
             }}
           >
             실행취소 <b className="num">⌘Z</b>
+          </button>
+        )}
+        {toast.action && (
+          <button
+            type="button"
+            className="tz-undo"
+            onClick={() => {
+              toast.action?.run();
+              hideToast();
+            }}
+          >
+            {toast.action.label}
           </button>
         )}
         <button type="button" className="tz-close" aria-label="알림 닫기" onClick={hideToast}>
