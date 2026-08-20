@@ -46,6 +46,14 @@ const GROUPS: { label: string; openByDefault?: boolean; match: (p: PartLibraryIt
   { label: '범용 하우징', match: (p) => /^lib-(xh|ph|minifit-4p|molex)/.test(p.id) },
   // Molex SPOX 2.5mm — 하우징(35155)과 짝 헤더(35312)를 같이 두어야 짝을 못 놓친다.
   { label: 'Molex SPOX 2.5mm (35155 · 35312)', match: (p) => p.id.startsWith('lib-spox') },
+  /*
+   * Molex Micro-Fit 3.0 — 리셉터클(43025)·플러그(43020)·터미널(43030/43031)을 한 그룹에.
+   * 하네스는 양 끝이 있어야 그려지고 터미널까지 골라야 발주가 되므로 셋을 떼지 않는다.
+   * id 접두사를 `lib-mf3-` 로 둔 이유: 위 '범용 하우징'이 `/^lib-(…|molex)/` 를 잡고
+   * 있어서 `lib-molex-…` 로 지었으면 같은 부품이 두 그룹에 **두 번** 나온다(그룹은
+   * 서로 배타적이지 않고 각자 목록을 거른다).
+   */
+  { label: 'Molex Micro-Fit 3.0 (3.0mm)', match: (p) => p.id.startsWith('lib-mf3-') },
   { label: '와이어투와이어', match: (p) => p.id.startsWith('lib-w2w') },
   { label: '보드투와이어', match: (p) => p.id.startsWith('lib-b2w') || p.id.startsWith('lib-terminal-block') },
   { label: '스플라이스', openByDefault: true, match: (p) => p.id.startsWith('lib-splice') },

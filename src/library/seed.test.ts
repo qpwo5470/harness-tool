@@ -263,6 +263,105 @@ describe('Molex 35312 (2.50mm 수직 헤더)', () => {
 });
 
 // ================================================================
+// Molex Micro-Fit 3.0 — 판매도면 430250000-SD 에서 확인한 값만
+// ================================================================
+
+describe('Molex Micro-Fit 3.0 (43025 · 43020 · 43030/43031)', () => {
+  const rcpt = (n: number) => byId(`lib-mf3-43025-${String(n).padStart(2, '0')}p`);
+  const plug = (n: number) => byId(`lib-mf3-43020-${String(n).padStart(2, '0')}p`);
+
+  it('도면이 밝힌 회로 구성 12종이 리셉터클·플러그 양쪽에 있다', () => {
+    // 판매도면 표: 02·04·06·08·10·12·14·16·18·20·22·24
+    const want = [2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24];
+    for (const series of ['43025', '43020']) {
+      const all = SEED_PARTS.filter((x) => x.id.startsWith(`lib-mf3-${series}-`));
+      expect(all.map((x) => x.pinCount)).toEqual(want);
+    }
+  });
+
+  it('품번은 네 자리 0 채움이다 — 43025-0600 이지 43025-600 이 아니다', () => {
+    expect(rcpt(6).mpn).toBe('43025-0600');
+    expect(rcpt(24).mpn).toBe('43025-2400');
+    expect(plug(2).mpn).toBe('43020-0200');
+    // 규칙을 벗어난 품번이 하나라도 섞이면 발주가 틀어진다.
+    // 터미널(43030/43031)은 끝자리가 도금·포장을 물어 시리즈 번호만 적으므로 뺀다.
+    const housings = SEED_PARTS.filter(
+      (x) => x.id.startsWith('lib-mf3-430') && x.category === 'housing',
+    );
+    expect(housings).toHaveLength(24);
+    expect(housings.every((x) => /^430(25|20)-\d{2}00$/.test(x.mpn!))).toBe(true);
+    // 터미널은 반대로 **하이픈 뒤가 없어야** 한다 — 확인하지 못한 끝자리를 지어내지 않았다는 뜻
+    expect(byId('lib-mf3-43030').mpn).toBe('43030');
+    expect(byId('lib-mf3-43031').mpn).toBe('43031');
+  });
+
+  it('격자는 2행 × (회로수/2)열 — 도면 치수 B 로 검산한 값', () => {
+    // B = (열수 − 1) × 3.00mm : 6회로 B=6.00 → 3열, 24회로 B=33.00 → 12열
+    const colsOf = (p: ReturnType<typeof rcpt>) =>
+      new Set(p.pinLayout!.map((s) => s.offset!.x)).size;
+    const rowsOf = (p: ReturnType<typeof rcpt>) =>
+      new Set(p.pinLayout!.map((s) => s.offset!.y)).size;
+
+    expect([colsOf(rcpt(6)), rowsOf(rcpt(6))]).toEqual([3, 2]);
+    expect([colsOf(rcpt(24)), rowsOf(rcpt(24))]).toEqual([12, 2]);
+    expect([colsOf(plug(10)), rowsOf(plug(10))]).toEqual([5, 2]);
+  });
+
+  it('핀 수와 pinLayout 길이가 맞고, 두 핀이 같은 자리에 오지 않는다', () => {
+    const all = SEED_PARTS.filter((x) => x.id.startsWith('lib-mf3-430'));
+    for (const p of all) {
+      if (p.category === 'terminal') continue;
+      expect(p.pinLayout!.length).toBe(p.pinCount);
+      const seen = new Set(p.pinLayout!.map((s) => `${s.offset!.x},${s.offset!.y}`));
+      expect(seen.size).toBe(p.pinCount);
+    }
+  });
+
+  it('암수가 하우징과 뒤집혀 있다는 사실을 그대로 담는다', () => {
+    // 리셉터클 하우징(43025)에 암 터미널(43030), 플러그 하우징(43020)에 수 터미널(43031).
+    // 이 뒤집힘이 실제로 잘못 발주되는 자리라 시험으로 못박는다.
+    expect(rcpt(6).gender).toBe('receptacle');
+    expect(plug(6).gender).toBe('plug');
+    expect(rcpt(6).spec!.터미널).toContain('43030');
+    expect(plug(6).spec!.터미널).toContain('43031');
+    expect(byId('lib-mf3-43030').category).toBe('terminal');
+    expect(byId('lib-mf3-43031').category).toBe('terminal');
+  });
+
+  it('짝·피치·전선범위가 도면대로 적혀 있다', () => {
+    expect(rcpt(8).spec!.피치).toContain('3.00mm');
+    expect(rcpt(8).spec!.결합).toContain('43020');   // 도면 주5: 43020, 43045 와 결합
+    expect(plug(8).spec!.결합).toContain('43025');
+    expect(rcpt(8).spec!.적용전선).toContain('18');
+    expect(rcpt(8).spec!.적용전선).toContain('30');
+  });
+
+  it('2·4 회로만 풀탭 없음을 적고, 나머지에는 적지 않는다', () => {
+    // 도면 주8은 "없는 쪽"만 밝힌다. 나머지에 "있음"이라 쓰면 도면이 말하지 않은 것을 말하는 셈이다.
+    expect(rcpt(2).spec!.풀탭).toContain('없');
+    expect(rcpt(4).spec!.풀탭).toContain('없');
+    expect(rcpt(6).spec!.풀탭).toBeUndefined();
+    expect(rcpt(24).spec!.풀탭).toBeUndefined();
+  });
+
+  it('확인하지 못한 핀 번호 배열을 아는 척하지 않는다', () => {
+    // 2열 중 어느 행이 1..n/2 인지는 도면 그림 안에 있어 확인하지 못했다.
+    // 그 사실이 부품 비고에 남아 있어야 사용자가 크림프 전에 확인한다.
+    for (const p of [rcpt(6), rcpt(24), plug(10)]) {
+      expect(p.spec!.비고).toContain('확인');
+      expect(p.spec!.비고).toContain('핀맵 에디터');
+    }
+    expect(rcpt(6).spec!.회로1표시).toContain('리브');
+  });
+
+  it('43045(PCB 헤더)는 넣지 않았다 — 품번 규칙을 확인하지 못해서다', () => {
+    // 43045 는 끝 두 자리가 회로 수가 아니라 실장 방향·페그·도금을 문다.
+    // 43025 도면만 보고 43045-XX00 을 지어내면 없는 품번이 발주서에 실린다.
+    expect(SEED_PARTS.filter((x) => (x.mpn ?? '').startsWith('43045'))).toHaveLength(0);
+  });
+});
+
+// ================================================================
 // 연호 SMP250 — 데이터시트 값 그대로 (SMP250-NN.pdf)
 // ================================================================
 describe('연호 SMP250 (2.50mm 전선측 플러그)', () => {

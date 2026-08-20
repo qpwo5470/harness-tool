@@ -14,11 +14,14 @@
  *   맞물리며, 터미널도 SMH250 의 YST025 가 아니라 **SMT025** 를 쓴다 (데이터시트 SMP250-NN).
  * - Molex SPOX 2.50mm: 35155(하우징, Receptacle) ↔ 35312(수직 헤더) / 35184(플러그 하우징),
  *   터미널 5103. 두 시리즈 모두 Not Recommended For New Design.
+ * - Molex Micro-Fit 3.0: 판매도면 **430250000-SD** 에서 직접 확인.
+ *   43025(리셉터클 하우징, 2열) ↔ 43020(플러그 하우징) / 43045(PCB 헤더),
+ *   터미널 43030(암)·43031(수). 피치 3.00mm(열·행 모두), 회로 02~24 짝수.
  *
  * 결합 성별(gender)은 문자열 `spec.형식` 이 아니라 `PartLibraryItem.gender` 에 둔다 —
  * 발주 시 암수를 잘못 사면 현장에서 못 쓰기 때문이다.
  */
-import type { PartLibraryItem, Connector, ConnectorKind, Vec2, PinSlot } from '../types';
+import type { PartLibraryItem, Connector, ConnectorKind, PartGender, Vec2, PinSlot } from '../types';
 // 핀 배치 해석은 캔버스와 같은 함수를 쓴다 — 기하는 geometry.ts 한 곳에만 산다
 import { layoutCells } from '../canvas/geometry';
 
@@ -259,6 +262,156 @@ const MOLEX_SPOX: PartLibraryItem[] = [
   },
 ];
 
+/* ================================================================
+   Molex Micro-Fit 3.0 — 43025(리셉터클) · 43020(플러그) · 43030/43031(터미널)
+   ----------------------------------------------------------------
+   출처: Molex 판매도면 **430250000-SD**.
+
+   도면에서 직접 읽은 것:
+    - 43025 는 2열(dual row) 리셉터클 하우징, 품번 `43025-XX00` (XX = 두 자리 회로 수)
+    - 회로 수 02·04·06·08·10·12·14·16·18·20·22·24
+    - 피치 3.00mm — 열 방향·행 방향 모두
+    - 격자는 2행 × (회로수/2)열. 도면 치수 B = (열수 − 1) × 3.00mm 로 검산했다
+      (8회로 B=9.00 · 24회로 B=33.00 — 열수가 회로수/2 라야 맞는 숫자다)
+    - 짝은 43020(플러그 하우징) 및 43045(PCB 헤더), 터미널은 43030 계열(암)/46235
+    - 2·4 회로는 상단 풀탭이 없다 (도면 주8)
+    - 회로 1 은 하우징의 식별 리브 또는 각인 "1" 로 표시된다 (도면 주11)
+
+   ── 43045(PCB 헤더)를 왜 뺐나
+   하네스 도면에 그리는 것은 전선 양 끝에 붙는 43025·43020 이고, 43045 는 상대
+   기판의 자재다. 게다가 43045 는 43025 와 달리 끝 두 자리가 회로 수가 아니라
+   **실장 방향·페그·도금 변형**을 물고 있어서, 43025 도면만 보고 `43045-XX00` 을
+   만들어 넣으면 **존재하지 않는 품번을 발주**하게 된다. SPOX(35155/35312)에서
+   세운 규칙 — 검증된 품번만 넣는다 — 을 그대로 지킨다. 보드측이 필요하면
+   43045 도면을 확인한 뒤 핀맵 에디터로 추가하면 된다.
+   ================================================================ */
+
+/** 43025/43020 이 공통으로 갖는 회로 수 (판매도면 430250000-SD) */
+const MICROFIT30_CIRCUITS = [2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24];
+
+/**
+ * **확인하지 못한 것 — 2열 중 어느 행이 1..n/2 인가.**
+ *
+ * 격자 크기(2행 × 회로수/2열)와 피치(3.00mm)는 도면 치수로 검산했지만, 회로 번호가
+ * 어느 행에서 시작하는지는 도면 **그림 안**에 있어 글자로 뽑아내지 못했다. 그래서
+ * Molex 2열 커넥터의 통상 규칙(한 행에 1..n/2, 다른 행에 n/2+1..n)대로 `grid()` 로
+ * 깔되, 아는 척하지 않고 각 부품 비고에 확인 지시를 남긴다. 도면이 진실을 말해 줄
+ * 때까지 이 배열은 **가정**이다.
+ */
+const MICROFIT30_PIN_NOTE =
+  '회로 번호 배열은 하우징의 회로1 식별 리브/각인으로 확인할 것 — ' +
+  '2열 중 어느 행이 1..n/2 인지는 판매도면 그림 안에 있어 확인하지 못했고, ' +
+  'Molex 2열 커넥터의 통상 규칙(윗줄 1..n/2 · 아랫줄 n/2+1..n)으로 깔아 두었다. ' +
+  '다르면 라이브러리의 핀맵 에디터에서 고쳐 쓰세요.';
+
+type MicroFit30Series = {
+  series: '43025' | '43020';
+  /** 이름 꼬리표 */
+  표시: string;
+  종류: string;
+  gender: PartGender;
+  터미널: string;
+  결합: string;
+  /** 시리즈별로 더 붙는 비고 */
+  extraNote?: string;
+};
+
+function microFit30Housings(s: MicroFit30Series): PartLibraryItem[] {
+  return MICROFIT30_CIRCUITS.map((n) => {
+    const xx = String(n).padStart(2, '0');   // 품번은 두 자리 0 채움 → 43025-0600
+    const cols = n / 2;                      // 2행 고정이므로 열수 = 회로수/2
+    return {
+      id: `lib-mf3-${s.series}-${xx}p`,
+      category: 'housing' as const,
+      name: `Molex ${s.series}-${xx}00 Micro-Fit 3.0 ${s.표시} (${n}회로)`,
+      manufacturer: 'Molex',
+      mpn: `${s.series}-${xx}00`,
+      spec: {
+        시리즈: s.series,
+        종류: s.종류,
+        피치: '3.00mm (열 방향·행 방향 모두)',
+        열: `2열 (2행 × ${cols}열)`,
+        회로: String(n),
+        결합: s.결합,
+        터미널: s.터미널,
+        적용전선: 'AWG #18 ~ #30',
+        회로1표시: '하우징의 식별 리브 또는 각인 "1" (판매도면 주11)',
+        // 2·4 회로만 다른 사실이라 그 둘에만 적는다 — 나머지에 "있음"이라 적으면
+        // 도면이 말하지 않은 것을 말하는 셈이 된다(주8은 없는 쪽만 밝힌다).
+        ...(n <= 4 ? { 풀탭: '없음 — 2·4 회로는 상단 풀탭이 없다 (판매도면 주8)' } : {}),
+        비고: [MICROFIT30_PIN_NOTE, s.extraNote].filter(Boolean).join(' '),
+      },
+      gender: s.gender,
+      pinCount: n,
+      pinLayout: grid(cols, 2),
+    };
+  });
+}
+
+const MICROFIT30: PartLibraryItem[] = [
+  ...microFit30Housings({
+    series: '43025',
+    표시: '리셉터클',
+    종류: 'Receptacle Housing (전선측, 암 컨택)',
+    gender: 'receptacle',
+    터미널: '43030 계열(암) 또는 46235',
+    결합: '43020 (플러그 하우징) · 43045 (PCB 헤더)',
+  }),
+  ...microFit30Housings({
+    series: '43020',
+    표시: '플러그',
+    종류: 'Plug Housing (전선측, 수 컨택)',
+    gender: 'plug',
+    터미널: '43031 (수)',
+    결합: '43025 (리셉터클 하우징)',
+    // 도면으로 확인한 품번 규칙은 43025 쪽이다. 43020 은 "같은 회로 수 구성" 까지만
+    // 확인했으므로 규칙을 옮겨 적었다는 사실을 숨기지 않는다.
+    extraNote:
+      '품번은 43025 판매도면(430250000-SD)에서 확인한 규칙을 옮겨 43020-XX00 으로 적었다 — ' +
+      '발주 전에 43020 도면으로 대조할 것.',
+  }),
+];
+
+/**
+ * Micro-Fit 3.0 크림프 터미널.
+ *
+ * 하우징과 암수가 **뒤집혀 있다**: 리셉터클 하우징(43025)에 암 터미널(43030),
+ * 플러그 하우징(43020)에 수 터미널(43031) 이 들어간다. 잘못 시키면 압착은 되는데
+ * 하우징에 들어가지 않는다 — SMH250/SMP250 에서 겪은 것과 같은 함정이라 적어 둔다.
+ */
+const MICROFIT30_TERMINALS: PartLibraryItem[] = [
+  {
+    id: 'lib-mf3-43030',
+    category: 'terminal',
+    name: 'Molex 43030 Micro-Fit 3.0 크림프 터미널 (암)',
+    manufacturer: 'Molex',
+    mpn: '43030',
+    spec: {
+      적용: '43025 Micro-Fit 3.0 리셉터클 하우징 (3.00mm)',
+      적용전선: 'AWG #18 ~ #30',
+      비고:
+        '암 컨택 — 플러그 하우징(43020)에는 43031(수)을 쓴다. ' +
+        '43025 에는 46235 계열도 들어간다. 도금·포장을 가르는 끝자리(43030-NNNN)는 발주 전에 확인할 것.',
+    },
+    gender: 'neutral',
+  },
+  {
+    id: 'lib-mf3-43031',
+    category: 'terminal',
+    name: 'Molex 43031 Micro-Fit 3.0 크림프 터미널 (수)',
+    manufacturer: 'Molex',
+    mpn: '43031',
+    spec: {
+      적용: '43020 Micro-Fit 3.0 플러그 하우징 (3.00mm)',
+      적용전선: 'AWG #18 ~ #30',
+      비고:
+        '수 컨택 — 리셉터클 하우징(43025)에는 43030(암)을 쓴다. ' +
+        '도금·포장을 가르는 끝자리(43031-NNNN)는 발주 전에 확인할 것.',
+    },
+    gender: 'neutral',
+  },
+];
+
 export const SEED_PARTS: PartLibraryItem[] = [
   // ===== MDB =====
   {
@@ -387,11 +540,18 @@ export const SEED_PARTS: PartLibraryItem[] = [
   { id: 'lib-minifit-4p', category: 'housing', name: 'Molex Mini-Fit Jr 4P', manufacturer: 'Molex',
     spec: { 피치: '4.2mm', 정격: '9A', 비고: '전원 배선용 · 암수는 시리즈(5557/5559) 확인 필요' },
     pinCount: 4, pinLayout: grid(2, 2) },
+  // 2.54mm 2×5 — 시리즈도 품번도 없는 범용 항목이다. 아래 Micro-Fit 3.0 의
+  // 10회로(43025-1000)도 2×5 격자라 목록에서 헷갈리기 쉬워 피치를 비고에도 적는다.
   { id: 'lib-molex-2x5', category: 'housing', name: 'Molex 2x5 (10P)', manufacturer: 'Molex',
-    spec: { 피치: '2.54mm' }, pinCount: 10, pinLayout: grid(5, 2) },
+    spec: { 피치: '2.54mm', 비고: '시리즈 미상 · 2.54mm — 3.00mm Micro-Fit 3.0(43025-1000)과 다른 부품' },
+    pinCount: 10, pinLayout: grid(5, 2) },
 
   // ===== Molex SPOX 2.50mm (35155 / 35312) =====
   ...MOLEX_SPOX,
+
+  // ===== Molex Micro-Fit 3.0 (43025 / 43020 / 43030 / 43031) =====
+  ...MICROFIT30,
+  ...MICROFIT30_TERMINALS,
 
   // ===== 보드투와이어 / 스플라이스 =====
   { id: 'lib-b2w-2p', category: 'board-to-wire', name: 'Board-to-Wire 2P',
