@@ -29,7 +29,7 @@ function isNrnd(p: PartLibraryItem): boolean {
  * id 접두사로 실무 그룹핑.
  * openByDefault: 자주 쓰는 그룹만 펼쳐두고 나머지는 접는다.
  */
-const GROUPS: { label: string; openByDefault?: boolean; match: (p: PartLibraryItem) => boolean }[] = [
+export const GROUPS: { label: string; openByDefault?: boolean; match: (p: PartLibraryItem) => boolean }[] = [
   { label: 'MDB (자판기)', openByDefault: true, match: (p) => p.id.startsWith('lib-mdb') || p.id === 'lib-minifit-terminal' },
   // SMH250(암)과 SMP250(수)은 서로 맞물리는 2.5mm 한 계열이라 한 그룹에 둔다.
   {
@@ -54,10 +54,26 @@ const GROUPS: { label: string; openByDefault?: boolean; match: (p: PartLibraryIt
    * 서로 배타적이지 않고 각자 목록을 거른다).
    */
   { label: 'Molex Micro-Fit 3.0 (3.0mm)', match: (p) => p.id.startsWith('lib-mf3-') },
+  // Molex Mini-Fit Jr 4.2mm — 리셉터클(5557 = 39-01-2xx0)과 터미널(5556·5558)을 한 그룹에.
+  { label: 'Molex Mini-Fit Jr (4.2mm)', match: (p) => p.id.startsWith('lib-minifit-5557') || /^lib-minifit-(5556|5558)/.test(p.id) },
+  // JST XH·PH — 하우징·헤더·컨택트를 피치별로 한 그룹에. 양 끝과 압착단자를 함께 골라야 발주가 된다.
+  { label: 'JST XH (2.5mm)', match: (p) => /^lib-jst-(xhp|b-xh|s-xh|sxh)/.test(p.id) },
+  { label: 'JST PH (2.0mm)', match: (p) => /^lib-jst-(phr|b-ph|s-ph|sph)/.test(p.id) },
   { label: '와이어투와이어', match: (p) => p.id.startsWith('lib-w2w') },
   { label: '보드투와이어', match: (p) => p.id.startsWith('lib-b2w') || p.id.startsWith('lib-terminal-block') },
   { label: '스플라이스', openByDefault: true, match: (p) => p.id.startsWith('lib-splice') },
 ];
+
+/**
+ * 어느 그룹에도 안 걸린 시드 부품이 담기는 자리.
+ *
+ * **왜 필요한가:** 그룹은 서로 배타적이지 않고 각자 목록을 거른다. 그래서 GROUPS 에
+ * 규칙을 안 넣으면 그 부품은 라이브러리에 **아예 뜨지 않는다** — 시드에 넣고 시험까지
+ * 통과했는데 화면에서 찾을 수 없다. 실제로 JST 97종을 넣고 그 일이 났다.
+ * 빠뜨린 것을 조용히 숨기는 대신 여기로 모아 눈에 띄게 한다(시험도 이 그룹이 비어
+ * 있기를 요구한다 — 비어 있지 않으면 GROUPS 에 규칙을 더하라는 뜻이다).
+ */
+export const UNGROUPED_LABEL = '그룹 미지정';
 
 /**
  * 라이브러리 → 캔버스 드래그 페이로드 (HTML5 DnD, 외부 라이브러리 없음).
@@ -375,6 +391,34 @@ export function LibraryPanel() {
           </div>
         );
       })}
+
+      {/*
+        어느 그룹에도 안 걸린 시드 부품 — 보통은 비어 있다.
+        비어 있지 않다면 GROUPS 에 규칙을 빠뜨린 것이다(위 UNGROUPED_LABEL 주석 참고).
+        숨기면 "시드에 넣었는데 화면에 없다" 가 되므로 눈에 띄게 내놓는다.
+      */}
+      {(() => {
+        const rest = filtered.filter(
+          (p) => !isCustomPart(p.id) && !GROUPS.some((g) => g.match(p)),
+        );
+        if (!rest.length) return null;
+        const open = searching || !collapsed[UNGROUPED_LABEL];
+        return (
+          <div className="lib-cat">
+            <button
+              className="lib-cat-title"
+              onClick={() => toggle(UNGROUPED_LABEL)}
+              aria-expanded={open}
+              title={open ? '접기' : '펼치기'}
+            >
+              <span className="caret">{open ? '▾' : '▸'}</span>
+              <span className="name">{UNGROUPED_LABEL}</span>
+              <span className="count">{rest.length}</span>
+            </button>
+            {open && rest.map(renderItem)}
+          </div>
+        );
+      })()}
 
       <div className="lib-cat">
         <div className="lib-cat-title" aria-hidden>

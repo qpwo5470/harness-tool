@@ -17,6 +17,13 @@
  * - Molex Micro-Fit 3.0: 판매도면 **430250000-SD** 에서 직접 확인.
  *   43025(리셉터클 하우징, 2열) ↔ 43020(플러그 하우징) / 43045(PCB 헤더),
  *   터미널 43030(암)·43031(수). 피치 3.00mm(열·행 모두), 회로 02~24 짝수.
+ * - JST XH(2.50mm) · PH(2.00mm): JST 공식 데이터시트 **eXH.pdf / ePH.pdf** 에서 직접 확인.
+ *   XH  하우징 XHP-n ↔ 헤더 BnB-XH-A(수직) / SnB-XH-A(앵글), 컨택트 SXH-001T-P0.6 계열.
+ *   PH  하우징 PHR-n ↔ 헤더 BnB-PH-K-S(수직) / SnB-PH-K-S(앵글), 컨택트 SPH-002T-P0.5S 계열.
+ * - Molex Mini-Fit Jr 5557(리셉터클 하우징, 2열): 판매도면 **SD-5557-003**.
+ *   **39-01-2060 과 5557-06R 은 같은 물건**이다 (도면 주문표의 EDP No. ↔ ENG No.).
+ *   짝: 5557 리셉터클 + 5556 암 터미널 / 5559 플러그 + 5558 수 터미널,
+ *   보드측은 5566(수직 헤더)·5569(앵글 헤더).
  *
  * 결합 성별(gender)은 문자열 `spec.형식` 이 아니라 `PartLibraryItem.gender` 에 둔다 —
  * 발주 시 암수를 잘못 사면 현장에서 못 쓰기 때문이다.
@@ -195,56 +202,83 @@ const YEONHO_TERMINALS: PartLibraryItem[] = [
   },
 ];
 
+/* ================================================================
+   Molex SPOX 2.50mm — 35155 하우징(암) ↔ 35312 수직 헤더
+   ----------------------------------------------------------------
+   출처: Molex 제품 데이터시트 + **품번 단위 실재 확인**(2026-08).
+    - molex.com 품번 상세 `part-detail/03515503 00` … 형식으로 회로 수·열 수를 하나씩 읽었다.
+    - molex.com 에 스펙이 안 뜨는 단종 품번은 Mouser 제품 페이지로 교차 확인했다.
+
+   ── molex.com 만 믿으면 안 되는 이유 (조사 중 확인한 함정)
+   molex.com 은 **없는 품번에도 "Part Number Found" 를 표시**한다. 실재 판정은
+   Physical Specifications 블록이 뜨는지로 해야 한다. 그런데 그 기준마저 단종품에는
+   거짓 음성을 낸다 — 35155-1400/-1500 은 molex.com 에 스펙이 없지만 Mouser 에
+   "14 Position / 15 Position, 2.5mm, 1 Row, Receptacle Housing, Obsolete" 로
+   버젓이 실려 있다. 그래서 **molex.com 부재 → 유통사 교차 확인**의 두 단계를 밟았다.
+
+   **검증된 품번만 넣는다.** 규칙(35155-0N00 / 35312-0N60)으로 없는 회로 수를 만들어
+   넣으면 존재하지 않는 품번을 발주하게 된다.
+   ================================================================ */
+
 /**
- * Molex SPOX 2.50mm — 35155 하우징(암) ↔ 35312 수직 헤더.
+ * 35155 회로 수 — molex.com 스펙으로 확인한 3~12 + Mouser 스펙으로 확인한 14·15.
  *
- * 출처: Molex 제품 데이터시트(2026-08 확인).
- * 두 시리즈 모두 **Not Recommended For New Design** 이라 신규 설계에 넣기 전에
- * 대체품을 확인해야 한다 — 비고에 남긴다.
- *
- * **검증된 품번만 넣는다.** 규칙(35155-0N00 / 35312-0N60)으로 없는 핀수를 만들어
- * 넣으면 존재하지 않는 품번을 발주하게 된다. 다른 핀수가 필요하면 비고의 규칙을 보고
- * 핀맵 에디터에서 복제해 쓴다.
+ * **13 을 뺀 이유**: 35155-1300 은 Octopart 에 별칭만 잡히고(재고 0) 회로 수를 적은
+ * 스펙 페이지를 어디서도 찾지 못했다. 12 와 14 사이라고 13 을 채워 넣으면 그게 바로
+ * 규칙으로 품번을 지어내는 일이다.
  */
+const SPOX_35155_CIRCUITS = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 15];
+
+/** 35312 회로 수 — molex.com 스펙으로 2~12, Octopart/Newark 재고로 13("HDR 13 POS 2.5mm") */
+const SPOX_35312_CIRCUITS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
+
+/** 두 자리 0 채움 — 품번은 35155-0300 이지 35155-300 이 아니다 */
+const pad2 = (n: number) => String(n).padStart(2, '0');
+
 const MOLEX_SPOX: PartLibraryItem[] = [
-  ...[3, 4, 5].map((n) => ({
+  ...SPOX_35155_CIRCUITS.map((n) => ({
     id: `lib-spox-35155-${n}p`,
     category: 'housing' as const,
-    name: `Molex 35155-0${n}00 SPOX 2.50mm (${n}P)`,
+    name: `Molex 35155-${pad2(n)}00 SPOX 2.50mm (${n}P)`,
     manufacturer: 'Molex',
-    mpn: `35155-0${n}00`,
+    mpn: `35155-${pad2(n)}00`,
     spec: {
       시리즈: '35155',
       설명: '2.50mm Pitch Wire-to-Board Housing, Positive Lock, Natural',
       종류: 'Receptacle',
       피치: '2.50mm',
       열: '1열 (Number of Rows 1)',
+      회로: String(n),
       용도: 'Wire-to-Wire',
       결합: '35184 (Wire-to-Wire Plug Housings) / 35312 (Vertical Headers)',
       터미널: '5103 (SPOX Female Crimp Terminals)',
+      재질: 'Polyester · UL94V-0',
       온도: '-40°C ~ +105°C',
       상태: 'Not Recommended For New Design',
       비고:
         'Not Recommended For New Design — 신규 설계 전 대체품 확인. ' +
-        '품번 규칙 35155-0N00 (N=회로수). 검증된 3·4·5P 만 등록했으니 ' +
-        '다른 핀수는 복제해서 품번을 확인한 뒤 쓰세요.',
+        '품번 규칙 35155-0N00 (N=회로수). 회로 수를 품번 단위로 확인한 ' +
+        '3~12 · 14 · 15 만 등록했다. **13회로(35155-1300)는 확인하지 못했다** — ' +
+        'Octopart 에 별칭만 잡히고 회로 수를 적은 스펙 페이지가 없어 뺐다. ' +
+        '필요하면 유통사에서 회로 수를 확인한 뒤 핀맵 에디터에서 복제해 쓰세요.',
     },
     gender: 'receptacle' as const,
     pinCount: n,
     pinLayout: grid(n, 1),
   })),
-  {
-    id: 'lib-spox-35312-5p',
-    category: 'board-to-wire',
-    name: 'Molex 35312-0560 2.50mm 수직 헤더 (5P)',
+  ...SPOX_35312_CIRCUITS.map((n) => ({
+    id: `lib-spox-35312-${n}p`,
+    category: 'board-to-wire' as const,
+    name: `Molex 35312-${pad2(n)}60 2.50mm 수직 헤더 (${n}P)`,
     manufacturer: 'Molex',
-    mpn: '35312-0560',
+    mpn: `35312-${pad2(n)}60`,
     spec: {
       시리즈: '35312',
       설명: '2.50mm Pitch Header, Vertical, Shrouded, with Positive Lock',
       종류: 'PCB Header',
       피치: '2.50mm',
       열: '1열 (Number of Rows 1)',
+      회로: String(n),
       용도: 'Wire-to-Board',
       결합: '35155',
       정격: '3.0A / 250V',
@@ -254,12 +288,16 @@ const MOLEX_SPOX: PartLibraryItem[] = [
       상태: 'Not Recommended For New Design',
       비고:
         'Not Recommended For New Design — 신규 설계 전 대체품 확인. ' +
-        '품번 규칙 35312-0N60 (N=회로수). 검증된 5P 만 등록했습니다.',
+        '품번 규칙 35312-0N60 (N=회로수). 회로 수를 품번 단위로 확인한 2~13 만 등록했다. ' +
+        '**14회로는 어디서도 확인하지 못했고, 15회로(35312-1560)는 부품 검색 사이트에 ' +
+        '이름만 있어 회로 수를 확인하지 못해 뺐다.** ' +
+        '또 molex.com 스펙에 Gender 항목 자체가 없어 암수는 페이지로 확인하지 못했다 — ' +
+        '35155(리셉터클)의 상대물이고 유통사 설명이 "Shrouded Header" 라 헤더로 넣었다.',
     },
-    gender: 'header',
-    pinCount: 5,
-    pinLayout: grid(5, 1),
-  },
+    gender: 'header' as const,
+    pinCount: n,
+    pinLayout: grid(n, 1),
+  })),
 ];
 
 /* ================================================================
@@ -412,12 +450,404 @@ const MICROFIT30_TERMINALS: PartLibraryItem[] = [
   },
 ];
 
+/* ================================================================
+   JST XH (2.50mm) · PH (2.00mm)
+   ----------------------------------------------------------------
+   출처: JST 공식 데이터시트 **eXH.pdf** / **ePH.pdf** (jst-mfg.com).
+   회로 수는 데이터시트의 품번표를 **한 행씩** 옮겼다. 규칙으로 늘리지 않았다.
+
+   ── 하우징이 1열이라는 근거
+   데이터시트 치수표의 A 가 곧 양끝 회로 중심거리다. XHP-3 A=5.0 = 2×2.5,
+   XHP-16 A=37.5 = 15×2.5, PHR-2 A=2.0, PHR-16 A=30.0 = 15×2.0 —
+   A = (회로수−1)×피치 가 정확히 맞는다. 2열이면 이 식이 성립하지 않는다.
+
+   ── 낱개로 있던 lib-xh-* · lib-ph-* 를 왜 안 지웠나
+   저장 문서는 `usedParts` 스냅샷으로 열리므로 지워도 도면은 안 깨진다. 하지만
+   (1) 라이브러리 목록에서 사라져 **다시 배치할 수 없고**,
+   (2) 실제 저장 파일(이스턴웰스-하네스세트)이 `lib-xh-2p` 를 물고 있으며,
+   (3) 옛 id 커넥터와 새 id 커넥터가 BOM 에서 **별개 품목으로 이중 계상**된다.
+   그래서 남겨 두고 비고에만 "시리즈 항목으로 옮겨 가라"고 적었다.
+   ================================================================ */
+
+/** XH 하우징 XHP-n — eXH.pdf 하우징 품번표 (1~16, 20). 특수 피치품은 뺐다. */
+const XH_HOUSING_CIRCUITS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 20];
+/** XH 수직 헤더 BnB-XH-A — 보스 없는 형. 1회로는 표에 "-" 라 없다(보스형 B1B-XH-AM 뿐). */
+const XH_HEADER_TOP_CIRCUITS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 20];
+/** XH 앵글 헤더 SnB-XH-A — C 치수 9.2mm 형. 표에 20회로는 없다. */
+const XH_HEADER_SIDE_CIRCUITS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+/** PH 하우징·헤더 모두 2~16 (ePH.pdf 세 표가 모두 같은 범위) */
+const PH_CIRCUITS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+
+/** eXH.pdf 1쪽 Specifications — 전기·환경 값은 시리즈 공통이다 */
+const XH_COMMON = {
+  피치: '2.50mm',
+  정격: '3A AC/DC (AWG #22) · 250V AC/DC',
+  온도: '-25℃ ~ +85℃ (통전 온도상승 포함)',
+  접촉저항: '초기 10mΩ max. · 환경시험 후 20mΩ max.',
+  절연저항: '1,000MΩ min.',
+  내전압: 'AC 1,000V 1분',
+  적용전선: 'AWG #30 ~ #22 (피복 외경 φ0.9 ~ φ1.9mm)',
+} as const;
+
+/** ePH.pdf 1쪽 Specifications */
+const PH_COMMON = {
+  피치: '2.00mm',
+  정격: '2A AC/DC (AWG #24) · 100V AC/DC',
+  온도: '-40℃ ~ +105℃ (통전 온도상승 포함)',
+  접촉저항: '초기 10mΩ max. · 시험 후 20mΩ max.',
+  절연저항: '1,000MΩ min.',
+  내전압: 'AC 800V 1분',
+  적용전선: 'AWG #32 ~ #24 (피복 외경 φ0.5 ~ φ1.5mm)',
+} as const;
+
+/**
+ * 하우징 색상은 품번 뒤에 접미사로 붙는다(XHP-5-BK 등). 기본(무표기)은 natural white 다.
+ * 자연색 기준 품번만 넣고, 색상 지정이 필요하면 데이터시트 색상표를 보라고 적는다 —
+ * 색 코드를 외워서 붙이면 없는 조합을 발주하게 된다.
+ */
+const JST_COLOR_NOTE =
+  '색상 지정은 품번 뒤 접미사다(예: XHP-5-BK 흑색). 기본(무표기)은 natural white — ' +
+  '색상 코드는 데이터시트 "Model number allocation" 을 확인할 것.';
+
+type JstSeries = {
+  시리즈: 'XH' | 'PH';
+  /** id 접두사 조각 */
+  slug: string;
+  /** 품번을 만드는 함수 — 회로 수가 품번 어디에 들어가는지가 시리즈마다 다르다 */
+  mpn: (n: number) => string;
+  표시: string;
+  category: PartLibraryItem['category'];
+  종류: string;
+  gender: PartGender;
+  공통: Record<string, string>;
+  결합: string;
+  터미널: string;
+  출처: string;
+  circuits: number[];
+  비고: string;
+};
+
+function jstItems(s: JstSeries): PartLibraryItem[] {
+  return s.circuits.map((n) => ({
+    id: `lib-jst-${s.slug}-${n}p`,
+    category: s.category,
+    name: `JST ${s.mpn(n)} ${s.표시} (${n}P)`,
+    manufacturer: 'JST',
+    mpn: s.mpn(n),
+    spec: {
+      시리즈: s.시리즈,
+      종류: s.종류,
+      ...s.공통,
+      열: '1열 (치수 A = (회로수−1)×피치 로 검산)',
+      회로: String(n),
+      결합: s.결합,
+      터미널: s.터미널,
+      출처: s.출처,
+      비고: s.비고,
+    },
+    gender: s.gender,
+    pinCount: n,
+    pinLayout: grid(n, 1),
+  }));
+}
+
+const JST_XH: PartLibraryItem[] = [
+  ...jstItems({
+    시리즈: 'XH',
+    circuits: XH_HOUSING_CIRCUITS,
+    slug: 'xhp',
+    mpn: (n) => `XHP-${n}`,
+    표시: 'XH 하우징',
+    category: 'housing',
+    종류: 'Housing (전선측, 암 컨택) · PA 6, natural(white)',
+    gender: 'receptacle',
+    공통: { ...XH_COMMON },
+    결합: 'BnB-XH-A (수직 헤더) / SnB-XH-A (앵글 헤더)',
+    터미널: 'SXH-001T-P0.6 (AWG#28~22) · SXH-002T-P0.6 (AWG#30~26)',
+    출처: 'JST eXH.pdf — Housing 품번표',
+    비고:
+      `${JST_COLOR_NOTE} 데이터시트 표의 1~16 · 20회로만 등록했다. ` +
+      '특수 피치품 XHP-2(10.0)-U · XHP-6(5.0)-U 는 피치가 달라 뺐다. ' +
+      '**금도금품은 데이터시트가 "Contact JST" 라고만 적어 품번을 확인하지 못했다.**',
+  }),
+  ...jstItems({
+    시리즈: 'XH',
+    circuits: XH_HEADER_TOP_CIRCUITS,
+    slug: 'b-xh-a',
+    mpn: (n) => `B${n}B-XH-A`,
+    표시: 'XH 수직 헤더',
+    category: 'board-to-wire',
+    종류: 'Header, Top entry(수직) · Post 황동 주석도금 / Wafer PA 66',
+    gender: 'header',
+    공통: { ...XH_COMMON, 적용기판: '기판 두께 1.6mm' },
+    결합: 'XHP-n 하우징',
+    터미널: '상대 하우징에 SXH-001T-P0.6 계열',
+    출처: 'JST eXH.pdf — Header/Top entry 품번표',
+    비고:
+      '보스 없는 형만 등록했다. 보스형(BnB-XH-AM)은 데이터시트에 일부 회로 수만 있어 뺐다. ' +
+      '**1회로 수직 헤더는 보스 없는 형이 존재하지 않는다** — 표에 B1B-XH-A 자리가 "-" 이고 ' +
+      'B1B-XH-AM(보스형)만 있다. PA66 글라스품(BnB-XH-2)·SMT(SnB-XH-SM4-TB)·래디얼테이프품은 ' +
+      '별도 품번이라 넣지 않았다.',
+  }),
+  ...jstItems({
+    시리즈: 'XH',
+    circuits: XH_HEADER_SIDE_CIRCUITS,
+    slug: 's-xh-a',
+    mpn: (n) => `S${n}B-XH-A`,
+    표시: 'XH 앵글 헤더',
+    category: 'board-to-wire',
+    종류: 'Header, Side entry(앵글) · Post 황동 주석도금 / Wafer PA 66',
+    gender: 'header',
+    공통: { ...XH_COMMON, 적용기판: '기판 두께 1.6mm' },
+    결합: 'XHP-n 하우징',
+    터미널: '상대 하우징에 SXH-001T-P0.6 계열',
+    출처: 'JST eXH.pdf — Header/Side entry 품번표',
+    비고:
+      'C 치수 9.2mm 형만 등록했다. C=7.6mm 형은 품번이 아예 다르다(SnB-XH-A-1) — ' +
+      '16회로에는 그 형이 없어 시리즈로 넣지 않았다. 앵글 헤더 표에 20회로는 없다.',
+  }),
+];
+
+const JST_PH: PartLibraryItem[] = [
+  ...jstItems({
+    시리즈: 'PH',
+    circuits: PH_CIRCUITS,
+    slug: 'phr',
+    mpn: (n) => `PHR-${n}`,
+    표시: 'PH 하우징',
+    category: 'housing',
+    종류: 'Housing (전선측, 암 컨택) · PA, natural(white)',
+    gender: 'receptacle',
+    공통: { ...PH_COMMON },
+    결합: 'BnB-PH-K-S (수직 헤더) / SnB-PH-K-S (앵글 헤더)',
+    터미널: 'SPH-002T-P0.5S (AWG#30~24) · SPH-004T-P0.5S (AWG#32~28)',
+    출처: 'JST ePH.pdf — Housing 품번표',
+    비고: `${JST_COLOR_NOTE} 데이터시트 표의 2~16회로를 그대로 등록했다.`,
+  }),
+  ...jstItems({
+    시리즈: 'PH',
+    circuits: PH_CIRCUITS,
+    slug: 'b-ph-k-s',
+    mpn: (n) => `B${n}B-PH-K-S`,
+    표시: 'PH 수직 헤더',
+    category: 'board-to-wire',
+    종류: 'Header, Through-hole/Top entry(수직) · Post 동합금 주석도금 / PA',
+    gender: 'header',
+    공통: { ...PH_COMMON, 적용기판: '기판 두께 0.8 ~ 1.6mm' },
+    결합: 'PHR-n 하우징',
+    터미널: '상대 하우징에 SPH-002T-P0.5S 계열',
+    출처: 'JST ePH.pdf — Header(Through-hole type) 품번표',
+    비고: 'SMT 형(BnB-PH-SM4-TB)은 별도 품번이라 넣지 않았다.',
+  }),
+  ...jstItems({
+    시리즈: 'PH',
+    circuits: PH_CIRCUITS,
+    slug: 's-ph-k-s',
+    mpn: (n) => `S${n}B-PH-K-S`,
+    표시: 'PH 앵글 헤더',
+    category: 'board-to-wire',
+    종류: 'Header, Through-hole/Side entry(앵글) · Post 동합금 주석도금 / PA',
+    gender: 'header',
+    공통: { ...PH_COMMON, 적용기판: '기판 두께 0.8 ~ 1.6mm' },
+    결합: 'PHR-n 하우징',
+    터미널: '상대 하우징에 SPH-002T-P0.5S 계열',
+    출처: 'JST ePH.pdf — Header(Through-hole type) 품번표',
+    비고: 'SMT 형(SnB-PH-SM4-TB)은 별도 품번이라 넣지 않았다.',
+  }),
+];
+
+/**
+ * JST 크림프 컨택트.
+ *
+ * PH 쪽에 함정이 있다: 흔히 "SPH-002T-P0.5" 라고 부르지만 데이터시트 표에 그런 품번은
+ * **없다**. 표준형은 접미사 S 가 붙은 `SPH-002T-P0.5S` 이고, `-P0.5L` 은 저삽입력형이라
+ * 압착 높이가 다르다. 접미사를 떼고 발주하면 물건이 안 온다.
+ */
+const JST_CONTACTS: PartLibraryItem[] = [
+  {
+    id: 'lib-jst-sxh-001t', category: 'terminal', name: 'JST SXH-001T-P0.6 컨택트 (XH용)',
+    manufacturer: 'JST', mpn: 'SXH-001T-P0.6',
+    spec: {
+      적용: 'XH (2.50mm) — XHP-n 하우징',
+      적용전선: 'AWG #28 ~ #22 (0.08~0.33mm²) · 피복 외경 0.9~1.9mm',
+      재질: '인청동, 주석도금 · Strip form',
+      압착기: 'AP-K2N + APLMK SXH001-06',
+      출처: 'JST eXH.pdf — Contact 품번표',
+      비고: '표준형. 저삽입력형은 접미사 N 이 붙은 SXH-001T-P0.6N 으로 진동에 약하다.',
+    },
+    gender: 'neutral',
+  },
+  {
+    id: 'lib-jst-sxh-002t', category: 'terminal', name: 'JST SXH-002T-P0.6 컨택트 (XH용, 세선)',
+    manufacturer: 'JST', mpn: 'SXH-002T-P0.6',
+    spec: {
+      적용: 'XH (2.50mm) — XHP-n 하우징',
+      적용전선: 'AWG #30 ~ #26 (0.05~0.13mm²) · 피복 외경 0.9~1.3mm',
+      재질: '인청동, 주석도금 · Strip form',
+      압착기: 'AP-K2N + APLMK SXH002-06',
+      출처: 'JST eXH.pdf — Contact 품번표',
+      비고: '세선용. 굵은 선(AWG#22)에는 SXH-001T-P0.6 을 쓴다.',
+    },
+    gender: 'neutral',
+  },
+  {
+    id: 'lib-jst-sph-002t', category: 'terminal', name: 'JST SPH-002T-P0.5S 컨택트 (PH용)',
+    manufacturer: 'JST', mpn: 'SPH-002T-P0.5S',
+    spec: {
+      적용: 'PH (2.00mm) — PHR-n 하우징',
+      적용전선: 'AWG #30 ~ #24 (0.05~0.22mm²) · 피복 외경 0.8~1.5mm',
+      재질: '동합금, 주석도금 · Strip form',
+      압착기: 'MKS-L + APLMK SPH002-05S',
+      출처: 'JST ePH.pdf — Contact 품번표',
+      비고:
+        '**접미사 S(표준형)까지가 품번이다.** 데이터시트 표에 "SPH-002T-P0.5"(접미사 없는 형)는 ' +
+        '없다 — 그 이름으로 발주하면 안 된다. 저삽입력형 SPH-002T-P0.5L 은 압착 높이가 달라 ' +
+        '같은 다이로 찍을 수 없다.',
+    },
+    gender: 'neutral',
+  },
+  {
+    id: 'lib-jst-sph-004t', category: 'terminal', name: 'JST SPH-004T-P0.5S 컨택트 (PH용, 세선)',
+    manufacturer: 'JST', mpn: 'SPH-004T-P0.5S',
+    spec: {
+      적용: 'PH (2.00mm) — PHR-n 하우징',
+      적용전선: 'AWG #32 ~ #28 (0.032~0.08mm²) · 피복 외경 0.5~0.9mm',
+      재질: '동합금, 주석도금 · Strip form',
+      압착기: 'AP-K2N + APLMK SPH004-05S',
+      출처: 'JST ePH.pdf — Contact 품번표',
+      비고: '세선용. AWG#24 까지 쓰려면 SPH-002T-P0.5S.',
+    },
+    gender: 'neutral',
+  },
+];
+
+/* ================================================================
+   Molex Mini-Fit Jr 5557 — 리셉터클 하우징 (2열, 4.20mm)
+   ----------------------------------------------------------------
+   출처: Molex 판매도면 **SD-5557-003** (rev K1)
+        "MINIFIT JR / RECEPTACLE HOUSING DUAL ROW 2-24 CKT"
+        + 제품 사양서 **PS-5556-001** (Mini-Fit Jr. Connector System)
+
+   ── 사용자가 물었던 것: "39-01-2060 이 5557 이랑 같은 거냐"
+   **같다.** SD-5557-003 주문표는 한 행에 EDP No. 와 ENG No. 를 나란히 적는다:
+        39-01-2060 | 5557-06R | 6
+   즉 39-01-2060(Molex 발주번호)과 5557-06R(엔지니어링 번호)은 **같은 물건의 두 이름**이다.
+   Newark 도 같은 페이지에 "Mini-Fit Jr. 5557 Series" 와 "Also Known As 5557-06R" 을 적는다.
+   이 대응을 각 부품 `spec.대응품번` 에 박아 둔다 — 다음 사람이 같은 질문을 안 하도록.
+
+   ── 왜 5559(플러그) 를 규칙으로 늘리지 않았나
+   39-01-2041 을 열어 봤더니 5557 이 아니라 **5559 플러그**(패널 마운팅 이어 달린 4회로)였다.
+   즉 39-01-2xxx 대역은 5557 전용이 아니다. 5557 도면의 번호 규칙을 5559 에 옮겨 쓰면
+   엉뚱한 물건을 발주하게 된다. 5559 하우징은 그 도면을 본 뒤에 넣는다.
+   ================================================================ */
+
+/**
+ * SD-5557-003 주문표가 싣고 있는 회로 수 — **짝수 12종**.
+ *
+ * 홀수 2열 제품은 도면에 하나도 없다(다만 "홀수는 없다"고 쓰인 문장이 있는 것은 아니다).
+ * 39-01-2030 · -2260 · -2280 은 도면 표에도 없고 molex.com 스펙도 안 뜬다.
+ */
+const MINIFIT_5557_CIRCUITS = [2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24];
+
+/**
+ * **확인하지 못한 것 — 2열 중 어느 행이 1..n/2 인가.**
+ * Micro-Fit 3.0 과 같은 사정이다. 회로 수·열 수·피치는 도면과 품번 상세로 확인했지만
+ * 회로 번호가 어느 행에서 시작하는지는 도면 그림 안에 있어 글자로 뽑아내지 못했다.
+ */
+const MINIFIT_PIN_NOTE =
+  '회로 번호 배열은 하우징의 회로1 표시로 확인할 것 — ' +
+  '2열 중 어느 행이 1..n/2 인지는 판매도면 그림 안에 있어 확인하지 못했고, ' +
+  'Molex 2열 커넥터의 통상 규칙(윗줄 1..n/2 · 아랫줄 n/2+1..n)으로 깔아 두었다. ' +
+  '다르면 라이브러리의 핀맵 에디터에서 고쳐 쓰세요.';
+
+const MINIFIT_5557: PartLibraryItem[] = MINIFIT_5557_CIRCUITS.map((n) => {
+  const nn = pad2(n);
+  return {
+    id: `lib-minifit-5557-${nn}p`,
+    category: 'housing' as const,
+    name: `Molex 39-01-2${nn}0 Mini-Fit Jr 5557 리셉터클 (${n}회로)`,
+    manufacturer: 'Molex',
+    mpn: `39-01-2${nn}0`,
+    spec: {
+      시리즈: 'Mini-Fit Jr 5557',
+      // 사용자가 실제로 물었던 질문의 답. 이름·비고가 아니라 전용 칸에 둬서 눈에 띄게 한다.
+      대응품번: `39-01-2${nn}0 = 5557-${nn}R (EDP No. = ENG No., 같은 물건)`,
+      종류: 'Receptacle Housing, Dual Row (전선측, 암 컨택)',
+      피치: '4.20mm',
+      열: `2열 (2행 × ${n / 2}열)`,
+      회로: String(n),
+      결합: '5559 (플러그 하우징) · 5566 (수직 헤더) · 5569 (앵글 헤더, 39-30-10xx)',
+      터미널: '5556 (암 크림프 터미널) — 45750/46083 계열도 들어간다',
+      정격: '9.0A max (16AWG) / 600V AC(RMS)·DC max',
+      적용전선: 'AWG #16 ~ #28',
+      온도: '-40°C ~ +105°C (Solid Brass·인청동 터미널) · Formed Brass 는 -40 ~ +80°C',
+      출처: 'Molex 판매도면 SD-5557-003 · 제품사양서 PS-5556-001',
+      비고:
+        `${MINIFIT_PIN_NOTE} ` +
+        '도면 주문표에 실린 짝수 12종(2~24)만 등록했다 — 홀수 2열 제품은 도면에 없다. ' +
+        '품번 끝자리 0 은 UL94V-2 자연색이고, 끝자리 5 는 같은 회로 수의 UL94V-0 판이다' +
+        '(39-01-2045 = 5557-04R-210). ' +
+        '**정격 9.0A 는 16AWG 최대치다** — PS-5556-001 표는 회로 수가 늘수록 낮아진다' +
+        '(4~6회로 8A · 7~10회로 7A · 12~24회로 6A). 회로 수에 맞는 값은 사양서를 볼 것.',
+    },
+    gender: 'receptacle' as const,
+    pinCount: n,
+    pinLayout: grid(n / 2, 2),
+  };
+});
+
+/**
+ * Mini-Fit Jr 크림프 터미널 — 하우징과 암수가 뒤집혀 있다.
+ * 리셉터클(5557)에 **암**(5556), 플러그(5559)에 **수**(5558).
+ * Micro-Fit 3.0 에서 겪은 것과 같은 함정이라 여기에도 적어 둔다.
+ *
+ * 끝자리(5556-xxxx / 39-00-00xx)는 도금·포장을 물어서 확인하지 못했다 —
+ * 43030/43031 과 같이 시리즈 번호만 적는다.
+ */
+const MINIFIT_TERMINALS: PartLibraryItem[] = [
+  {
+    id: 'lib-minifit-5556', category: 'terminal', name: 'Molex 5556 Mini-Fit Jr 크림프 터미널 (암)',
+    manufacturer: 'Molex', mpn: '5556',
+    spec: {
+      적용: '5557 Mini-Fit Jr 리셉터클 하우징 (4.20mm)',
+      적용전선: 'AWG #16 ~ #28',
+      출처: 'SD-5557-003 주6 "USED WITH MOLEX FEMALE TERMINAL #5556, #45750"',
+      비고:
+        '암 컨택 — 플러그 하우징(5559)에는 5558(수)을 쓴다. ' +
+        '도금·포장을 가르는 끝자리(5556-xxxx / EDP 39-00-00xx)는 확인하지 못했으니 발주 전에 확인할 것. ' +
+        '기존 lib-minifit-terminal(39-00-0207)이 이 계열의 한 품번이다.',
+    },
+    gender: 'neutral',
+  },
+  {
+    id: 'lib-minifit-5558', category: 'terminal', name: 'Molex 5558 Mini-Fit Jr 크림프 터미널 (수)',
+    manufacturer: 'Molex', mpn: '5558',
+    spec: {
+      적용: '5559 Mini-Fit Jr 플러그 하우징 (4.20mm)',
+      적용전선: 'AWG #16 ~ #28',
+      출처: 'Molex Mini-Fit Jr 카탈로그 — 5558 "Use With: 5559, 42475, 30068 plug housings"',
+      비고:
+        '수 컨택 — 리셉터클 하우징(5557)에는 5556(암)을 쓴다. ' +
+        '5559 플러그 하우징은 품번표를 확인하지 못해 라이브러리에 넣지 않았다. ' +
+        '끝자리는 도금·포장을 물어 확인하지 못했다.',
+    },
+    gender: 'neutral',
+  },
+];
+
 export const SEED_PARTS: PartLibraryItem[] = [
   // ===== MDB =====
   {
     id: 'lib-mdb-vmc', category: 'housing', name: 'MDB VMC(마스터) 6P',
     manufacturer: 'Molex', mpn: '39-01-2060',
-    spec: { 시리즈: 'Mini-Fit Jr 5557', 피치: '4.2mm', 정격: '9A/600V', 통신: '9600bps 9bit TTL', 비고: '자판기 본체(VMC) 측' },
+    spec: {
+      시리즈: 'Mini-Fit Jr 5557', 피치: '4.2mm', 정격: '9A/600V', 통신: '9600bps 9bit TTL',
+      // 사용자가 물었던 "39-01-2060 이 5557 이랑 같은 거냐" 의 답을 여기에도 박아 둔다.
+      대응품번: '39-01-2060 = 5557-06R (EDP No. = ENG No., 같은 물건 — 판매도면 SD-5557-003)',
+      비고:
+        '자판기 본체(VMC) 측. 이 부품은 lib-minifit-5557-06p 와 같은 물건이다 — ' +
+        'MDB 신호명·규격색이 붙어 있어 따로 둔다(품번 39-01-2060 은 같으니 BOM 은 어긋나지 않는다).',
+    },
     // Mini-Fit Jr 5557 은 Molex 카탈로그상 Receptacle Housing(5556 암 크림프핀).
     gender: 'receptacle',
     pinCount: 6, pinLayout: MDB_SIGNALS,
@@ -425,15 +855,30 @@ export const SEED_PARTS: PartLibraryItem[] = [
   {
     id: 'lib-mdb-periph', category: 'housing', name: 'MDB 주변기기 6P',
     manufacturer: 'Molex', mpn: '39-30-1060',
-    spec: { 시리즈: 'Mini-Fit Jr 5569', 피치: '4.2mm', 정격: '9A/600V', 비고: '지폐/코인/캐시리스 측' },
-    // gender 미지정 — 5569 를 보드 실장 헤더로 보는 자료와 전선측 소켓으로 보는
-    // 기존 주석이 갈린다. 데이터시트를 확인하기 전까지 비워 둔다(틀린 값보다 낫다).
+    spec: {
+      시리즈: 'Mini-Fit Jr 5569', 피치: '4.2mm', 정격: '13A/600V',
+      대응품번: '39-30-1060 = 5569-06A2 (판매도면 55690002-SD)',
+      종류: 'Right Angle Header, Dual Row (보드 실장, 수) · 스루홀 + 페그 마운트',
+      결합: '5557 리셉터클 하우징 (도면 주5 "MATES WITH MINI-FIT JR. RECEPTACLE SERIES 5557")',
+      출처: 'Molex 판매도면 55690002-SD · 제품사양서 PS-5556-001',
+      비고:
+        '지폐/코인/캐시리스 측. **5557(lib-mdb-vmc)의 짝이지 중복이 아니다** — ' +
+        '이쪽은 기판에 앉는 앵글 헤더(수)이고, 케이블 쪽에 5557 하우징 + 5556 암 터미널이 붙는다. ' +
+        '정격 13A 는 Mini-Fit Plus HCS 터미널(45750/46012) 기준이고, ' +
+        '표준 5556 브라스 터미널이면 9.0A 가 상한이다.',
+    },
+    // 판매도면 55690002-SD 와 품번 상세(Gender: Male, Orientation: Right Angle)로 확정.
+    // 예전 주석이 "전선측 소켓인지 보드 헤더인지 갈린다"고 비워 뒀던 자리다.
+    gender: 'header',
     pinCount: 6, pinLayout: MDB_SIGNALS,
   },
   {
     id: 'lib-minifit-terminal', category: 'terminal', name: 'Mini-Fit Jr 크림프핀 18-24AWG',
     manufacturer: 'Molex', mpn: '39-00-0207',
-    spec: { 적용: 'MDB / Mini-Fit Jr', 발치공구: '11-03-0044' },
+    spec: {
+      적용: 'MDB / Mini-Fit Jr', 발치공구: '11-03-0044',
+      비고: '5556(암) 계열의 한 품번이다 — 시리즈 항목은 lib-minifit-5556 참조.',
+    },
     gender: 'neutral',
   },
 
@@ -525,16 +970,29 @@ export const SEED_PARTS: PartLibraryItem[] = [
   },
 
   // ===== 범용 하우징 =====
-  // JST XH·PH 의 `하우징`(XHP-nn / PHR-n)은 암 컨택을 담는 전선측 하우징이고,
-  // 보드측 상대물은 별도 헤더(B nB-XH-A 등)다 — 그래서 receptacle.
-  { id: 'lib-xh-2p', category: 'housing', name: 'JST XH 2.5 2P', manufacturer: 'JST',
-    spec: { 피치: '2.5mm', 정격: '3A' }, gender: 'receptacle', pinCount: 2, pinLayout: grid(2, 1) },
-  { id: 'lib-xh-4p', category: 'housing', name: 'JST XH 2.5 4P', manufacturer: 'JST',
-    spec: { 피치: '2.5mm', 정격: '3A' }, gender: 'receptacle', pinCount: 4, pinLayout: grid(4, 1) },
-  { id: 'lib-xh-6p', category: 'housing', name: 'JST XH 2.5 6P', manufacturer: 'JST',
-    spec: { 피치: '2.5mm', 정격: '3A' }, gender: 'receptacle', pinCount: 6, pinLayout: grid(6, 1) },
-  { id: 'lib-ph-4p', category: 'housing', name: 'JST PH 2.0 4P', manufacturer: 'JST',
-    spec: { 피치: '2.0mm', 정격: '2A' }, gender: 'receptacle', pinCount: 4, pinLayout: grid(4, 1) },
+  // JST XH·PH 의 `하우징`(XHP-n / PHR-n)은 암 컨택을 담는 전선측 하우징이고,
+  // 보드측 상대물은 별도 헤더(BnB-XH-A 등)다 — 그래서 receptacle.
+  //
+  // 아래 넷은 **품번 없는 옛 낱개 항목**이다. 데이터시트로 확인한 XHP-n / PHR-n
+  // 시리즈(lib-jst-*)가 이것들을 대체하지만 지우지 않았다 — 지우면 이미 이 id 로
+  // 저장된 도면을 다시 배치할 수 없고, 새 id 로 옮겨 그린 커넥터와 옛 id 커넥터가
+  // BOM 에서 별개 품목으로 이중 계상된다. 비고로만 갈아탈 곳을 가리킨다.
+  { id: 'lib-xh-2p', category: 'housing', name: 'JST XH 2.5 2P (구 항목)', manufacturer: 'JST',
+    spec: { 피치: '2.5mm', 정격: '3A', 대체: 'lib-jst-xhp-2p (XHP-2)',
+      비고: '품번 없는 옛 항목 — 신규 설계는 품번이 있는 XHP-2 항목을 쓰세요. 기존 도면 호환을 위해 남겨 둡니다.' },
+    gender: 'receptacle', pinCount: 2, pinLayout: grid(2, 1) },
+  { id: 'lib-xh-4p', category: 'housing', name: 'JST XH 2.5 4P (구 항목)', manufacturer: 'JST',
+    spec: { 피치: '2.5mm', 정격: '3A', 대체: 'lib-jst-xhp-4p (XHP-4)',
+      비고: '품번 없는 옛 항목 — 신규 설계는 품번이 있는 XHP-4 항목을 쓰세요. 기존 도면 호환을 위해 남겨 둡니다.' },
+    gender: 'receptacle', pinCount: 4, pinLayout: grid(4, 1) },
+  { id: 'lib-xh-6p', category: 'housing', name: 'JST XH 2.5 6P (구 항목)', manufacturer: 'JST',
+    spec: { 피치: '2.5mm', 정격: '3A', 대체: 'lib-jst-xhp-6p (XHP-6)',
+      비고: '품번 없는 옛 항목 — 신규 설계는 품번이 있는 XHP-6 항목을 쓰세요. 기존 도면 호환을 위해 남겨 둡니다.' },
+    gender: 'receptacle', pinCount: 6, pinLayout: grid(6, 1) },
+  { id: 'lib-ph-4p', category: 'housing', name: 'JST PH 2.0 4P (구 항목)', manufacturer: 'JST',
+    spec: { 피치: '2.0mm', 정격: '2A', 대체: 'lib-jst-phr-4p (PHR-4)',
+      비고: '품번 없는 옛 항목 — 신규 설계는 품번이 있는 PHR-4 항목을 쓰세요. 기존 도면 호환을 위해 남겨 둡니다.' },
+    gender: 'receptacle', pinCount: 4, pinLayout: grid(4, 1) },
   // 아래 둘은 시리즈가 특정되지 않아 암수를 단정할 수 없다(Mini-Fit 은 5557 암 /
   // 5559 수가 같은 4.2mm 다). 미지정으로 두고 쓰는 사람이 채우게 한다.
   { id: 'lib-minifit-4p', category: 'housing', name: 'Molex Mini-Fit Jr 4P', manufacturer: 'Molex',
@@ -552,6 +1010,15 @@ export const SEED_PARTS: PartLibraryItem[] = [
   // ===== Molex Micro-Fit 3.0 (43025 / 43020 / 43030 / 43031) =====
   ...MICROFIT30,
   ...MICROFIT30_TERMINALS,
+
+  // ===== Molex Mini-Fit Jr 5557 (39-01-2xx0) + 5556/5558 터미널 =====
+  ...MINIFIT_5557,
+  ...MINIFIT_TERMINALS,
+
+  // ===== JST XH (2.50mm) / PH (2.00mm) =====
+  ...JST_XH,
+  ...JST_PH,
+  ...JST_CONTACTS,
 
   // ===== 보드투와이어 / 스플라이스 =====
   { id: 'lib-b2w-2p', category: 'board-to-wire', name: 'Board-to-Wire 2P',
