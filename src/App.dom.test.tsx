@@ -67,7 +67,7 @@ describe('앱 렌더 스모크', () => {
 
   it('라이브러리 검색이 동작한다', () => {
     render(<App />);
-    const search = screen.getByPlaceholderText('이름·MPN·신호 검색');
+    const search = screen.getByPlaceholderText('이름·MPN·시리즈·신호 검색');
     fireEvent.change(search, { target: { value: 'SMH250' } });
     expect(screen.getAllByText(/SMH250/).length).toBeGreaterThan(0);
     // 검색어와 무관한 그룹은 사라져야 함
@@ -265,7 +265,7 @@ describe('빈 상태 (§5)', () => {
     render(<App />);
     fireEvent.click(screen.getByText('+ 하네스'));
     // 라이브러리에 부품이 실제로 보이고, 우측 탭도 남아 있다
-    expect(screen.getByPlaceholderText('이름·MPN·신호 검색')).toBeTruthy();
+    expect(screen.getByPlaceholderText('이름·MPN·시리즈·신호 검색')).toBeTruthy();
     expect(screen.getAllByText(/^접속표 \d+$/).length).toBeGreaterThan(0);
   });
 });
@@ -308,33 +308,43 @@ describe('하네스 탭 — 세트', () => {
   });
 });
 
-describe('라이브러리 — 암수 배지', () => {
+describe('라이브러리 — 암수 표기', () => {
   /** 라이브러리 한 줄(.lib-row) */
   const rowOf = (name: RegExp) => screen.getByText(name).closest('.lib-row') as HTMLElement;
 
-  it('암 · 수는 핀수 배지 옆에 배지가 붙는다', () => {
+  it('암 · 수가 기호 옆 고정 칸에 글자로 나온다', () => {
     render(<App />);
-    // 기본으로 펼쳐진 2.5mm 그룹 — SMH250(암) 과 SMP250(수) 이 나란히 있다
-    const smh = rowOf(/^연호 SMH250-02/);
+    // 기본으로 펼쳐진 연호 2.5mm 시리즈 — SMH250(암) 과 SMP250(수) 이 나란히 있다.
+    // 이름에서 제조사('연호 ')는 그룹 머리글이 이미 말하므로 표시에서 뗀다.
+    const smh = rowOf(/^SMH250-02/);
     expect(within(smh).getByText('2P')).toBeTruthy();
-    expect(within(smh).getByText('암')).toBeTruthy();
+    expect(smh.querySelector('.gender-cell.g-receptacle')?.textContent).toBe('암');
 
-    const smp = rowOf(/^연호 SMP250-02/);
-    expect(within(smp).getByText('수')).toBeTruthy();
+    const smp = rowOf(/^SMP250-02/);
+    expect(smp.querySelector('.gender-cell.g-plug')?.textContent).toBe('수');
   });
 
-  it('성별 없음(스플라이스)에는 배지를 달지 않는다', () => {
+  it('행마다 형상 기호가 붙는다 — 암은 빈 원, 수는 찬 원', () => {
     render(<App />);
-    expect(rowOf(/^스플라이스 3/).querySelector('.gender-badge')).toBeNull();
+    // 글자만으로는 "어떻게 생긴 애인지" 를 알 수 없어서 넣은 기호다.
+    expect(rowOf(/^SMH250-02/).querySelector('.part-symbol .ps-hole')).toBeTruthy();
+    expect(rowOf(/^SMP250-02/).querySelector('.part-symbol .ps-pin')).toBeTruthy();
+  });
+
+  it('성별이라는 개념이 없는 부품(스플라이스)과 미지정을 구분한다', () => {
+    render(<App />);
+    // neutral = 확인이 끝난 "성별 없음". 조용히 점만 찍는다.
+    expect(rowOf(/^스플라이스 3/).querySelector('.gender-cell.g-neutral')).toBeTruthy();
+    expect(rowOf(/^스플라이스 3/).querySelector('.gender-cell.g-unknown')).toBeNull();
   });
 
   it('신규 설계 비권장(NRND) 부품은 목록에서 바로 보인다', () => {
     render(<App />);
-    fireEvent.change(screen.getByPlaceholderText('이름·MPN·신호 검색'), {
+    fireEvent.change(screen.getByPlaceholderText('이름·MPN·시리즈·신호 검색'), {
       target: { value: '35155' },
     });
     const row = rowOf(/35155-0300/);
-    expect(within(row).getByText('암')).toBeTruthy();
+    expect(row.querySelector('.gender-cell.g-receptacle')?.textContent).toBe('암');
     expect(within(row).getByText('NRND')).toBeTruthy();
   });
 });
@@ -342,7 +352,7 @@ describe('라이브러리 — 암수 배지', () => {
 describe('라이브러리 — 그룹 접기', () => {
   it('접힌 그룹은 항목이 숨고, 헤더를 누르면 펼쳐진다', () => {
     render(<App />);
-    // USB 는 기본 접힘 → 항목이 안 보인다
+    // USB 시리즈는 기본 접힘 → 항목이 안 보인다
     expect(screen.queryByText(/USB 2\.0/)).toBeNull();
     fireEvent.click(screen.getByText('USB'));
     expect(screen.getAllByText(/USB/).length).toBeGreaterThan(1);
@@ -350,10 +360,49 @@ describe('라이브러리 — 그룹 접기', () => {
 
   it('검색 중에는 접힘을 무시하고 결과를 보여준다', () => {
     render(<App />);
-    fireEvent.change(screen.getByPlaceholderText('이름·MPN·신호 검색'), {
+    fireEvent.change(screen.getByPlaceholderText('이름·MPN·시리즈·신호 검색'), {
       target: { value: 'USB' },
     });
     // 접혀 있던 USB 그룹의 항목이 검색 결과로 드러나야 한다
     expect(screen.getAllByText(/USB/).length).toBeGreaterThan(1);
+  });
+});
+
+describe('라이브러리 — 분류 체계', () => {
+  it('계열 머리글 4칸이 목차로 보인다', () => {
+    render(<App />);
+    // 축이 하나뿐인 2단계 구조 — 계열은 접히지 않고 늘 보인다.
+    expect(screen.getByText('압착 커넥터 (시리즈)')).toBeTruthy();
+    expect(screen.getByText('규격 I/O 커넥터')).toBeTruthy();
+  });
+
+  it('시리즈 머리글은 제조사 · 시리즈 · 피치 꼴이다', () => {
+    render(<App />);
+    expect(screen.getByText('연호전자 · SMH250 · SMP250 · 2.50mm')).toBeTruthy();
+  });
+
+  it('용도(MDB)는 칸이 아니라 검색어다 — 커넥터는 Mini-Fit Jr 안에 있다', () => {
+    render(<App />);
+    fireEvent.change(screen.getByPlaceholderText('이름·MPN·시리즈·신호 검색'), {
+      target: { value: '자판기' },
+    });
+    // 부품 이름에는 '자판기' 가 없다. 시리즈 태그로 잡혀야 한다.
+    expect(screen.getByText(/MDB VMC/)).toBeTruthy();
+  });
+
+  it('역할 필터로 보드측만 남길 수 있다', () => {
+    render(<App />);
+    fireEvent.change(screen.getByPlaceholderText('이름·MPN·시리즈·신호 검색'), {
+      target: { value: 'XH' },
+    });
+    expect(screen.getByText(/^XHP-4/)).toBeTruthy();       // 전선측 하우징
+    fireEvent.click(screen.getByRole('button', { name: '보드측' }));
+    expect(screen.queryByText(/^XHP-4/)).toBeNull();       // 걸러졌다
+    expect(screen.getByText(/B4B-XH-A/)).toBeTruthy();     // 보드측은 남는다
+  });
+
+  it('분류 미지정 칸은 비어 있다 — 시드에 넣고 화면에서 못 찾는 일이 없어야 한다', () => {
+    render(<App />);
+    expect(screen.queryByText('분류 미지정')).toBeNull();
   });
 });

@@ -301,6 +301,42 @@ body {
   border: 1px solid var(--line-mid); border-radius: var(--radius); background: #fff;
 }
 
+/* 가로 필터 칩 — 역할·성별. 시리즈 그룹을 가로질러 거른다. */
+.lib-filters {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 3px;
+  margin: -4px 0 8px;
+}
+.lib-chip {
+  height: var(--h-control-sm); padding: 0 7px;
+  font: inherit; font-size: var(--fs-cap); line-height: 1;
+  border: 1px solid var(--line-mid); border-radius: var(--radius);
+  background: #fff; color: var(--text-3); cursor: pointer;
+}
+.lib-chip:hover { border-color: var(--accent); color: var(--text); }
+.lib-chip.on {
+  background: var(--accent); border-color: var(--accent-deep);
+  color: #fff; font-weight: 600;
+}
+.lib-chip.clear { border-style: dashed; color: var(--muted); }
+.lib-filter-sep {
+  width: 1px; height: 12px; margin: 0 3px; background: var(--line); flex-shrink: 0;
+}
+
+/* 계열 머리글 = 목차. 접히지 않는다 — 지금 어느 칸을 보는지 늘 보여야 한다. */
+.lib-fam { margin-bottom: 10px; }
+.lib-fam-title {
+  display: flex; align-items: baseline; gap: 6px;
+  padding: 3px 0 3px 2px; margin-bottom: 2px;
+  border-bottom: 1px solid var(--line-mid);
+  font-family: var(--font-title); font-size: var(--fs-body); font-weight: 600;
+  letter-spacing: .02em; color: var(--text);
+  cursor: help;
+}
+.lib-fam-title .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-fam-title .count { font-family: var(--font-num); font-size: var(--fs-cap); color: var(--muted); }
+/* 계열 안의 시리즈는 한 칸 들여 계층을 눈으로 만든다 */
+.lib-fam .lib-cat { margin-left: 2px; }
+
 .lib-cat { margin-bottom: 8px; }
 /* 그룹 헤더 = 접기 버튼 */
 .lib-cat-title {
@@ -325,9 +361,10 @@ body {
 }
 
 .lib-item {
-  display: flex; justify-content: space-between; align-items: center; gap: 6px;
-  width: 100%; height: var(--h-row); text-align: left;
-  padding: 0 4px 0 8px; font: inherit; font-size: var(--fs-table);
+  /* 형상 기호(22px)가 들어가 26px 로는 위아래가 눌린다. 라이브러리 행만 28px. */
+  display: flex; justify-content: space-between; align-items: center; gap: 5px;
+  width: 100%; height: 28px; text-align: left;
+  padding: 0 4px 0 4px; font: inherit; font-size: var(--fs-table);
   border: none; border-left: 2px solid var(--line-row); background: transparent;
   color: var(--text); cursor: pointer;
 }
@@ -349,13 +386,38 @@ body {
   padding: 0 3px; flex-shrink: 0;
 }
 
-/* 암수 배지 — 발주에서 틀리면 안 되는 값이라 핀수 배지보다 진하게 둔다.
-   빨강은 전선 색이라 쓰지 않는다. 강조는 스틸(--accent) 하나. */
-.gender-badge {
-  font-size: var(--fs-micro); font-weight: 600; line-height: 1.5;
-  color: var(--accent-dark); border: 1px solid var(--accent);
-  background: var(--accent-tint);
-  padding: 0 3px; flex-shrink: 0;
+/* --- 형상 기호 ---------------------------------------------------------
+   색을 쓰지 않는다. 이 도구에서 색은 이미 "전선 색"이라는 뜻을 갖고 있어서,
+   부품 기호에까지 색을 쓰면 도면의 색과 섞여 읽힌다. 구분은 형태로만 한다. */
+.part-symbol { flex-shrink: 0; display: block; }
+.ps-body { fill: #fff; stroke: var(--text-2); stroke-width: 1; }
+.ps-line { fill: none; stroke: var(--text-2); stroke-width: 1; stroke-linecap: round; }
+.ps-board { fill: none; stroke: var(--muted); stroke-width: 1.5; }
+.ps-wire { fill: none; stroke: var(--text-2); stroke-width: 1.2; stroke-linecap: round; }
+/* 암 = 구멍(빈 원) · 수/보드 = 핀(찬 원·찬 네모). 이 대비가 암수 판별의 근거다. */
+.ps-hole { fill: #fff; stroke: var(--text-2); stroke-width: 1; }
+.ps-pin { fill: var(--text-2); stroke: none; }
+.ps-more { fill: var(--muted); font-family: var(--font-num); font-size: 7px; font-weight: 700; }
+.lib-item:disabled .part-symbol { opacity: .65; }
+
+/* --- 암수 칸 -----------------------------------------------------------
+   기호 바로 옆 **고정 폭 · 고정 위치**. 예전처럼 행 오른쪽 끝에 두면 이름 길이에
+   따라 x 가 매 행 달라져서, 목록을 훑을 때 눈이 지그재그로 움직인다.
+   빨강은 전선 색이라 쓰지 않는다 — 암수 구분은 글자와 테두리 굵기로 한다. */
+.gender-cell {
+  flex-shrink: 0; width: 20px; text-align: center;
+  font-size: var(--fs-micro); font-weight: 700; line-height: 15px;
+  border: 1px solid transparent; border-radius: var(--radius);
+}
+.gender-cell.g-receptacle { color: var(--accent-dark); border-color: var(--accent); background: #fff; }
+.gender-cell.g-plug { color: #fff; border-color: var(--accent-deep); background: var(--accent); }
+.gender-cell.g-header { color: var(--text-3); border-color: var(--line-mid); background: var(--bg-subtle); }
+/* 성별이라는 개념이 없는 부품(단자·스플라이스) — 확인이 끝난 상태라 조용히 둔다 */
+.gender-cell.g-neutral, .gender-cell.g-none { color: var(--muted-2); font-weight: 400; }
+/* 아직 확인 안 된 값 — 위와 달리 눈에 걸려야 한다. 점선 = "미정" */
+.gender-cell.g-unknown {
+  color: var(--muted); border-style: dashed; border-color: var(--line-mid);
+  background: var(--bg-subtle);
 }
 
 /* 신규 설계 비권장 — 눈에는 띄되 경고색(빨강)은 쓰지 않는다 */
