@@ -245,10 +245,17 @@ describe('빈 상태 (§5)', () => {
     expect(screen.getByText('라이브러리에서 커넥터 놓기')).toBeTruthy();
   });
 
-  it('배선이 없으면 물리 뷰·PDF 가 비활성이다', () => {
+  it('배선이 없으면 PDF 는 막되 물리 뷰는 막지 않는다', () => {
+    /*
+     * 이 시험은 원래 **둘 다 비활성**을 요구했고, 그게 결함을 굳혀 놨다.
+     * 물리 뷰는 배선 0본에서도 정상으로 열리고 "배선이 없습니다" 라고 스스로
+     * 안내한다 — 들어갈 수 있는 화면을 막고 있었던 것이다. 게다가 상단바에
+     * `:disabled` 스타일이 없어 막힌 티도 안 나서 "눌러도 반응 없음" 이 됐다.
+     * PDF 는 다르다 — 낼 것이 정말 없으므로 막는 게 맞다.
+     */
     render(<App />);
     fireEvent.click(screen.getByText('+ 하네스'));
-    expect((screen.getByText('물리 뷰') as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByText('물리 뷰') as HTMLButtonElement).disabled).toBe(false);
     expect((screen.getByText('PDF 도면') as HTMLButtonElement).disabled).toBe(true);
   });
 
@@ -404,5 +411,63 @@ describe('라이브러리 — 분류 체계', () => {
   it('분류 미지정 칸은 비어 있다 — 시드에 넣고 화면에서 못 찾는 일이 없어야 한다', () => {
     render(<App />);
     expect(screen.queryByText('분류 미지정')).toBeNull();
+  });
+});
+
+/*
+ * "물리 뷰 눌러도 반응 없음" — 세 갈래였고 셋 다 시험이 전부 통과하는 상태에서 났다.
+ * 화면 분기·버튼 상태는 단위 시험으로는 안 잡히므로 여기서 실제 렌더로 붙잡는다.
+ */
+describe('뷰 전환 — 누르면 반드시 뭔가 바뀐다', () => {
+  const viewBtn = (name: '논리 뷰' | '물리 뷰') =>
+    screen.getByRole('button', { name }) as HTMLButtonElement;
+  /** 물리 뷰가 실제로 그려졌는가 — 버튼 색이 아니라 화면으로 판단한다 */
+  const inPhysical = () => !!document.querySelector('.body-phys');
+
+  it('세트 개요 탭에서 눌러도 물리 도면이 열린다', () => {
+    /*
+     * 이게 원래 신고된 증상이다. 화면 분기가
+     * `hTab === 'set' ? 세트개요 : view === 'physical' ? …` 라서, 세트 개요에서는
+     * view 를 바꿔도 그리는 것이 안 달라졌다. 버튼만 눌린 색으로 바뀌었다.
+     */
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: /^세트 개요/ }));
+    expect(document.querySelector('.body-phys')).toBeNull();
+
+    fireEvent.click(viewBtn('물리 뷰'));
+    expect(inPhysical()).toBe(true);          // 화면이 실제로 바뀌었다
+    expect(viewBtn('물리 뷰').className).toBe('on');
+  });
+
+  it('세트 개요에서 논리 뷰를 눌러도 하네스 도면으로 돌아온다', () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: /^세트 개요/ }));
+    fireEvent.click(viewBtn('논리 뷰'));
+    expect(document.querySelector('.react-flow')).toBeTruthy();
+  });
+
+  it('배선이 0본이어도 물리 뷰에 들어갈 수 있다', () => {
+    /*
+     * 예전에는 `disabled={nothingToExport}` 로 막혀 있었다. 막을 이유가 없었다 —
+     * 물리 뷰는 배선 0본에서도 열리고 스스로 안내한다. 게다가 상단바에 :disabled
+     * 스타일이 없어 막힌 티조차 안 났다.
+     */
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: '+ 하네스' }));   // 빈 하네스
+    expect(viewBtn('물리 뷰').disabled).toBe(false);
+
+    fireEvent.click(viewBtn('물리 뷰'));
+    expect(inPhysical()).toBe(true);
+    // 빈 화면이 아니라 다음에 할 일을 알려 준다
+    expect(screen.getByText(/배선이 없습니다/)).toBeTruthy();
+  });
+
+  it('PDF 도면은 낼 것이 없으면 막되, 막힌 이유를 남긴다', () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: '+ 하네스' }));
+    const pdf = screen.getByRole('button', { name: 'PDF 도면' }) as HTMLButtonElement;
+    expect(pdf.disabled).toBe(true);
+    // 이유가 없으면 사용자에게는 그냥 고장이다
+    expect(pdf.title).toMatch(/배선/);
   });
 });

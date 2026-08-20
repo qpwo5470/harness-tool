@@ -303,6 +303,21 @@ export default function App() {
       setPartsScope({ kind: 'harness', harnessId: id });
     }
   };
+  /**
+   * 뷰 전환 — **세트 개요에 있어도 반드시 뭔가 바뀐다.**
+   *
+   * 예전에는 `setView` 만 불렀다. 그런데 화면 분기가
+   * `hTab === 'set' ? 세트개요 : view === 'physical' ? 물리 : 논리` 라서,
+   * 세트 개요 탭에서는 `view` 를 바꿔도 그리는 것이 하나도 안 달라졌다.
+   * 버튼은 눌린 색으로 바뀌는데 화면은 그대로 — "눌러도 반응 없음" 이 그것이다.
+   *
+   * 뷰 토글은 **하네스 도면**을 가리키는 조작이므로, 세트 개요에서 눌렀다면
+   * 활성 하네스로 데려가는 것이 그 사람이 원한 일이다.
+   */
+  const goView = (v: 'logical' | 'physical') => {
+    setView(v);
+    if (hTab === 'set') goHarness(activeHarnessId);
+  };
   /** 발주 전 확인 항목 클릭 → 그 하네스로 이동 + 대상 선택 */
   const goToBlocker = (harnessId: string, targetId?: string) => {
     goHarness(harnessId);
@@ -405,14 +420,15 @@ export default function App() {
           onChange={(e) => setDocMeta({ rev: e.target.value || undefined })}
         />
         <div className="view-toggle">
-          <button className={view === 'logical' ? 'on' : ''} onClick={() => setView('logical')}>논리 뷰</button>
-          {/* 배선이 없으면 제조 도면에 그릴 것이 없다 */}
-          <button
-            className={view === 'physical' ? 'on' : ''}
-            disabled={nothingToExport}
-            title={nothingToExport ? '배선이 있어야 제조 도면이 나옵니다' : undefined}
-            onClick={() => setView('physical')}
-          >
+          <button className={view === 'logical' ? 'on' : ''} onClick={() => goView('logical')}>논리 뷰</button>
+          {/*
+            예전에는 `disabled={nothingToExport}` 로 막았다. 잘못된 판단이었다 —
+            물리 뷰는 배선이 0본이어도 정상으로 열리고 "배선이 없습니다 — 핀과 핀을
+            이으면 구간이 생깁니다" 라고 스스로 안내한다. 막을 것이 없는데 막았고,
+            상단바에 `:disabled` 스타일이 없어 **막힌 티도 안 났다**.
+            그 가드는 정말로 낼 것이 없는 `PDF 도면` 에만 필요하다(아래).
+          */}
+          <button className={view === 'physical' ? 'on' : ''} onClick={() => goView('physical')}>
             물리 뷰
           </button>
         </div>
@@ -444,7 +460,16 @@ export default function App() {
             </div>
           )}
         </div>
-        <button className="primary" disabled={nothingToExport} onClick={exportPdf}>PDF 도면</button>
+        {/* 이쪽은 진짜로 낼 것이 없다. 이유를 툴팁으로 남긴다 — 못 누르는 이유가
+            화면에 없으면 "눌러도 반응 없음" 으로 읽힌다. */}
+        <button
+          className="primary"
+          disabled={nothingToExport}
+          title={nothingToExport ? '배선이 있어야 도면을 낼 수 있습니다' : undefined}
+          onClick={exportPdf}
+        >
+          PDF 도면
+        </button>
         <input ref={fileRef} type="file" accept="application/json" hidden onChange={onFile} />
       </header>
 

@@ -29,11 +29,12 @@ body {
   border: 1px solid var(--line-mid); background: #fff; color: var(--text-2);
   border-radius: var(--radius); cursor: pointer; white-space: nowrap;
 }
-.topbar button:hover { background: var(--accent-tint); }
+.topbar button:hover:not(:disabled) { background: var(--accent-tint); }
 .topbar button.primary {
   background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600;
 }
-.topbar button.primary:hover { background: var(--accent-deep); border-color: var(--accent-deep); }
+.topbar button.primary:hover:not(:disabled) { background: var(--accent-deep); border-color: var(--accent-deep); }
+/* 흐리게 하는 건 파일 맨 끝의 `button:disabled` 가 한다. 여기서는 hover 만 죽인다. */
 
 /* 도번 · 자동저장 표시 */
 .topbar .meta {
@@ -550,4 +551,28 @@ button.danger:hover { background: var(--danger-tint); }
   stroke: #fff;
   stroke-width: 3px;
   stroke-linejoin: round;
+}
+
+/* ============================================================
+   비활성 버튼 — 파일 맨 끝에 있어야 한다
+   ============================================================
+
+   못 누르는 버튼은 못 누르게 **보여야 한다**. 한 곳에서 전부에 건다.
+
+   이 규칙이 없어서 상단바의 `물리 뷰`·`PDF 도면` 이 배선 0본일 때 멀쩡한 버튼과
+   똑같이 보였다. 눌러도 아무 일이 없으니 "고장" 으로 읽혔다 — 실제로는
+   `disabled` 였는데 그 사실이 화면 어디에도 없었다.
+   라이브러리·필터에는 같은 규칙이 진작 있었지만(`.lib-io`·`.side-filter`)
+   선택자마다 따로 적어 온 탓에 새로 만든 화면은 매번 빠졌다(속성 패널·핀맵
+   에디터·세트 개요·내보내기 대화상자).
+
+   **맨 끝인 이유:** `button:disabled` 는 특이도가 (0,1,1) 이라
+   `.topbar button { cursor: pointer }` 와 동점이다. 동점이면 나중에 쓴 쪽이
+   이기므로, 위에 두었더니 opacity 만 먹고 cursor 는 안 먹었다(실측).
+   특이도를 억지로 올리거나 !important 를 쓰는 대신 자리를 옮긴다.
+   더 진하게/다르게 보여야 하는 곳은 특이도가 더 높으니 그대로 이긴다
+   (`.lib-item:disabled` 등). */
+button:disabled {
+  opacity: .4;
+  cursor: not-allowed;
 }
