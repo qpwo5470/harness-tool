@@ -11,7 +11,8 @@ import {
 } from './geometry';
 // 세로 간선이 어디까지 뻗는지는 **상자를 비켜 간 뒤에야** 알 수 있다.
 // 그래서 레인을 정하기 전에 라우터를 한 번 돌려 본다(assignLanes 주석 참고).
-import { routeOrthogonal, type Pt } from './route';
+import { routeOrthogonal, DEFAULT_STUB, type Pt } from './route';
+import { planStubLabels, stubWidth } from './stubLabel';
 
 function endpointNodeId(e: Endpoint): string {
   return e.type === 'pin' ? e.connectorId : e.deviceId;
@@ -729,6 +730,32 @@ export function docToEdges(
   // 캔버스 라벨만 비워 두면 물리 뷰·자재표와 숫자가 갈린다.
   const lengthOf = lengthResolver(doc);
 
+  /*
+   * 스텁 라벨 어긋 배치 — **여기서 한 번만** 정한다.
+   *
+   * 라벨 자리는 배선 한 가닥만 봐서는 정할 수 없다. 옆 가닥이 어디 있는지 알아야
+   * 겹치는지 판단이 되는데, 화면은 엣지를 한 가닥씩 그리므로 그 안에서는 알 수 없다.
+   * 그래서 문서 전체를 아는 이 자리에서 계산해 `labelBackoff` 로 실어 보낸다.
+   * PDF(pdfDraw)도 같은 엣지 data 를 읽으므로 **종이와 화면이 같은 자리**에 찍힌다.
+   */
+  const stubs = planStubLabels(
+    doc.wires.map((w, i) => ({
+      id: w.id,
+      width: stubWidth(colorAbbr(w.color.base, w.color.stripe), signalAt(w.to) ?? signalAt(w.from)),
+      // `wirePlan.routeWire` 를 부르면 순환 참조가 된다(stubLabel.ts 머리말).
+      // 라우터를 직접 부르되 stub 기본값은 같은 상수를 쓴다.
+      points: routeOrthogonal({
+        sourceX: lanes.from[i].x, sourceY: lanes.from[i].y,
+        targetX: lanes.to[i].x, targetY: lanes.to[i].y,
+        sourcePosition: lanes.from[i].side, targetPosition: lanes.to[i].side,
+        laneY: lanes.laneY[i], laneX: lanes.laneX[i],
+        stub: DEFAULT_STUB,
+        sourceBox: lanes.fromBox[i], targetBox: lanes.toBox[i], obstacles: lanes.obstacles,
+      }).points,
+    })),
+  );
+  const backoffOf = new Map(stubs.map((s) => [s.id, s.backoff]));
+
   return doc.wires.map((w, i) => {
     const stripe = w.color.stripe ? `/${w.color.stripe}` : '';
     const on = highlight.has(w.id);
@@ -762,6 +789,7 @@ export function docToEdges(
         obstacles: lanes.obstacles,
         abbr: colorAbbr(w.color.base, w.color.stripe),
         signal: signalAt(w.to) ?? signalAt(w.from),
+        labelBackoff: backoffOf.get(w.id),
         on,
         dim: dim && !on,
         spec,

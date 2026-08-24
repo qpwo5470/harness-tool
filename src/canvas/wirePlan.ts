@@ -58,6 +58,11 @@ export type WireGeometry = {
    * 하우징을 관통하지 않게 한다. 배선 전체가 **같은 배열**을 나눠 쓴다.
    */
   obstacles?: Box[];
+  /**
+   * 라벨을 도착 패드에서 되짚는 거리. `planStubLabels` 가 겹침을 풀며 정한다.
+   * 없으면 기본값 — 한 가닥짜리 도면은 어긋 놓을 이유가 없다.
+   */
+  labelBackoff?: number;
 };
 
 /**
@@ -75,8 +80,21 @@ export function routeWire(ends: EdgeEnds, g: WireGeometry = {}): Route {
     sourceBox: g.sourceBox,
     targetBox: g.targetBox,
     obstacles: g.obstacles,
+    ...(g.labelBackoff != null ? { labelBackoff: g.labelBackoff } : {}),
   });
 }
+
+/*
+ * 스텁 라벨 배치는 `stubLabel.ts` 에 있다 — **순환 참조를 끊으려고** 뺐다.
+ * docToFlow 가 이 계산을 써야 하는데, 이 파일은 docToFlow(assignLanes)를 쓴다.
+ * 서로 물리면 모듈 초기화 순서에 따라 상수가 `undefined` 로 읽힌다. 실제로
+ * `JACKET_MAX_GAP` 이 NaN 이 되어 자켓이 잘못 그려졌다(시험이 잡았다).
+ * 아래 재수출은 기존 호출부(pdfDraw 등)를 위한 통로일 뿐이다.
+ */
+export {
+  STUB_BOX_H, STUB_FONT_PX, STUB_GAP, STUB_MAX_STEPS, stubWidth, planStubLabels,
+  type StubLabelInput, type StubLabelPlan,
+} from './stubLabel';
 
 /** 배선 한 가닥의 계획 — 꺾임점 · SVG path · 스텁 라벨 자리 */
 export type PlannedWire = {

@@ -132,7 +132,21 @@ export function OrthogonalEdge(props: EdgeProps) {
             }}
           >
             <b className="num" style={{ color: stroke === '#fff' ? 'var(--text)' : stroke }}>{d.abbr}</b>
-            {d.signal && <span>{d.signal}</span>}
+            {/*
+              신호명은 **강조된 가닥에만** 편다.
+
+              색 약호는 두세 글자라 어디에 놓든 자리가 나지만, 신호명은
+              "+34V (무정전)" 처럼 길어 상자를 90px 넘게 벌린다. 한 커넥터로
+              대여섯 가닥이 모이면 그 상자들이 뒤에 지나는 **배선을 통째로 덮는다**
+              (흰 배경이라 지워 버린다). 실제 MDB 6P 도면이 그랬다.
+
+              어긋 배치(planStubLabels)로 상자끼리 겹치는 것은 풀었지만, 넓은
+              상자가 도면을 가리는 것은 자리를 옮겨서 될 일이 아니다 — 평소에는
+              접어 두고 그 가닥을 짚었을 때만 편다. 신호명은 커넥터 핀 칸·접속표·
+              상세 카드에도 있으므로 잃는 정보가 없다.
+              종이(PDF)는 짚을 수가 없으니 늘 펴 둔다.
+            */}
+            {d.signal && (d.on || selected) && <span>{d.signal}</span>}
           </div>
         </EdgeLabelRenderer>
       )}
