@@ -93,8 +93,10 @@ export function routeWire(ends: EdgeEnds, g: WireGeometry = {}): Route {
  */
 export {
   STUB_BOX_H, STUB_FONT_PX, STUB_GAP, STUB_MAX_STEPS, stubWidth, planStubLabels,
+  colorAbbr, stubTextOf, isPaleOnWhite,
   type StubLabelInput, type StubLabelPlan,
 } from './stubLabel';
+import { planStubLabels, stubTextOf } from './stubLabel';
 
 /** 배선 한 가닥의 계획 — 꺾임점 · SVG path · 스텁 라벨 자리 */
 export type PlannedWire = {
@@ -118,24 +120,44 @@ export type PlannedWire = {
  */
 export function planWires(doc: HarnessDocument, view: ViewMode = 'logical'): PlannedWire[] {
   const lanes = assignLanes(doc, view);
+  const ends = (i: number) => ({
+    sourceX: lanes.from[i].x,
+    sourceY: lanes.from[i].y,
+    targetX: lanes.to[i].x,
+    targetY: lanes.to[i].y,
+    sourcePosition: lanes.from[i].side,
+    targetPosition: lanes.to[i].side,
+  });
+  const geo = (i: number) => ({
+    laneY: lanes.laneY[i],
+    laneX: lanes.laneX[i],
+    sourceBox: lanes.fromBox[i],
+    targetBox: lanes.toBox[i],
+    obstacles: lanes.obstacles,
+  });
+
+  /*
+   * 라벨 겹침을 여기서도 푼다 — **PDF 가 이 함수에서 라벨 자리를 받기 때문이다.**
+   *
+   * 처음에 겹침 해소를 `docToEdges` 에만 넣었다. 화면은 엣지 data 의 backoff 를
+   * 쓰니 고쳐졌는데, PDF 는 여기서 나온 `labelX/labelY` 를 쓰므로 **종이만 예전
+   * 그대로 겹쳐 나왔다**(내보내서 보고 잡았다). 이 파일 머리말이 경고하는 갈라짐을
+   * 그대로 되풀이한 것이다.
+   *
+   * 글자·폭은 `stubTextOf` 한 곳에서 나오므로 두 경로가 같은 값을 잰다.
+   */
+  const backoff = new Map(
+    planStubLabels(
+      doc.wires.map((w, i) => ({
+        id: w.id,
+        width: stubTextOf(doc, w).width,
+        points: routeWire(ends(i), geo(i)).points,
+      })),
+    ).map((p) => [p.id, p.backoff]),
+  );
+
   return doc.wires.map((w, i) => {
-    const r = routeWire(
-      {
-        sourceX: lanes.from[i].x,
-        sourceY: lanes.from[i].y,
-        targetX: lanes.to[i].x,
-        targetY: lanes.to[i].y,
-        sourcePosition: lanes.from[i].side,
-        targetPosition: lanes.to[i].side,
-      },
-      {
-        laneY: lanes.laneY[i],
-        laneX: lanes.laneX[i],
-        sourceBox: lanes.fromBox[i],
-        targetBox: lanes.toBox[i],
-        obstacles: lanes.obstacles,
-      },
-    );
+    const r = routeWire(ends(i), { ...geo(i), labelBackoff: backoff.get(w.id) });
     return { id: w.id, d: r.d, points: r.points, labelX: r.labelX, labelY: r.labelY };
   });
 }

@@ -10,11 +10,74 @@
  *
  * 그래서 라벨 배치는 기하(route·geometry)에만 기대게 떼어 둔다.
  */
+import type { HarnessDocument, Endpoint, Wire } from '../types';
 import { estimateTextWidth } from './geometry';
 import { DEFAULT_LABEL_BACKOFF, DEFAULT_STUB, type Pt } from './route';
 
 const EPS = 1e-6;
 const segLen = (a: Pt, b: Pt) => Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+
+/**
+ * 전선 색 약호. 도면에서는 색 이름을 다 쓸 자리가 없어 약호를 쓴다.
+ * (현장 관행 · Claude Design 스펙과 동일)
+ *
+ * docToFlow 에 있던 것을 여기로 옮겼다 — 라벨 **폭**을 재려면 글자가 필요한데,
+ * 폭을 재는 쪽(화면·PDF 양쪽)이 docToFlow 를 부르면 순환이 된다.
+ */
+const ABBR: Record<string, string> = {
+  red: 'R', black: 'B', white: 'W', green: 'G', blue: 'L',
+  yellow: 'Y', orange: 'O', brown: 'Br', purple: 'V', violet: 'V',
+  gray: 'Gy', grey: 'Gy', pink: 'P', cyan: 'C', magenta: 'M',
+};
+
+export function colorAbbr(base: string, stripe?: string): string {
+  const a = ABBR[base.trim().toLowerCase()] ?? base.trim().slice(0, 2).toUpperCase();
+  if (!stripe) return a;
+  const b = ABBR[stripe.trim().toLowerCase()] ?? stripe.trim().slice(0, 2).toUpperCase();
+  return `${a}/${b}`;
+}
+
+/**
+ * 흰 배경에서 글자로 쓰기엔 너무 밝은 색인가.
+ *
+ * 판단은 여기 한 곳에서만 한다. 무엇으로 바꿀지는 화면과 PDF 가 다르다 —
+ * 화면은 `var(--text)`, PDF 는 CSS 변수를 읽지 못하므로 hex 를 쓴다
+ * (자켓 미지정색이 이미 같은 사정이다). **규칙 하나, 표현 둘**.
+ *
+ * 기준 0.62 를 넘는 것은 지금 둘이다.
+ *   흰 전선 `#d1d5db` 0.66 → 흰 배경 대비 1.5:1
+ *   노랑    `#eab308` 0.70 → 흰 배경 대비 1.4:1
+ * 둘 다 작은 굵은 글자로는 읽히지 않는다(본문 기준 4.5:1).
+ */
+export function isPaleOnWhite(color: string): boolean {
+  const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(color.trim());
+  if (!m) return false;                        // 색 이름(red 등)은 대개 충분히 진하다
+  const h = m[1].length === 3 ? m[1].split('').map((c) => c + c).join('') : m[1];
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16) / 255);
+  // 눈이 느끼는 밝기 — 초록에 가장 민감하다(ITU-R BT.709)
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.62;
+}
+
+/** 끝점의 규격 신호명 (하우징 pinLayout 의 signal) */
+function signalAt(doc: HarnessDocument, e: Endpoint): string | undefined {
+  if (e.type !== 'pin') return undefined;
+  const c = doc.connectors.find((x) => x.id === e.connectorId);
+  const pin = c?.pins.find((p) => p.id === e.pinId);
+  const housing = doc.usedParts.find((p) => p.id === c?.housingId);
+  return housing?.pinLayout?.find((s) => s.index === pin?.index)?.signal;
+}
+
+/**
+ * 배선 한 가닥의 라벨 글자와 폭.
+ *
+ * **화면과 PDF 가 반드시 같은 값을 써야 한다.** 폭이 다르면 겹침을 푸는 계산이
+ * 달라지고, 그러면 종이에서만 라벨이 포개진다 — 실제로 한 번 그렇게 갈라졌다.
+ */
+export function stubTextOf(doc: HarnessDocument, w: Wire): { abbr: string; signal?: string; width: number } {
+  const abbr = colorAbbr(w.color.base, w.color.stripe);
+  const signal = signalAt(doc, w.to) ?? signalAt(doc, w.from);
+  return { abbr, signal, width: stubWidth(abbr, signal) };
+}
 
 /**
  * ── 왜 필요한가 (실측)

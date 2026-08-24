@@ -12,7 +12,9 @@ import {
 // 세로 간선이 어디까지 뻗는지는 **상자를 비켜 간 뒤에야** 알 수 있다.
 // 그래서 레인을 정하기 전에 라우터를 한 번 돌려 본다(assignLanes 주석 참고).
 import { routeOrthogonal, DEFAULT_STUB, type Pt } from './route';
-import { planStubLabels, stubWidth } from './stubLabel';
+// 약호·신호명·폭은 stubLabel 한 곳에서 — 화면과 PDF 가 같은 값을 재야 한다
+import { planStubLabels, stubTextOf, colorAbbr } from './stubLabel';
+export { colorAbbr };
 
 function endpointNodeId(e: Endpoint): string {
   return e.type === 'pin' ? e.connectorId : e.deviceId;
@@ -65,22 +67,6 @@ export function jacketPaint(jacketColor?: string): { color: string; dashed: bool
   return { color: strokeColor(raw), dashed: false };
 }
 
-/**
- * 전선 색 약호. 도면에서는 색 이름을 다 쓸 자리가 없어 약호를 쓴다.
- * (현장 관행 · Claude Design 스펙과 동일)
- */
-const ABBR: Record<string, string> = {
-  red: 'R', black: 'B', white: 'W', green: 'G', blue: 'L',
-  yellow: 'Y', orange: 'O', brown: 'Br', purple: 'V', violet: 'V',
-  gray: 'Gy', grey: 'Gy', pink: 'P', cyan: 'C', magenta: 'M',
-};
-
-export function colorAbbr(base: string, stripe?: string): string {
-  const a = ABBR[base.trim().toLowerCase()] ?? base.trim().slice(0, 2).toUpperCase();
-  if (!stripe) return a;
-  const b = ABBR[stripe.trim().toLowerCase()] ?? stripe.trim().slice(0, 2).toUpperCase();
-  return `${a}/${b}`;
-}
 
 function pos(
   p: { logical?: { x: number; y: number }; physical?: { x: number; y: number } },
@@ -741,7 +727,9 @@ export function docToEdges(
   const stubs = planStubLabels(
     doc.wires.map((w, i) => ({
       id: w.id,
-      width: stubWidth(colorAbbr(w.color.base, w.color.stripe), signalAt(w.to) ?? signalAt(w.from)),
+      // 폭은 stubTextOf 한 곳에서 — PDF(planWires)도 같은 함수를 쓴다.
+      // 두 쪽이 폭을 따로 재면 겹침 계산이 갈라져 종이에서만 라벨이 포개진다.
+      width: stubTextOf(doc, w).width,
       // `wirePlan.routeWire` 를 부르면 순환 참조가 된다(stubLabel.ts 머리말).
       // 라우터를 직접 부르되 stub 기본값은 같은 상수를 쓴다.
       points: routeOrthogonal({

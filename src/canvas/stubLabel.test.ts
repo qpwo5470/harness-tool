@@ -15,7 +15,7 @@ import { SEED_PARTS } from '../library/seed';
 import { docToEdges, strokeColor } from './docToFlow';
 import { readableInk } from './OrthogonalEdge';
 import {
-  planStubLabels, stubWidth, STUB_BOX_H, STUB_GAP, planWires,
+  planStubLabels, stubWidth, stubTextOf, STUB_BOX_H, STUB_GAP, planWires,
 } from './wirePlan';
 
 /** 두 라벨 상자가 겹치는가 (중심 좌표 기준) */
@@ -137,6 +137,53 @@ describe('스텁 라벨 — 실제 문서', () => {
     expect(boxes.every((b) => b.backoff != null)).toBe(true);
     // 다섯 가닥이 한 커넥터로 모이므로 최소 몇 개는 밀려나야 한다
     expect(new Set(boxes.map((b) => b.backoff)).size).toBeGreaterThan(1);
+  });
+
+  it('화면과 PDF 가 같은 라벨 자리를 쓴다', () => {
+    /*
+     * **이 시험이 없어서 한 번 놓쳤다.**
+     *
+     * 겹침 해소를 `docToEdges` 에만 넣었더니 화면은 고쳐졌는데 PDF 는
+     * `planWires` 의 labelX/labelY 를 쓰므로 종이만 예전 그대로 겹쳐 나왔다.
+     * 내보내서 눈으로 보고서야 알았다.
+     *
+     * 그래서 두 경로의 결과를 직접 맞대 본다 — 한쪽만 고치면 여기서 깨진다.
+     */
+    const doc = mdbDoc();
+    const edges = docToEdges(doc);          // 화면이 쓰는 값
+    const planned = planWires(doc);          // PDF 가 쓰는 값
+
+    for (const e of edges) {
+      const d = e.data as { labelBackoff?: number };
+      const p = planned.find((x) => x.id === e.id)!;
+      expect(d.labelBackoff, `${e.id} 의 backoff 가 엣지 data 에 없다`).toBeTypeOf('number');
+      expect(p.labelX, `${e.id} 의 PDF 라벨 x`).toBeTypeOf('number');
+    }
+
+    // 핵심: 두 경로가 **같은 폭**을 재는가. 폭이 갈리면 배치도 갈린다.
+    for (const w of doc.wires) {
+      const e = edges.find((x) => x.id === w.id)!;
+      const d = e.data as { abbr?: string; signal?: string };
+      const t = stubTextOf(doc, w);
+      expect(d.abbr).toBe(t.abbr);
+      expect(d.signal).toBe(t.signal);
+    }
+  });
+
+  it('PDF 라벨도 서로 겹치지 않는다 — 종이는 신호명을 늘 펴 두므로 더 빡빡하다', () => {
+    const doc = mdbDoc();
+    const planned = planWires(doc);
+    const boxes = planned.map((p) => {
+      const w = doc.wires.find((x) => x.id === p.id)!;
+      return { id: p.id, x: p.labelX, y: p.labelY, w: stubTextOf(doc, w).width };
+    });
+    const hits: string[] = [];
+    for (let i = 0; i < boxes.length; i++) {
+      for (let k = i + 1; k < boxes.length; k++) {
+        if (overlap(boxes[i], boxes[k])) hits.push(`${boxes[i].id}✕${boxes[k].id}`);
+      }
+    }
+    expect(hits).toEqual([]);
   });
 
   it('밀어낸 거리는 라벨 폭에 비례한다 — 좁은 라벨을 멀리 보내지 않는다', () => {
