@@ -12,7 +12,8 @@
 import { describe, it, expect } from 'vitest';
 import type { HarnessDocument, PartLibraryItem } from '../types';
 import { SEED_PARTS } from '../library/seed';
-import { docToEdges } from './docToFlow';
+import { docToEdges, strokeColor } from './docToFlow';
+import { readableInk } from './OrthogonalEdge';
 import {
   planStubLabels, stubWidth, STUB_BOX_H, STUB_GAP, planWires,
 } from './wirePlan';
@@ -149,5 +150,44 @@ describe('스텁 라벨 — 실제 문서', () => {
     ]);
     expect(narrow[1].backoff).toBe(22 + 20 + STUB_GAP);
     expect(wide[1].backoff).toBe(22 + 120 + STUB_GAP);
+  });
+});
+
+describe('약호 글자색 — 흰 배경에서 읽혀야 한다', () => {
+  it('흰 전선의 약호는 본문색으로 바뀐다', () => {
+    /*
+     * 예전 조건은 `stroke === '#fff'` 였는데 이 값은 이미 strokeColor 를 지나온
+     * 뒤라 흰 전선은 #d1d5db 로 들어온다. 조건이 한 번도 맞지 않아 흰 전선의 W 가
+     * 흰 배경 위에 옅은 회색으로 찍혔다 — 화면에서 보고 잡았다.
+     */
+    expect(readableInk(strokeColor('white'))).toBe('var(--text)');
+  });
+
+  it('진한 색은 전선 색 그대로 쓴다 — 어느 선인지 바로 잡히게', () => {
+    for (const c of ['red', 'black', 'blue', 'brown', 'green']) {
+      const s = strokeColor(c);
+      expect(readableInk(s), c).toBe(s);
+    }
+  });
+
+  it('노랑도 본문색으로 바뀐다 — 재 보니 흰 전선보다 밝았다', () => {
+    /*
+     * 처음엔 "노랑은 strokeColor 가 이미 진하게 낮췄으니 그대로 두자" 고 적었다가
+     * 이 시험에 걸렸다. #eab308 의 상대 휘도는 0.70 으로 흰 전선의 #d1d5db(0.66)
+     * **보다 밝다** — 흰 배경 대비 1.4:1 이라 작은 글자로는 안 읽힌다.
+     * 색 단서는 옆에 붙은 선과 상세 카드가 대신한다.
+     */
+    const s = strokeColor('yellow');
+    expect(s).toBe('#eab308');
+    expect(readableInk(s)).toBe('var(--text)');
+  });
+
+  it('중간 밝기(미상 색 회색)는 그대로 둔다 — 기준이 너무 낮으면 색이 다 사라진다', () => {
+    // strokeColor 가 모르는 색에 쓰는 값. 휘도 0.45 로 충분히 읽힌다.
+    expect(readableInk('#6b7280')).toBe('#6b7280');
+  });
+
+  it('색 이름이 그대로 오면 건드리지 않는다', () => {
+    expect(readableInk('red')).toBe('red');
   });
 });

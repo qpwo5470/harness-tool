@@ -52,6 +52,34 @@ export type OrthoEdgeData = {
   spec?: string;
 };
 
+/**
+ * 흰 배경 위에서 읽히는 글자색.
+ *
+ * 도면 약호는 전선 색으로 찍어야 어느 선인지 바로 잡히지만, 밝은 색은 흰 배경에서
+ * 사라진다. 그런 색만 본문색으로 바꾼다.
+ *
+ * 기준은 상대 휘도 0.62. 이 선을 넘는 것은 지금 두 가지다.
+ *   흰 전선  `#d1d5db` 휘도 0.66 → 흰 배경 대비 1.5:1
+ *   노랑     `#eab308` 휘도 0.70 → 흰 배경 대비 1.4:1
+ * 둘 다 작은 굵은 글자로는 읽히지 않는 대비다(4.5:1 이 본문 기준).
+ * 처음엔 노랑은 남길 생각이었는데 재 보니 흰 전선보다 더 밝았다 — 시험이 잡았다.
+ *
+ * **잃는 것**: 그 두 색은 약호에서 색 단서가 빠진다. 대신 약호 글자(`W`·`Y`) 자체가
+ * 색을 말하고, 라벨이 앉은 선이 바로 옆에 있으며, 상세 카드에 `색` 칸이 있다.
+ * 읽히지 않는 글자보다는 낫다.
+ *
+ * 값 하나를 비교하지 않고 **밝기**로 가르므로 새 색을 넣어도 규칙이 따라온다.
+ */
+export function readableInk(stroke: string): string {
+  const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(stroke.trim());
+  if (!m) return stroke;                       // 색 이름(red 등)은 대개 충분히 진하다
+  const h = m[1].length === 3 ? m[1].split('').map((c) => c + c).join('') : m[1];
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16) / 255);
+  // 눈이 느끼는 밝기 — 초록에 가장 민감하다(ITU-R BT.709)
+  const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  return lum > 0.62 ? 'var(--text)' : stroke;
+}
+
 /** 선 색 · 굵기는 style 로 들어온다 */
 export function OrthogonalEdge(props: EdgeProps) {
   const {
@@ -131,7 +159,16 @@ export function OrthogonalEdge(props: EdgeProps) {
               borderColor: selected ? 'var(--accent)' : d.on ? 'var(--text)' : 'var(--line)',
             }}
           >
-            <b className="num" style={{ color: stroke === '#fff' ? 'var(--text)' : stroke }}>{d.abbr}</b>
+            {/*
+              약호는 전선 색으로 쓰되 **읽히는 한에서만** 그렇게 한다.
+
+              예전 조건은 `stroke === '#fff'` 였는데, 이 값은 이미 `strokeColor` 를
+              지나온 뒤라 흰 전선은 `#fff` 가 아니라 `#d1d5db` 로 들어온다.
+              그래서 조건이 한 번도 맞지 않았고, 흰 전선의 W 가 흰 배경 위에
+              옅은 회색으로 찍혀 **읽을 수가 없었다**(화면에서 확인).
+              값 하나를 비교하는 대신 밝기로 판단한다 — 노랑처럼 밝은 색도 함께 걸린다.
+            */}
+            <b className="num" style={{ color: readableInk(stroke) }}>{d.abbr}</b>
             {/*
               신호명은 **강조된 가닥에만** 편다.
 
