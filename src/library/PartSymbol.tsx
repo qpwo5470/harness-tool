@@ -152,10 +152,15 @@ function TerminalGlyph({ id }: { id: string }) {
       </svg>
     );
   }
-  if (id.startsWith('lib-lug-pin-')) {
+  if (id.startsWith('lib-lug-ferrule-')) {
+    /*
+     * 페룰 = **속 빈 원통**. 처음에 속이 찬 봉으로 그렸다가 고쳤다.
+     * 통(빈 사각) + 왼쪽 끝의 타원 = 들여다보이는 구멍. 이 구멍이 페룰의 정체다.
+     */
     return (
       <svg className="part-symbol" viewBox={`0 0 ${W} ${H}`} width={W} height={H} aria-hidden focusable="false">
-        <path d="M 2 9.6 h 12 v 2.8 h -12 z" className="ps-pin" />
+        <path d="M 4 7.5 h 10 v 7 h -10 z" className="ps-body" />
+        <ellipse cx={4} cy={11} rx={2} ry={3.5} className="ps-hole" />
         {barrel}{wire}
       </svg>
     );

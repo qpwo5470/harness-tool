@@ -186,11 +186,12 @@ export const SERIES: SeriesDef[] = [
     match: re(/^lib-lug-fork-/),
   },
   {
-    key: 'lug-pin',
+    // 속 빈 원통이라 러그와 호칭 체계가 다르다 — `E0508` = 0.5mm²·8mm (DIN 46228-4)
+    key: 'lug-ferrule',
     family: 'lug',
-    series: '핀(봉형) 압착단자',
-    tags: ['핀', '봉단자', 'I형'],
-    match: re(/^lib-lug-pin-/),
+    series: '페룰(봉형) 압착단자',
+    tags: ['페룰', 'ferrule', '봉단자', '봉형', '펜홀'],
+    match: re(/^lib-lug-ferrule-/),
   },
   {
     // 'REC'(암) · 'TAB'(수) 로 발주하는 계열 — 그 말 그대로 검색되게 태그를 단다.
@@ -229,8 +230,33 @@ export const SERIES: SeriesDef[] = [
   {
     key: 'b2w',
     family: 'generic',
-    series: '보드투와이어 · 터미널블럭',
+    series: '보드투와이어',
     match: re(/^lib-(b2w|terminal-block)/),
+  },
+  /*
+   * 단자대 — 하네스에서 중요한 건 극수가 아니라 **결선 방식**이다. 그게 전선 끝에
+   * 무엇을 압착할지(러그냐 페룰이냐)를 정하므로 형식별로 나눈다.
+   */
+  {
+    key: 'tb-euro',
+    family: 'generic',
+    series: '유러피언 단자대 (PCB 나사식)',
+    tags: ['터미널블럭', '단자대', '유러피언'],
+    match: re(/^lib-tb-euro-/),
+  },
+  {
+    key: 'tb-barrier',
+    family: 'generic',
+    series: '배리어 단자대 (고정식 스터드)',
+    tags: ['터미널블럭', '단자대', '배리어', '고정식'],
+    match: re(/^lib-tb-barrier-/),
+  },
+  {
+    key: 'tb-din',
+    family: 'generic',
+    series: 'DIN레일 단자대 (조립식)',
+    tags: ['터미널블럭', '단자대', 'DIN', '레일', '스프링', '푸시인'],
+    match: re(/^lib-tb-din-/),
   },
   {
     key: 'splice',

@@ -138,6 +138,44 @@ describe('분류 — 체계', () => {
     }
   });
 
+  it('페룰은 러그와 호칭 체계가 다르다 — E<단면적><길이>', () => {
+    /*
+     * 페룰은 속 빈 원통이라 스터드에 붙지 않는다. 그래서 러그 호칭(`2-4` = 2sq·M4)이
+     * 성립하지 않고 DIN 46228-4 의 `E0508`(0.5mm²·8mm)을 쓴다.
+     * 처음에 러그 호칭으로 적었다가 고친 자리라 시험으로 잡아 둔다.
+     */
+    const fer = SEED_PARTS.filter((p) => p.id.startsWith('lib-lug-ferrule-'));
+    expect(fer.length).toBeGreaterThan(10);
+    for (const p of fer) {
+      expect(p.mpn, p.id).toMatch(/^E\d{4}$/);        // E0508 꼴
+      expect(p.mpn, p.id).not.toMatch(/-/);            // 러그 호칭(1.25-3)이 섞이면 안 된다
+      expect(p.spec?.['통길이'], p.id).toBeTruthy();
+    }
+    // 목깃 색은 규격이 갈려서 단정하지 않는다 — 색으로 굵기를 읽으면 안 된다는 경고가 있어야 한다
+    expect(fer[0].spec?.['비고']).toContain('구매처에서 확인');
+  });
+
+  it('단자대는 형식마다 필요한 단자를 적어 둔다', () => {
+    /*
+     * 하네스에서 단자대가 중요한 이유는 극수가 아니라 **결선 방식**이다 —
+     * 그게 전선 끝에 러그를 붙일지 페룰을 붙일지를 정한다. 그 대응이 부품에 없으면
+     * 단자대를 골라도 전선 끝단은 여전히 미정으로 남는다.
+     */
+    const tbs = SEED_PARTS.filter((p) => p.id.startsWith('lib-tb-'));
+    expect(tbs.length).toBeGreaterThan(20);
+    for (const p of tbs) {
+      expect(p.spec?.['필요단자'], p.id).toBeTruthy();
+      expect(p.spec?.['형식'], p.id).toBeTruthy();
+      expect(seriesOf(p)?.family, p.id).toBe('generic');
+      expect(roleOf(p).key, p.id).toBe('board');
+    }
+    // 스터드식은 러그를, 스프링식은 페룰을 가리켜야 한다
+    const barrier = SEED_PARTS.find((p) => p.id.startsWith('lib-tb-barrier-'))!;
+    expect(barrier.spec!['필요단자']).toMatch(/링|Y형/);
+    const spring = SEED_PARTS.find((p) => p.id.endsWith('-spring'))!;
+    expect(spring.spec!['필요단자']).toContain('페룰');
+  });
+
   it('파스톤은 암(REC)과 수(TAB)가 짝으로 있다', () => {
     // 한쪽만 있으면 짝을 못 찾아 발주가 반쪽이 된다.
     for (const size of ['110', '187', '250']) {
