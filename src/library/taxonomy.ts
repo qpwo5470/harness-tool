@@ -22,7 +22,7 @@ import type { PartLibraryItem } from '../types';
 
 /* ------------------------------------------------------------------ 계열 */
 
-export type FamilyKey = 'crimp' | 'interface' | 'generic' | 'legacy';
+export type FamilyKey = 'crimp' | 'lug' | 'interface' | 'generic' | 'legacy';
 
 export type FamilyDef = {
   key: FamilyKey;
@@ -37,6 +37,16 @@ export const FAMILIES: FamilyDef[] = [
     key: 'crimp',
     label: '압착 커넥터 (시리즈)',
     hint: '전선에 단자를 압착해 하우징에 꽂는 계열. 하우징·보드 헤더·압착단자가 한 시리즈 안에 함께 있다.',
+  },
+  {
+    /*
+     * 압착 커넥터의 '단자' 는 하우징과 짝이라 시리즈 안에 산다. 러그는 짝이
+     * 하우징이 아니라 **볼트(스터드)나 탭**이라 축이 다르다. 그래서 계열을 나눈다 —
+     * 여기 섞으면 "SMH250 단자는 어디" 가 다시 답이 없어진다(§3-10).
+     */
+    key: 'lug',
+    label: '압착 러그 (나사 · 탭)',
+    hint: '하우징에 들어가지 않고 볼트 스터드나 탭에 직접 붙는 단자. 단자대·모터·스위치 끝단에 쓴다.',
   },
   {
     key: 'interface',
@@ -157,6 +167,39 @@ export const SERIES: SeriesDef[] = [
     series: 'YH396',
     pitchMm: 3.96,
     match: re(/^lib-yh-(yh396|yt396)/),
+  },
+
+  /* --- 압착 러그 --- */
+  {
+    key: 'lug-ring',
+    family: 'lug',
+    series: '링(O형) 압착단자',
+    tags: ['O형', '환형', '링터미널'],
+    match: re(/^lib-lug-ring-/),
+  },
+  {
+    key: 'lug-fork',
+    family: 'lug',
+    series: 'Y형(포크) 압착단자',
+    tags: ['Y', 'Y형', '포크', '스페이드'],
+    openByDefault: true,
+    match: re(/^lib-lug-fork-/),
+  },
+  {
+    key: 'lug-pin',
+    family: 'lug',
+    series: '핀(봉형) 압착단자',
+    tags: ['핀', '봉단자', 'I형'],
+    match: re(/^lib-lug-pin-/),
+  },
+  {
+    // 'REC'(암) · 'TAB'(수) 로 발주하는 계열 — 그 말 그대로 검색되게 태그를 단다.
+    key: 'lug-faston',
+    family: 'lug',
+    series: '파스톤(평형) REC · TAB',
+    tags: ['REC', 'TAB', '파스톤', '페스톤', 'faston', '평형'],
+    openByDefault: true,
+    match: re(/^lib-lug-faston-/),
   },
 
   /* --- 규격 I/O --- */

@@ -99,6 +99,57 @@ describe('분류 — 체계', () => {
     expect(roleOf(periph).key).toBe('board');  // 표시는 보드측
   });
 
+  it('압착 러그는 하우징 컨택트와 다른 계열에 산다', () => {
+    /*
+     * 컨택트는 하우징과 짝이라 시리즈 안에 살고, 러그는 짝이 볼트/탭이라 축이 다르다.
+     * 섞어 두면 "SMH250 단자는 어디" 가 다시 답이 없어진다.
+     */
+    const lugs = SEED_PARTS.filter((p) => p.id.startsWith('lib-lug-'));
+    expect(lugs.length).toBeGreaterThan(20);
+    for (const p of lugs) {
+      expect(seriesOf(p)?.family, p.id).toBe('lug');
+      expect(roleOf(p).key, p.id).toBe('terminal');   // 캔버스에 놓지 않는다
+    }
+    // 하우징 컨택트는 반대로 러그 계열에 들어오면 안 된다
+    const contact = SEED_PARTS.find((p) => p.id === 'lib-jst-sxh-001t')!;
+    expect(seriesOf(contact)?.family).toBe('crimp');
+  });
+
+  it('REC · Y 로 검색된다 — 부품 이름에 그 글자가 없어도', () => {
+    // 이름은 "파스톤 250 REC (암)" 이라 REC 는 이름에도 있지만, Y 는 "Y형(포크)" 뿐이라
+    // 태그가 없으면 "Y" 한 글자로는 안 잡힌다. 실제로 그렇게 부르니 태그로 받는다.
+    const rec = SEED_PARTS.find((p) => p.id === 'lib-lug-faston-250-rec')!;
+    expect(searchTagsOf(rec)).toContain('REC');
+    expect(searchTagsOf(rec)).toContain('파스톤');
+    const fork = SEED_PARTS.find((p) => p.id === 'lib-lug-fork-2-4')!;
+    expect(searchTagsOf(fork)).toContain('Y');
+    expect(searchTagsOf(fork)).toContain('포크');
+  });
+
+  it('러그는 제조사 품번을 지어내지 않았다', () => {
+    /*
+     * 러그는 규격 호칭(`2-4` = 2sq·M4)으로 발주가 통하므로 mpn 에는 호칭만 넣었다.
+     * 제조사 카탈로그 번호를 지어내면 그대로 발주서에 실린다 — 비워 두고 그렇게 적었다.
+     */
+    for (const p of SEED_PARTS.filter((x) => x.id.startsWith('lib-lug-'))) {
+      expect(p.manufacturer, p.id).toBeUndefined();
+      expect(p.spec?.['제조사품번'], p.id).toBe('미정');
+      expect(p.mpn, p.id).toBeTruthy();  // 호칭은 있어야 발주가 된다
+    }
+  });
+
+  it('파스톤은 암(REC)과 수(TAB)가 짝으로 있다', () => {
+    // 한쪽만 있으면 짝을 못 찾아 발주가 반쪽이 된다.
+    for (const size of ['110', '187', '250']) {
+      const rec = SEED_PARTS.find((p) => p.id === `lib-lug-faston-${size}-rec`);
+      const tab = SEED_PARTS.find((p) => p.id === `lib-lug-faston-${size}-tab`);
+      expect(rec, size).toBeDefined();
+      expect(tab, size).toBeDefined();
+      expect(rec!.spec?.['결합']).toContain('TAB');
+      expect(tab!.spec?.['결합']).toContain('REC');
+    }
+  });
+
   it('MDB 부품은 따로 살지 않고 Mini-Fit Jr 안에 있다', () => {
     // 실물이 Mini-Fit Jr(39-01-2060 = 5557-06R) 이므로 용도로 칸을 또 파지 않는다.
     // 대신 태그로 검색된다 — 그 두 가지가 함께 성립해야 한다.

@@ -53,7 +53,7 @@ export function PartSymbol({ part }: Props) {
   const g = part.gender;
 
   // 단자·스플라이스는 핀 격자가 뜻이 없다 — 전용 그림을 따로 그린다.
-  if (role === 'terminal') return <TerminalGlyph />;
+  if (role === 'terminal') return <TerminalGlyph id={part.id} />;
   if (role === 'splice') return <SpliceGlyph />;
 
   const { cols, rows } = symbolGrid(part.pinCount, part.pinLayout);
@@ -121,8 +121,59 @@ function Contact({
   }
 }
 
-/** 압착단자 — 접촉부 + 전선 압착 날개 두 쌍 */
-function TerminalGlyph() {
+/**
+ * 압착단자.
+ *
+ * 하우징 컨택트와 러그는 생김새가 아예 다르고, 러그끼리도 링·Y·핀·파스톤이
+ * 손에 쥐면 한눈에 갈린다. 목록에서도 갈려야 한다 — 이 기호가 하는 일이 그거다.
+ * 접두사로 가른다(`lib-lug-<종류>-…`). 분류와 같은 근거를 쓰므로 둘이 어긋나지 않는다.
+ */
+function TerminalGlyph({ id }: { id: string }) {
+  const wire = <path d="M 23 11 h 9" className="ps-wire" />;
+  // 전선을 무는 압착 날개 — 러그 네 종류가 공유하는 부분
+  const barrel = <path d="M 15 6 h 8 v 10 h -8" className="ps-line" />;
+
+  if (id.startsWith('lib-lug-ring-')) {
+    return (
+      <svg className="part-symbol" viewBox={`0 0 ${W} ${H}`} width={W} height={H} aria-hidden focusable="false">
+        <circle cx={8} cy={11} r={6} className="ps-body" />
+        <circle cx={8} cy={11} r={2.6} className="ps-hole" />
+        {barrel}{wire}
+      </svg>
+    );
+  }
+  if (id.startsWith('lib-lug-fork-')) {
+    // 한쪽이 트인 U 자 — 볼트를 빼지 않고 옆에서 끼우는 그 모양
+    return (
+      <svg className="part-symbol" viewBox={`0 0 ${W} ${H}`} width={W} height={H} aria-hidden focusable="false">
+        <path d="M 2 5.5 h 6 a 5.5 5.5 0 0 1 0 11 h -6 v -3.6 h 5.5 a 1.9 1.9 0 0 0 0 -3.8 h -5.5 z"
+          className="ps-body" />
+        {barrel}{wire}
+      </svg>
+    );
+  }
+  if (id.startsWith('lib-lug-pin-')) {
+    return (
+      <svg className="part-symbol" viewBox={`0 0 ${W} ${H}`} width={W} height={H} aria-hidden focusable="false">
+        <path d="M 2 9.6 h 12 v 2.8 h -12 z" className="ps-pin" />
+        {barrel}{wire}
+      </svg>
+    );
+  }
+  if (id.startsWith('lib-lug-faston-')) {
+    const rec = id.endsWith('-rec');
+    return (
+      <svg className="part-symbol" viewBox={`0 0 ${W} ${H}`} width={W} height={H} aria-hidden focusable="false">
+        {rec
+          // 암 = 탭을 씌우는 통 (빈 상자, 입이 왼쪽으로 열림)
+          ? <path d="M 2 6.5 h 12 v 9 h -12 z M 2 9 h 4 M 2 13 h 4" className="ps-body" />
+          // 수 = 칼날 (찬 판)
+          : <path d="M 2 8.4 h 12 v 5.2 h -12 z" className="ps-pin" />}
+        {barrel}{wire}
+      </svg>
+    );
+  }
+  // 하우징 컨택트 — 접촉부 + 전선 압착 날개
   return (
     <svg className="part-symbol" viewBox={`0 0 ${W} ${H}`} width={W} height={H} aria-hidden focusable="false">
       <path d="M 3 8 h 9 v 6 h -9 z" className="ps-body" />
