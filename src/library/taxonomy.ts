@@ -312,6 +312,43 @@ export function seriesOf(p: PartLibraryItem): SeriesDef | undefined {
  * 그룹 헤더 글자 — `제조사 · 시리즈 · 피치`.
  * 세 조각의 자리가 항상 같아야 눈이 한 열만 훑는다.
  */
+/**
+ * **단독으로 캔버스에 놓을 수 있는 압착 러그인가.**
+ *
+ * `category: 'terminal'` 하나로는 두 가지가 뭉쳐 있다.
+ *
+ *   하우징 컨택트(SXH-001T · YST025 · 5556) — 하우징 **안에** 들어가는 부속이다.
+ *     하우징이 도면 요소이고 컨택트는 그 하우징 행에 딸려 발주된다. 놓을 것이 없다.
+ *   압착 러그(링 · Y · 페룰 · 파스톤) — 전선 끝에 압착해 볼트 스터드·탭·단자대에
+ *     그대로 붙는 **종단 그 자체**다. 짝이 하우징이 아니라서 붙일 하우징이 없고,
+ *     그래서 도면에 놓지 못하면 배선의 끝점을 그릴 방법이 아예 없다
+ *     (한쪽 파스톤 110 REC · 반대쪽 페룰인 하네스는 커넥터가 하나도 없다).
+ *
+ * 새 필드를 만들지 않은 이유: 둘을 가르는 사실은 이미 분류에 있다. 러그는 짝의
+ * 축이 달라 계열을 따로 뒀고(`family === 'lug'`), 그 판정은 시드 id 로만 돈다.
+ * 같은 사실을 부품마다 손으로 한 번 더 적으면 두 값이 어긋나는 날이 오고,
+ * 그날 도면과 발주 중 어느 쪽이 맞는지 알 수 없게 된다. 근거는 하나만 둔다.
+ *
+ * `category` 는 그대로 `'terminal'` 이다 — 저장된 도면의 뜻이 바뀌면 안 되고,
+ * 속성 패널의 **핀 단자 후보 목록**이 그 값으로 거르기 때문이다(러그를 단자대
+ * 커넥터의 핀에 지정하는 쓰임이 그대로 살아야 한다).
+ */
+export function isStandaloneLug(p: PartLibraryItem): boolean {
+  return p.category === 'terminal' && seriesOf(p)?.family === 'lug';
+}
+
+/**
+ * 캔버스에 노드로 놓을 수 있는가 — **라이브러리 클릭·드래그·드롭이 같이 쓰는 한 규칙**.
+ *
+ * 예전에는 `category !== 'terminal'` 이라는 같은 식이 라이브러리 행(draggable)·
+ * 클릭 처리(addPart)·캔버스 드롭(onDrop) 세 군데에 흩어져 있었다. 규칙이 늘어나는
+ * 순간 한 곳만 고치면 "드래그는 되는데 클릭은 안 되는" 상태가 조용히 생긴다.
+ * 판정은 여기 하나뿐이다.
+ */
+export function isCanvasPlaceable(p: PartLibraryItem): boolean {
+  return p.category !== 'terminal' || isStandaloneLug(p);
+}
+
 export function seriesLabel(s: SeriesDef): string {
   return [s.maker, s.series, s.pitchMm != null ? `${s.pitchMm.toFixed(2)}mm` : null]
     .filter(Boolean)
@@ -330,7 +367,12 @@ export type RoleDef = { key: RoleKey; label: string; long: string };
 export const ROLES: Record<RoleKey, RoleDef> = {
   wire: { key: 'wire', label: '전선측', long: '전선측 하우징 — 압착한 단자를 꽂는다' },
   board: { key: 'board', label: '보드측', long: '보드측 헤더 · 웨이퍼 — PCB 에 실장한다' },
-  terminal: { key: 'terminal', label: '압착단자', long: '전선에 압착하는 단자 — 도면에는 놓지 않고 발주에만 오른다' },
+  /*
+   * 한 역할에 두 부류가 산다 — 그래서 설명도 두 문장이다.
+   * 하우징 컨택트는 하우징에 딸린 부속이라 도면 요소가 아니고, 러그는 그 자체가
+   * 배선의 끝점이라 도면에 단독으로 놓인다(`isStandaloneLug`).
+   */
+  terminal: { key: 'terminal', label: '압착단자', long: '전선에 압착하는 단자 — 하우징 컨택트는 도면에 놓지 않고 발주에만 오르며, 러그는 도면에 단독으로 놓는다' },
   splice: { key: 'splice', label: '스플라이스', long: '전선끼리 잇는 중계점' },
 };
 

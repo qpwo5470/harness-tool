@@ -122,59 +122,122 @@ function Contact({
 }
 
 /**
+ * 러그 종류 — 접두사로 가른다(`lib-lug-<종류>-…`).
+ *
+ * 분류(`taxonomy`)와 **같은 근거(시드 id)** 를 쓴다. 이름이나 spec 으로 가르면
+ * 사람이 글자를 고치는 순간 기호와 분류가 조용히 갈린다.
+ */
+export type LugShape = 'ring' | 'fork' | 'ferrule' | 'faston-rec' | 'faston-tab';
+
+export function lugShapeOf(id: string): LugShape | null {
+  if (id.startsWith('lib-lug-ring-')) return 'ring';
+  if (id.startsWith('lib-lug-fork-')) return 'fork';
+  if (id.startsWith('lib-lug-ferrule-')) return 'ferrule';
+  if (id.startsWith('lib-lug-faston-')) return id.endsWith('-rec') ? 'faston-rec' : 'faston-tab';
+  return null;
+}
+
+/** 전선을 무는 압착 통 — 러그 네 종류가 공유하는 부분. x 15~23 을 쓴다. */
+const BARREL = <path d="M 15 6 h 8 v 10 h -8" className="ps-line" />;
+
+/**
+ * 러그 한 종의 **머리 + 압착 통** 도형. 34×22 좌표계에 그리되 x 0~24 만 쓴다.
+ *
+ * 전선 꼬리는 여기 없다. 라이브러리 목록은 꼬리를 덧붙여 "전선에 붙는 물건"임을
+ * 말하지만, 캔버스에서는 **진짜 배선이 그 자리에 붙으므로** 그려 넣으면 선이
+ * 두 겹이 된다. 그래서 공유하는 것은 도형까지고 꼬리는 부르는 쪽이 정한다.
+ */
+function lugBody(shape: LugShape) {
+  switch (shape) {
+    case 'ring':
+      return (
+        <>
+          <circle cx={8} cy={11} r={6} className="ps-body" />
+          <circle cx={8} cy={11} r={2.6} className="ps-hole" />
+          {BARREL}
+        </>
+      );
+    case 'fork':
+      // 한쪽이 트인 U 자 — 볼트를 빼지 않고 옆에서 끼우는 그 모양
+      return (
+        <>
+          <path d="M 2 5.5 h 6 a 5.5 5.5 0 0 1 0 11 h -6 v -3.6 h 5.5 a 1.9 1.9 0 0 0 0 -3.8 h -5.5 z"
+            className="ps-body" />
+          {BARREL}
+        </>
+      );
+    case 'ferrule':
+      /*
+       * 페룰 = **속 빈 원통**. 처음에 속이 찬 봉으로 그렸다가 고쳤다.
+       * 통(빈 사각) + 왼쪽 끝의 타원 = 들여다보이는 구멍. 이 구멍이 페룰의 정체다.
+       */
+      return (
+        <>
+          <path d="M 4 7.5 h 10 v 7 h -10 z" className="ps-body" />
+          <ellipse cx={4} cy={11} rx={2} ry={3.5} className="ps-hole" />
+          {BARREL}
+        </>
+      );
+    case 'faston-rec':
+      // 암 = 탭을 씌우는 통 (빈 상자, 입이 왼쪽으로 열림)
+      return (
+        <>
+          <path d="M 2 6.5 h 12 v 9 h -12 z M 2 9 h 4 M 2 13 h 4" className="ps-body" />
+          {BARREL}
+        </>
+      );
+    case 'faston-tab':
+      // 수 = 칼날 (찬 판)
+      return (
+        <>
+          <path d="M 2 8.4 h 12 v 5.2 h -12 z" className="ps-pin" />
+          {BARREL}
+        </>
+      );
+  }
+}
+
+/**
+ * **캔버스용 러그 기호.** 라이브러리 목록과 같은 도형을 쓴다.
+ *
+ * 도면에서 러그는 하우징이 아니다. 핀 격자 상자로 그리면 1핀짜리 작은 커넥터로
+ * 보이고, 링인지 페룰인지 파스톤인지는 이름을 읽어야만 알 수 있다. 그런데 그
+ * 구분은 이미 라이브러리 기호가 하고 있으므로 **같은 도형을 캔버스에서도** 쓴다
+ * (근거가 하나여야 목록과 도면이 갈리지 않는다).
+ *
+ * 꼬리(전선)를 뺀 x 0~24 만 보여 준다 — 배선은 노드 가장자리 핸들에서 진짜로
+ * 나가므로, 그림에 또 그리면 선이 두 겹이 된다.
+ */
+export function LugGlyph({ shape, width, height }: { shape: LugShape; width: number; height: number }) {
+  return (
+    <svg
+      className="part-symbol lug-glyph"
+      viewBox="0 0 24 22"
+      width={width}
+      height={height}
+      preserveAspectRatio="xMidYMid meet"
+      aria-hidden
+      focusable="false"
+    >
+      {lugBody(shape)}
+    </svg>
+  );
+}
+
+/**
  * 압착단자.
  *
  * 하우징 컨택트와 러그는 생김새가 아예 다르고, 러그끼리도 링·Y·핀·파스톤이
  * 손에 쥐면 한눈에 갈린다. 목록에서도 갈려야 한다 — 이 기호가 하는 일이 그거다.
- * 접두사로 가른다(`lib-lug-<종류>-…`). 분류와 같은 근거를 쓰므로 둘이 어긋나지 않는다.
  */
 function TerminalGlyph({ id }: { id: string }) {
-  const wire = <path d="M 23 11 h 9" className="ps-wire" />;
-  // 전선을 무는 압착 날개 — 러그 네 종류가 공유하는 부분
-  const barrel = <path d="M 15 6 h 8 v 10 h -8" className="ps-line" />;
-
-  if (id.startsWith('lib-lug-ring-')) {
+  const shape = lugShapeOf(id);
+  if (shape) {
     return (
       <svg className="part-symbol" viewBox={`0 0 ${W} ${H}`} width={W} height={H} aria-hidden focusable="false">
-        <circle cx={8} cy={11} r={6} className="ps-body" />
-        <circle cx={8} cy={11} r={2.6} className="ps-hole" />
-        {barrel}{wire}
-      </svg>
-    );
-  }
-  if (id.startsWith('lib-lug-fork-')) {
-    // 한쪽이 트인 U 자 — 볼트를 빼지 않고 옆에서 끼우는 그 모양
-    return (
-      <svg className="part-symbol" viewBox={`0 0 ${W} ${H}`} width={W} height={H} aria-hidden focusable="false">
-        <path d="M 2 5.5 h 6 a 5.5 5.5 0 0 1 0 11 h -6 v -3.6 h 5.5 a 1.9 1.9 0 0 0 0 -3.8 h -5.5 z"
-          className="ps-body" />
-        {barrel}{wire}
-      </svg>
-    );
-  }
-  if (id.startsWith('lib-lug-ferrule-')) {
-    /*
-     * 페룰 = **속 빈 원통**. 처음에 속이 찬 봉으로 그렸다가 고쳤다.
-     * 통(빈 사각) + 왼쪽 끝의 타원 = 들여다보이는 구멍. 이 구멍이 페룰의 정체다.
-     */
-    return (
-      <svg className="part-symbol" viewBox={`0 0 ${W} ${H}`} width={W} height={H} aria-hidden focusable="false">
-        <path d="M 4 7.5 h 10 v 7 h -10 z" className="ps-body" />
-        <ellipse cx={4} cy={11} rx={2} ry={3.5} className="ps-hole" />
-        {barrel}{wire}
-      </svg>
-    );
-  }
-  if (id.startsWith('lib-lug-faston-')) {
-    const rec = id.endsWith('-rec');
-    return (
-      <svg className="part-symbol" viewBox={`0 0 ${W} ${H}`} width={W} height={H} aria-hidden focusable="false">
-        {rec
-          // 암 = 탭을 씌우는 통 (빈 상자, 입이 왼쪽으로 열림)
-          ? <path d="M 2 6.5 h 12 v 9 h -12 z M 2 9 h 4 M 2 13 h 4" className="ps-body" />
-          // 수 = 칼날 (찬 판)
-          : <path d="M 2 8.4 h 12 v 5.2 h -12 z" className="ps-pin" />}
-        {barrel}{wire}
+        {lugBody(shape)}
+        {/* 목록에서는 꼬리를 붙인다 — "전선 끝에 압착하는 물건" 임을 한 그림에서 말한다 */}
+        <path d="M 23 11 h 9" className="ps-wire" />
       </svg>
     );
   }

@@ -472,10 +472,22 @@ export function nodeBoxes(
 }
 
 export type WireLanes = {
-  /** 배선별 가로 주행 구간 y 오프셋 */
+  /**
+   * 배선별 가로 주행 구간 y 오프셋 — **실제로 그려지는 값**.
+   * `Wire.route.laneY` 가 있으면 그 값이고, 없으면 `autoLaneY` 와 같다.
+   */
   laneY: number[];
-  /** 배선별 세로 간선 x 오프셋 (패드에서 바깥으로) */
+  /** 배선별 세로 간선 x 오프셋 (패드에서 바깥으로) — 실제로 그려지는 값 */
   laneX: number[];
+  /**
+   * 사람이 손대지 않았을 때의 자동값.
+   *
+   * 왜 함께 돌려주나: 속성 패널이 빈 입력칸의 placeholder 로 "지금 자동은 몇인가"를
+   * 보여 준다. 그 값을 패널에서 따로 계산하면 같은 사실을 두 곳에서 세는 것이고
+   * (§3-2), 무엇보다 **자동 배정을 한 번 더 돌리는 값비싼 일**이 된다.
+   */
+  autoLaneY: number[];
+  autoLaneX: number[];
   /** 배선별 양 끝 핸들 좌표 — 시험·진단용 */
   from: Anchor[];
   to: Anchor[];
@@ -579,6 +591,10 @@ function cheaper(a: [number, number, number], b: [number, number, number]): bool
  *
  * 순서가 중요하다: 세로 간선이 y 로 어디까지 뻗는지는 주행 구간 y(=laneY)가
  * 정해져야 알 수 있다. 그래서 laneY 를 먼저 풀고 그 결과로 세로 구간을 그린다.
+ *
+ * **사람이 지정한 값(`Wire.route`)이 자동값을 이긴다.** 자동 배정은 그대로 다 돌고
+ * 마지막에 축별로 덮어쓴다(아래 `pick` 주석). 자동값도 `autoLaneY`·`autoLaneX` 로
+ * 함께 돌려준다 — 속성 패널이 "지금 자동은 몇인가"를 보여 줘야 해서다.
  */
 export function assignLanes(doc: HarnessDocument, view: ViewMode = 'logical'): WireLanes {
   const at = nodePositions(doc, view);
@@ -606,6 +622,21 @@ export function assignLanes(doc: HarnessDocument, view: ViewMode = 'logical'): W
   //    곧 "도면에서 이웃"은 아니다. 어떤 배치에서는 몰아 놓는 편이 오히려 남의
   //    전선을 케이블 사이로 끌어들인다. 그래서 두 배정을 실제 경로로 재서
   //    **나빠지지 않을 때만** 바꾼다 — 라우터의 자기 신고를 믿지 않는 것과 같은 태도다.
+  /*
+   * ── 사람이 손으로 잡은 꺾임을 얹는다 (`Wire.route`)
+   *
+   * 자동 배정을 **끝까지 다 돌린 뒤** 그 위에 덮는다. 지정된 배선을 배정에서
+   * 빼 버리는 편이 레인을 아껴 쓸 것 같지만, 그러면 남은 배선들의 레인 번호가
+   * 통째로 다시 매겨진다 — 한 가닥을 1칸 내렸을 뿐인데 상관없는 배선 열 가닥이
+   * 함께 튄다. 값을 지웠을 때 **정확히 예전 그림으로** 돌아오는 것도 이 순서라야
+   * 보장된다.
+   *
+   * `??` 로 얹는다: **0 은 "가운데 레인"이라는 뜻의 유효한 지정**이라 참거짓으로
+   * 가르면(`||`) 사람이 가운데로 끌어온 배선이 조용히 자동으로 되돌아간다.
+   */
+  const pick = (auto: number[], axis: 'laneY' | 'laneX') =>
+    auto.map((v, i) => doc.wires[i].route?.[axis] ?? v);
+
   const spans = doc.wires.map((_, i) => [from[i].x, to[i].x] as [number, number]);
   const cableOf = coreCableOf(doc);
   const plain = colorLanes(spans);
@@ -617,16 +648,35 @@ export function assignLanes(doc: HarnessDocument, view: ViewMode = 'logical'): W
     sourceBox: fromBox[i], targetBox: toBox[i], obstacles,
   }).points);
 
-  let laneY = plain.map((k) => laneOffset(k, LANE_Y_STEP));
-  let probes = probeAll(laneY);
+  /*
+   * ── 자동 판단은 **자동값만 보고** 내린다 (여기가 갈렸던 자리다)
+   *
+   * 처음에는 케이블 몰아 놓기(grouped)의 이득을 "사람 지정까지 얹은 실제 경로" 로
+   * 쟀다. 그려질 그림을 재는 것이 이 레포의 태도이기도 하고(§10-2). 그런데
+   * **한 가닥을 손보면 상관없는 가닥이 함께 튀었다** — laneSplitDoc 에서 w1 을
+   * 한 칸 내렸더니 w2·w4 의 꺾임점까지 바뀌었다(시험으로 실측). 그러면 사용자는
+   * w2 를 고치려다 w1 이 돌아오는 되돌이에 갇힌다. 손댈 방법이 없어서 만든 기능이
+   * 도로 "손댈 수 없는" 상태를 만드는 셈이다.
+   *
+   * 그래서 자동 배정은 사람 지정을 **전혀 보지 않고** 끝까지 돌리고, 지정은 맨
+   * 마지막에 그 배선에만 얹는다. 그 대가로 "몰아 놓기 판단이 실제 그림과 다른
+   * 그림을 근거로 내려질 수 있다" 를 받는다. 다만 그 판단이 고르는 것은 **자동
+   * 배정 두 가지 중 하나**이지 사람이 정한 자리가 아니므로, 자동값으로 재는 것이
+   * 오히려 그 판단의 본래 대상에 맞는다.
+   *
+   * 지키는 성질: 지정이 없는 배선의 꺾임점은 지정 전후로 **한 점도 바뀌지 않는다.**
+   */
+  let autoLaneY = plain.map((k) => laneOffset(k, LANE_Y_STEP));
+  let probes = probeAll(autoLaneY);
   if (grouped.some((l, i) => l !== plain[i])) {
-    const altY = grouped.map((k) => laneOffset(k, LANE_Y_STEP));
-    const alt = probeAll(altY);
+    const altAuto = grouped.map((k) => laneOffset(k, LANE_Y_STEP));
+    const alt = probeAll(altAuto);
     if (cheaper(laneCost(doc, alt, cableOf), laneCost(doc, probes, cableOf))) {
-      laneY = altY;
+      autoLaneY = altAuto;
       probes = alt;
     }
   }
+  const laneY = pick(autoLaneY, 'laneY');
 
   // 2) 세로 간선 — 같은 노드·같은 변에서 나온 세로 구간이 y 로 겹치면 x 를 벌린다.
   //
@@ -640,6 +690,11 @@ export function assignLanes(doc: HarnessDocument, view: ViewMode = 'logical'): W
   //    닭-달걀(세로 간선 x 를 정하려면 y 범위를 알아야 하고, y 범위는 경로를
   //    그려 봐야 안다)을 한 번만 풀고 멈춘다: laneX 는 스텁을 옆으로 밀 뿐이라
   //    꺾임 y 를 거의 바꾸지 않는다. 완전한 동시 해는 범위 밖이다.
+  //
+  //    probes 는 **자동값으로 그려 본 것**이다(위 주석). 그래서 사람이 크게 옮겨 놓은
+  //    배선의 세로 간선은 여기 겹침 계산에 실제 길이로 잡히지 않을 수 있다 —
+  //    그 대신 지정이 없는 배선들의 laneX 가 남의 지정에 흔들리지 않는다.
+  //    옮긴 가닥의 세로 간선이 이웃과 붙어 보이면 laneX 도 손으로 벌린다.
   const runs: LaneRun[] = [];
   doc.wires.forEach((w, i) => {
     const s = from[i];
@@ -658,9 +713,10 @@ export function assignLanes(doc: HarnessDocument, view: ViewMode = 'logical'): W
       });
     }
   });
-  const laneX = colorRuns(doc.wires.length, runs).map((k) => k * LANE_X_STEP);
+  const autoLaneX = colorRuns(doc.wires.length, runs).map((k) => k * LANE_X_STEP);
+  const laneX = pick(autoLaneX, 'laneX');
 
-  return { laneY, laneX, from, to, fromBox, toBox, obstacles };
+  return { laneY, laneX, autoLaneY, autoLaneX, from, to, fromBox, toBox, obstacles };
 }
 
 /**

@@ -730,3 +730,34 @@ describe('연호 SMP250 (2.50mm 전선측 플러그)', () => {
     expect(c.pins).toHaveLength(4);
   });
 });
+
+/**
+ * 압착 러그를 캔버스에 놓았을 때 만들어지는 인스턴스.
+ *
+ * 러그는 커넥터가 아니라 **배선의 끝점**이다. 전선 한 본이 압착 통 하나에
+ * 들어가므로 핀은 1개여야 한다. `instantiate` 의 기본값이 `pinCount ?? 2` 라
+ * 부품에 핀 수를 안 적으면 있지도 않은 두 번째 자리가 도면에 생긴다.
+ */
+describe('압착 러그 인스턴스', () => {
+  const LUGS = ['lib-lug-ring-2-4', 'lib-lug-fork-125-3', 'lib-lug-ferrule-0508',
+    'lib-lug-faston-110-rec', 'lib-lug-faston-250-tab'];
+
+  it('핀이 1개다 — 전선 한 본이 통 하나에 들어간다', () => {
+    for (const id of LUGS) {
+      const c = instantiate(byId(id), { x: 0, y: 0 });
+      expect(c.pins, id).toHaveLength(1);
+      expect(c.pins[0].index, id).toBe(1);
+    }
+  });
+
+  it('`splice` 가 아니라 일반 커넥터 인스턴스로 앉는다', () => {
+    // 문서 계약(ConnectorKind)에 러그라는 값이 없다 — 러그인지는 housingId 가
+    // 가리키는 부품이 말한다(taxonomy.isStandaloneLug). 여기서 새 kind 를
+    // 만들면 저장 파일이 옛 툴에서 안 열린다.
+    const c = instantiate(byId('lib-lug-ring-2-4'), { x: 10, y: 20 });
+    expect(c.kind).toBe('connector');
+    expect(c.bridges).toBeUndefined();
+    expect(c.housingId).toBe('lib-lug-ring-2-4');
+    expect(c.positions.logical).toEqual({ x: 10, y: 20 });
+  });
+});

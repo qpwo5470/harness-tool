@@ -336,6 +336,52 @@ export const useHarnessStore = create<HarnessStore>((set, get) => ({
     }),
 
   /**
+   * 배선 꺾임(레인) 수동 지정 · 해제.
+   *
+   * 레인은 원래 파생값이라 자동 배정이 정하지만, 자동은 "겹치지 않게" 까지만 하고
+   * 어느 쪽이 읽기 좋은지는 모른다. 여기 값이 들어오면 그 축만 자동값을 대신한다
+   * (`canvas/docToFlow.assignLanes`).
+   *
+   * - `null` 이면 그 축의 **키를 지운다** → 다시 자동. **0 을 비움으로 쓰지 않는다**:
+   *   0 은 "가운데 레인"이라 두 지시가 구분되지 않는다(`setSegmentLength` 와 같은 이유,
+   *   그쪽은 0 이 "0mm 로 자르라"가 되는 것이 문제였다).
+   * - 두 축이 다 없어지면 `route` 필드 자체를 지운다 — 빈 객체를 남기면 이 기능을
+   *   쓴 적 없는 문서와 저장 파일이 달라져 형상관리에서 없는 변경이 보인다.
+   * - 바뀌는 것이 없으면 히스토리도 쌓지 않는다(같은 값 재입력·없는 값 삭제).
+   *   ± 버튼을 연타해도 누른 횟수만큼만 되돌아간다.
+   */
+  setWireRoute: (wireId: Id, patch: { laneY?: number | null; laneX?: number | null }) =>
+    set((s) => {
+      const w = s.doc.wires.find((x) => x.id === wireId);
+      if (!w) return s;
+      const next: { laneY?: number; laneX?: number } = { ...(w.route ?? {}) };
+      for (const axis of ['laneY', 'laneX'] as const) {
+        if (!Object.prototype.hasOwnProperty.call(patch, axis)) continue;
+        const v = patch[axis];
+        // 숫자가 아니면(NaN·Infinity 포함) 지운 것으로 본다 — 빈 입력칸이 그렇게 온다.
+        if (v == null || !Number.isFinite(v)) delete next[axis];
+        else next[axis] = v;
+      }
+      const had = w.route ?? {};
+      const same = (['laneY', 'laneX'] as const).every((k) => had[k] === next[k]);
+      if (same) return s;
+      pushHistory(s);
+      return {
+        doc: touch({
+          ...s.doc,
+          wires: s.doc.wires.map((x) => {
+            if (x.id !== wireId) return x;
+            if (!Object.keys(next).length) {
+              const { route: _drop, ...rest } = x;
+              return rest;
+            }
+            return { ...x, route: next };
+          }),
+        }),
+      };
+    }),
+
+  /**
    * 삭제 — 커넥터·장치·배선·케이블 공용.
    *
    * 케이블을 지울 때 심선(`cableId`)은 **남기고 소속만 끊는다**. 심선은 케이블과

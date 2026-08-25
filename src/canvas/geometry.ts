@@ -316,6 +316,76 @@ export function partHousingSize(item: PartLibraryItem, o: Orientation = 0): { w:
   return housingSize(cols, rows);
 }
 
+/* ── 핀 번호를 **핸들 자리**에 맞춰 앉힌다 ────────────────────────────────────
+ *
+ * 왜 필요한가 (실측):
+ * 번호는 26px 패드 **한가운데**에 찍혀 있었다. 그런데 배선이 실제로 붙는 자리
+ * (핸들)는 `along` 이 정하고, 격자가 2열 이상이면 그 값이 패드 가운데에서 갈린다
+ * (connectorLayout 머리말의 rank 분배). 43025-2400(24회로 2열)을 0° 로 두면
+ * 왼쪽 변의 핸들 순서가 **1·13·2·14·3·15…** 로 엇갈리는데, 번호는 패드 가운데라
+ * 어느 선이 몇 번 핀에서 나왔는지 눈으로 따라갈 수 없었다.
+ *
+ * 그래서 번호를 (1) 핸들과 **같은 along 좌표**에 놓고 (2) 반대 축으로는 배선이
+ * 나가는 변 쪽 패드 모서리에 붙인다. 핸들에서 변에 수직으로 눈을 옮기면 그 줄에
+ * 번호가 하나뿐이다 — 안쪽 열의 번호는 along 이 다르므로 가로지르는 패드가
+ * 그 자리에 글자를 두지 않는다.
+ *
+ * ── 왜 하우징 **밖**(핸들 바로 옆)에 찍지 않았나
+ * 두 가지가 막는다.
+ *  (1) 핸들에서 stub(route.DEFAULT_STUB = 14px) 만큼은 배선이 곧게 나가는
+ *      자리다. 거기 글자를 두면 선이 번호를 뚫는다.
+ *  (2) 밖에 글자를 두면 그 폭을 경계 상자(connectorBox)에 넣어야 하는데, 넓히는
+ *      쪽이 곧 **핸들이 있는 쪽**이라 핸들이 상자 속으로 들어간다 — 스텁부터
+ *      회피 대상이 돼 경로가 망가진다(labelsAlignRight 머리말의 그 사고).
+ * 상자 안에 두면 노드 경계가 1px 도 변하지 않는다. 라우터는 이 변경을 모른다.
+ *
+ * ── 겹치지 않는 근거
+ * 번호 상자는 언제나 **제 패드 안**으로 잘라 넣는다(아래 clamp). 패드는
+ * PITCH 30 · PAD 26 이라 서로 4px 떨어져 절대 겹치지 않으므로, 번호도 겹칠 수
+ * 없다 — 깊이가 몇이든 방향이 무엇이든. along 간격이 13px 까지 좁아지는
+ * 24회로 2열에서도 이 성질이 유지된다(pinNumber.test.ts 가 네 방향 모두
+ * 상자를 재서 못박는다).
+ */
+
+/** 핀 번호 글꼴 크기 (canvas.css .hz-pad · PDF 가 같은 값을 쓴다) */
+export const PIN_NUM_FS = 11;
+/** 핀 번호 한 줄 높이 — 글꼴 크기에 약간의 여유. 패드(26) 안에 두 줄이 들어간다 */
+export const PIN_NUM_H = 12;
+/** 번호 상자를 패드 모서리에서 띄우는 여백 (테두리 1px 을 피한다) */
+export const PIN_NUM_M = 1;
+/**
+ * 볼드 숫자 한 글자 advance (em).
+ *
+ * 왜 estimateTextWidth 를 안 쓰나: 그쪽은 ASCII 를 0.52em 으로 잡는데, 그건
+ * **라벨 상자를 좁게 잡아도 되는** 쪽의 어림이다. 번호 상자가 좁으면 화면에서
+ * 말줄임(…)이 붙어 **번호 자체를 못 읽는다** — 위험이 반대 방향이라 어림도
+ * 반대로 든다(볼드 tabular 숫자 실측 ≈ 0.60em).
+ */
+const PIN_NUM_ADV = 0.62;
+
+/** 핀 번호 글자 상자의 폭. 패드를 넘지 않는다 — 넘치는 글자는 CSS 가 자른다. */
+export function pinNumberWidth(text: string): number {
+  const n = [...String(text)].length || 1;
+  return Math.min(PAD - PIN_NUM_M * 2, n * PIN_NUM_FS * PIN_NUM_ADV + 2);
+}
+
+/** 번호를 상자 안에서 어느 쪽에 맞추는가 */
+export type PinNumAlign = 'left' | 'right' | 'center';
+
+/**
+ * 0°/180° 은 along 이 **세로축**이라 상자를 세로로만 옮기고, 가로는 정렬로
+ * 배선이 나가는 변에 붙인다. 90°/270° 은 along 이 가로축이라 상자 자체가 이미
+ * along 에 맞춰 놓이므로 가운데 정렬이다.
+ */
+export function pinNumberAlign(o: Orientation): PinNumAlign {
+  return o === 0 ? 'left' : o === 180 ? 'right' : 'center';
+}
+
+/** lo..hi 안으로 밀어 넣는다 (hi < lo 면 lo) */
+function clampTo(v: number, lo: number, hi: number): number {
+  return Math.min(Math.max(v, lo), Math.max(lo, hi));
+}
+
 export type ConnectorLayout = {
   /** **그리는** 격자 열 수 (정의 격자를 방향에 맞춰 세운 뒤) */
   cols: number;
@@ -341,6 +411,12 @@ export type ConnectorLayout = {
   along(index: number): number;
   /** 핀 번호 → 하우징 박스 좌상단 기준 핸들 좌표 */
   handleOffset(index: number): Vec2;
+  /**
+   * 핀 번호 글자가 앉는 사각형 (하우징 박스 좌상단 기준).
+   * 화면(nodes.tsx)과 PDF(pdfDraw.ts)가 **이 함수 하나**를 본다.
+   * 글자를 받는 이유: 폭이 글자 수에 달렸고, 그 폭이 정렬 기준점을 정한다.
+   */
+  pinNumberBox(index: number, text: string): NodeBox;
 };
 
 /**
@@ -409,9 +485,37 @@ export function connectorLayout(connector: Connector, housing?: PartLibraryItem)
     return { x: boxW, y: a };
   };
 
+  /**
+   * 핀 번호 자리. along 축은 **핸들과 같은 좌표**, 반대 축은 배선이 나가는 변 쪽
+   * 패드 모서리다. 어느 쪽이든 **제 패드 안**으로 잘라 넣기 때문에(clampTo)
+   * 번호끼리는 겹칠 수 없다 — 패드가 4px 씩 떨어져 있기 때문이다.
+   */
+  const pinNumberBox = (index: number, text: string): NodeBox => {
+    const cell = cellOf(index);
+    const cx = INSET + cell.x * PITCH;
+    const cy = INSET + cell.y * PITCH;
+    const w = pinNumberWidth(text);
+    const h = PIN_NUM_H;
+    const m = PIN_NUM_M;
+    const a = along(index);
+    if (edgeVertical) {
+      // 글자는 가로로 눕는다 → along(세로)은 상자를 옮겨서, 변 쪽 붙임은 정렬로.
+      return {
+        x: o === 180 ? cx + PAD - m - w : cx + m,
+        y: clampTo(a - h / 2, cy + m, cy + PAD - m - h),
+        w, h,
+      };
+    }
+    return {
+      x: clampTo(a - w / 2, cx + m, cx + PAD - m - w),
+      y: o === 270 ? cy + PAD - m - h : cy + m,
+      w, h,
+    };
+  };
+
   return {
     cols, rows, defCols, defRows, transposed, layout, boxW, boxH,
-    side, orderedPins, cellOf, defCellOf, along, handleOffset,
+    side, orderedPins, cellOf, defCellOf, along, handleOffset, pinNumberBox,
   };
 }
 

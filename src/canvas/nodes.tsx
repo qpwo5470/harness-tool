@@ -28,10 +28,16 @@ import type { Connector, Device, PartLibraryItem, ViewMode, Orientation } from '
  */
 import {
   PITCH, INSET, PIN_PHYS, PIN_PHYS_PITCH, REF_BLOCK_H, MPN_CAPTION_H,
-  DEV_PAD, DEV_ROW_H,
-  connectorLayout, connectorRefParts, labelsAlignRight, layoutCells,
+  DEV_PAD, DEV_ROW_H, PIN_NUM_FS,
+  connectorLayout, connectorRefParts, labelsAlignRight, layoutCells, pinNumberAlign,
   deviceSize, deviceRefParts, deviceCaption,
 } from './geometry';
+/**
+ * 러그 기호는 라이브러리 목록과 **같은 도형**을 쓴다 — 근거가 둘이면 목록과
+ * 도면이 갈린다. 여기서는 상자 크기(geometry)를 그대로 두고 그 안의 그림만 바꾼다.
+ */
+import { LugGlyph, lugShapeOf } from '../library/PartSymbol';
+import { isStandaloneLug } from '../library/taxonomy';
 
 export type ConnectorNodeData = {
   connector: Connector;
@@ -58,6 +64,18 @@ function Latch({ o, color }: { o: Orientation; color: string }) {
     : o === 180 ? { ...base, width: T, height: L, right: -(T + 1), top: '50%', transform: 'translateY(-50%)' }
     : { ...base, width: L, height: T, bottom: -(T + 1), left: '50%', transform: 'translateX(-50%)' };
   return <div className="hz-latch" style={style} title="래치(결합) 방향" />;
+}
+
+/**
+ * 압착 통이 **배선 나가는 쪽**을 향하도록 돌린다.
+ *
+ * 기호는 머리(링·Y·페룰·파스톤)가 왼쪽, 압착 통이 오른쪽이다. 배선이 왼쪽으로
+ * 나가는 커넥터(0°)에 그대로 두면 전선이 러그 머리에서 나오는 그림이 된다.
+ * 0° 만 좌우 뒤집기(rotate 180 이 아니라)인 이유: Y·파스톤은 위아래가 대칭이
+ * 아니라 180° 로 돌리면 뒤집힌 부품처럼 보인다.
+ */
+function lugTurn(o: Orientation): string {
+  return o === 0 ? 'scaleX(-1)' : o === 90 ? 'rotate(-90deg)' : o === 270 ? 'rotate(90deg)' : 'none';
 }
 
 export function ConnectorNode({ data, selected }: NodeProps) {
@@ -183,6 +201,9 @@ export function ConnectorNode({ data, selected }: NodeProps) {
    */
   const alignRight = labelsAlignRight(o);
 
+  /** 핀 번호를 패드 안에서 배선이 나가는 변 쪽으로 붙인다 (geometry.pinNumberAlign) */
+  const numAlign = pinNumberAlign(o);
+
   /**
    * 라벨 슬롯 — **폭은 하우징과 똑같이** 두고 글자는 그 안에서 absolute 로 띄운다.
    *
@@ -209,34 +230,88 @@ export function ConnectorNode({ data, selected }: NodeProps) {
     </div>
   );
 
+  /*
+   * 단독으로 놓인 압착 러그는 **하우징이 아니다.**
+   * 핀 격자 상자로 그리면 1핀짜리 작은 커넥터로 보이고, 래치 돌기(결합 방향)와
+   * 1번 핀 등록 마크는 러그에 없는 것을 있다고 말한다. 상자 크기(boxW/boxH)와
+   * 핸들 자리는 geometry 가 정한 그대로 두고 — 라우터·PDF·물리 뷰가 같은 숫자를
+   * 쓰므로 건드리면 배선 계획이 화면과 갈린다 — **안에 그리는 그림만** 바꾼다.
+   */
+  const lugShape = housing && isStandaloneLug(housing) ? lugShapeOf(housing.id) : null;
+
   return (
     <div className={`hz-node hz-node-logical${selected ? ' on' : ''}`}>
       {labelFirst && refBlock}
 
       <div
         className="hz-housing"
-        style={{ width: boxW, height: boxH, borderColor: boxColor }}
+        style={{
+          width: boxW, height: boxH, borderColor: boxColor,
+          // 러그는 테두리 대신 기호 자체가 형상이다. 선택 표시는 바깥 외곽선으로 남긴다.
+          ...(lugShape
+            ? {
+              border: 'none',
+              background: 'transparent',
+              outline: selected ? `1.5px solid ${boxColor}` : undefined,
+              outlineOffset: 2,
+            }
+            : null),
+        }}
       >
-        <Latch o={o} color={boxColor} />
-        {/* 좌상단 등록 마크 = 1번 핀 기준점 */}
-        <div
-          className="hz-regmark"
-          style={{ borderTopColor: boxColor, borderLeftColor: boxColor }}
-          title="1번 핀 위치"
-        />
+        {lugShape ? (
+          <div
+            style={{
+              position: 'absolute', inset: 0,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              transform: lugTurn(o),
+            }}
+            title={housing?.name}
+          >
+            <LugGlyph shape={lugShape} width={boxW} height={boxH} />
+          </div>
+        ) : (
+          <>
+            <Latch o={o} color={boxColor} />
+            {/* 좌상단 등록 마크 = 1번 핀 기준점 */}
+            <div
+              className="hz-regmark"
+              style={{ borderTopColor: boxColor, borderLeftColor: boxColor }}
+              title="1번 핀 위치"
+            />
+          </>
+        )}
 
-        {orderedPins.map((pin) => {
+        {/* 러그는 핀 번호를 매기지 않는다 — 전선 한 본이 통 하나에 들어갈 뿐이다 */}
+        {!lugShape && orderedPins.map((pin) => {
           const cell = geo.cellOf(pin.index);
           const slot = layout?.find((s) => s.index === pin.index);
           const assigned = Boolean(slot?.signal);
+          const padX = INSET + cell.x * PITCH;
+          const padY = INSET + cell.y * PITCH;
+          const numText = String(pin.label ?? slot?.label ?? pin.index);
+          /**
+           * 번호는 칸 가운데가 아니라 **핸들 자리**에 앉는다 — 자리는 geometry 가
+           * 정하고 PDF(pdfDraw)가 같은 함수를 부른다. 여기서 CSS 로 다시 가운데를
+           * 잡으면 화면과 종이가 갈린다.
+           * 상자는 하우징 기준이라 패드 안쪽 좌표로 옮겨 넣는다.
+           */
+          const nb = geo.pinNumberBox(pin.index, numText);
           return (
             <div
               key={pin.id}
               className={`hz-pad${assigned ? ' assigned' : ''}${hot.has(pin.id) ? ' hot' : ''}`}
-              style={{ left: INSET + cell.x * PITCH, top: INSET + cell.y * PITCH }}
+              style={{ left: padX, top: padY }}
               title={slot?.signal ? `${pin.label ?? pin.index} · ${slot.signal}` : `핀 ${pin.label ?? pin.index}`}
             >
-              <span className="num">{pin.label ?? slot?.label ?? pin.index}</span>
+              <span
+                className="num"
+                style={{
+                  left: nb.x - padX, top: nb.y - padY, width: nb.w, height: nb.h,
+                  lineHeight: `${nb.h}px`, fontSize: PIN_NUM_FS, textAlign: numAlign,
+                }}
+              >
+                {numText}
+              </span>
             </div>
           );
         })}

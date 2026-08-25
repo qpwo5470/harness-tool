@@ -25,7 +25,7 @@
 import type {
   Connector, Endpoint, Gauge, HarnessDocument, Id, PartLibraryItem, Pin, PinSlot, Wire,
 } from '../types';
-import { statsOf } from './kit';
+import { isLugConnector, statsOf } from './kit';
 import { lengthResolver } from './wireLength';
 import { computeNets, endpointKey } from './netlist';
 import { describeEndpoint } from '../export/exporters';
@@ -463,6 +463,9 @@ export function validateHarness(doc: HarnessDocument): Issue[] {
   if (stats.missingTerminal > 0) {
     for (const c of doc.connectors) {
       if (c.kind === 'splice') continue;         // 꼬임 접속은 단자가 없다
+      // 단독으로 놓인 러그는 그 자신이 압착단자라 지정할 단자가 없다.
+      // statsOf 와 **같은 판정**을 쓴다 — 갈리면 여기 건수와 발주 차단 수가 어긋난다.
+      if (isLugConnector(doc, c.housingId)) continue;
       const bare = c.pins.filter(
         (p) => wiresAtPin.has(`${c.id}:${p.id}`) && !p.terminalId,
       );

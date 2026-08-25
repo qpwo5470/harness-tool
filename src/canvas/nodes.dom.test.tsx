@@ -451,3 +451,76 @@ describe('텍스트 가림 — 배선이 글자를 지나지 않는가', () => {
     }
   });
 });
+
+/**
+ * 단독으로 놓인 압착 러그 — **하우징 심볼로 그리면 안 된다.**
+ *
+ * 핀 격자 상자로 나오면 1핀짜리 작은 커넥터처럼 보이고, 래치 돌기(결합 방향)와
+ * 1번 핀 등록 마크는 러그에 없는 것을 있다고 말한다. 상자 크기와 핸들 자리는
+ * geometry 가 정한 그대로 두고 안의 그림만 바꾼다 — 그 경계를 시험으로 지킨다.
+ */
+describe('압착 러그 노드', () => {
+  const ferrule: PartLibraryItem = {
+    id: 'lib-lug-ferrule-0508', category: 'terminal',
+    name: '페룰(봉형) 압착단자 E0508 0.5mm²·8mm', mpn: 'E0508',
+    gender: 'neutral', pinCount: 1,
+  };
+  const lugConn = (orientation: 0 | 90 | 180 | 270): Connector => ({
+    id: 'c-lug', kind: 'connector', housingId: ferrule.id, orientation,
+    positions: {}, pins: [{ id: 'p1', index: 1 }],
+  });
+  const renderLug = (orientation: 0 | 90 | 180 | 270 = 0, selected = false) =>
+    render(
+      <ReactFlowProvider>
+        <ConnectorNode
+          id="c-lug" type="connector" dragging={false} zIndex={1}
+          selectable selected={selected} draggable deletable isConnectable
+          positionAbsoluteX={0} positionAbsoluteY={0}
+          data={{ connector: lugConn(orientation), housing: ferrule, view: 'logical' } as never}
+        />
+      </ReactFlowProvider>,
+    );
+
+  it('하우징이 아니라 러그 기호로 그린다', () => {
+    const { container } = renderLug();
+    expect(container.querySelector('svg.lug-glyph')).toBeTruthy();
+    // 래치·등록 마크·핀 패드는 러그에 없는 것들이다
+    expect(container.querySelector('.hz-latch')).toBeNull();
+    expect(container.querySelector('.hz-regmark')).toBeNull();
+    expect(container.querySelector('.hz-pad')).toBeNull();
+  });
+
+  it('상자 크기와 핸들은 하우징과 같은 규칙 그대로다', () => {
+    // geometry 가 정한 숫자를 바꾸면 라우터·PDF·물리 뷰가 화면과 갈린다.
+    const { container } = renderLug();
+    const box = container.querySelector('.hz-housing') as HTMLElement;
+    expect(box.style.width).toBeTruthy();
+    expect(box.style.height).toBe(box.style.width);      // 1핀은 정사각
+    // 핀마다 source/target 두 개 — 하나만 있으면 엣지가 노드 중심으로 폴백한다
+    expect(container.querySelectorAll('.react-flow__handle').length).toBe(2);
+  });
+
+  it('압착 통이 배선 나가는 쪽을 향한다', () => {
+    // 기호는 머리가 왼쪽·통이 오른쪽이다. 0°(왼쪽으로 나감)에서 그대로 두면
+    // 전선이 러그 머리에서 나오는 그림이 된다.
+    const turn = (o: 0 | 90 | 180 | 270) => {
+      const { container } = renderLug(o);
+      const el = container.querySelector('.hz-housing > div') as HTMLElement;
+      const t = el.style.transform;
+      cleanup();
+      return t;
+    };
+    expect(turn(0)).toContain('scaleX(-1)');
+    expect(turn(180)).toBe('none');
+    expect(turn(90)).toContain('rotate(-90deg)');
+    expect(turn(270)).toContain('rotate(90deg)');
+  });
+
+  it('선택하면 눈에 보인다 — 테두리를 없앴어도', () => {
+    const off = renderLug(0, false).container.querySelector('.hz-housing') as HTMLElement;
+    expect(off.style.outline).toBe('');
+    cleanup();
+    const on = renderLug(0, true).container.querySelector('.hz-housing') as HTMLElement;
+    expect(on.style.outline).toBeTruthy();
+  });
+});

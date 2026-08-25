@@ -1,10 +1,11 @@
 /**
  * Agent D 소유 — 파트리스트 집계 + CSV (문서의 순수 함수, 테스트 대상).
  */
-import type { HarnessDocument, Endpoint, KitDocument, PartGender } from '../types';
+import type { HarnessDocument, Endpoint, KitDocument, PartGender, PartLibraryItem } from '../types';
 import { computeNets } from '../store/netlist';
 import { perSetOf, totalOf } from '../store/kit';
 import { genderDetail } from '../library/gender';
+import { isStandaloneLug } from '../library/taxonomy';
 import { lengthResolver, type LengthSource } from '../store/wireLength';
 import {
   assertMarginPct, formatLength, unitLabel, unitSuffix, withMargin, type LengthUnit,
@@ -95,12 +96,34 @@ function terminalNameAt(doc: HarnessDocument, ep: Endpoint): string | null {
   const c = doc.connectors.find((x) => x.id === ep.connectorId);
   if (!c || c.kind === 'splice') return null; // 스플라이스는 압착단자 불필요
   const housing = doc.usedParts.find((p) => p.id === c.housingId);
+  // 러그 노드는 **자기 자신이 압착단자**다. 여기서 `${name} 용 터미널` 로 떨어지면
+  // 있지도 않은 부품 이름이 접속표에 뜬다("파스톤 250 REC 용 터미널").
+  if (housing && isStandaloneLug(housing)) return housing.name;
   const pin = c.pins.find((p) => p.id === ep.pinId);
   return (
     doc.usedParts.find((p) => p.id === pin?.terminalId)?.name ??
     housing?.spec?.['터미널'] ??
     (housing ? `${housing.name} 용 터미널` : null)
   );
+}
+
+/**
+ * 이 끝점이 **도면에 놓인 러그**면 그 부품을 준다.
+ *
+ * 발주 집계에서 러그를 **한 번만** 세기 위한 판정이다. 러그를 노드로 놓으면
+ *   · 커넥터(하우징) 집계가 노드 하나를 세고
+ *   · 단자 집계가 그 노드에 물린 배선 끝을 또 센다
+ * 두 벌이 되므로, 노드로 놓인 러그는 커넥터 집계에서 빼고 **단자 집계에도
+ * 배선이 아니라 노드 개수로만** 넣는다. 러그는 배선 1본당 1개이고 노드 하나에
+ * 배선 한 본이 붙으므로 두 값은 같아야 한다 — 다르면 도면이 이상한 것이지
+ * 발주를 늘릴 일이 아니다(한 핀 여러 가닥은 검증이 따로 경고한다).
+ */
+function lugNodeAt(doc: HarnessDocument, ep: Endpoint): PartLibraryItem | null {
+  if (ep.type !== 'pin') return null;
+  const c = doc.connectors.find((x) => x.id === ep.connectorId);
+  if (!c) return null;
+  const housing = doc.usedParts.find((p) => p.id === c.housingId);
+  return housing && isStandaloneLug(housing) ? housing : null;
 }
 
 /**
@@ -131,9 +154,20 @@ export function buildPartList(doc: HarnessDocument, opts: PartListOptions = {}):
   // 하우징/커넥터
   // 암수(gender)를 detail 에 실어 보낸다 — 발주에서 이게 틀리면 현장에서 못 쓴다.
   const hc = new Map<string, { qty: number; gender?: PartGender }>();
+  /** 노드로 놓인 러그 — 커넥터가 아니라 아래 '터미널' 칸으로 간다 */
+  const lugNodes = new Map<string, number>();
   for (const c of doc.connectors) {
     const item = doc.usedParts.find((p) => p.id === c.housingId);
     const name = item?.name ?? c.housingId;
+    /*
+     * 러그는 커넥터가 아니다. 여기서 세면 '커넥터' 칸에 한 번, 아래 '터미널' 칸에
+     * 또 한 번 올라 **발주가 두 배**가 된다. 러그는 발주처에서도 커넥터가 아니라
+     * 압착단자로 사는 물건이라, 칸을 옮기는 것이 표기상으로도 맞다.
+     */
+    if (item && isStandaloneLug(item)) {
+      lugNodes.set(name, (lugNodes.get(name) ?? 0) + 1);
+      continue;
+    }
     const cur = hc.get(name) ?? { qty: 0, gender: item?.gender };
     cur.qty += 1;
     hc.set(name, cur);
@@ -175,8 +209,17 @@ export function buildPartList(doc: HarnessDocument, opts: PartListOptions = {}):
 
   // 터미널(크림프핀): 하우징에 연결된 핀 수만큼 필요 — 발주 시 필수 항목
   const term = new Map<string, number>();
+  /*
+   * 노드로 놓인 러그를 **먼저** 넣는다. 같은 러그를 도면에 놓기도 하고 다른
+   * 커넥터의 핀 단자로 지정하기도 할 수 있는데(단자대 + 링 러그), 그때 두 수는
+   * 같은 품목의 수량이므로 한 행으로 합쳐져야 한다 — 행이 갈리면 발주처가
+   * 두 줄을 각각 주문한다.
+   */
+  for (const [name, qty] of lugNodes) term.set(name, (term.get(name) ?? 0) + qty);
   for (const w of doc.wires) {
     for (const ep of [w.from, w.to]) {
+      // 러그 노드는 바로 위에서 노드 개수로 셌다. 배선 끝으로 또 세면 두 배가 된다.
+      if (lugNodeAt(doc, ep)) continue;
       const named = terminalNameAt(doc, ep);
       if (!named) continue;
       term.set(named, (term.get(named) ?? 0) + 1);

@@ -78,14 +78,25 @@
    글자를 패드 안에서 잘라 낸다 — 넘치면 도면에서 두 핀 번호가 겹쳐 읽힌다. */
 .hz-pad {
   position: absolute; width: 26px; height: 26px;
-  display: flex; align-items: center; justify-content: center;
   border: 1px solid var(--line-strong); background: #fff;
   font-family: var(--font-num); font-weight: 700; font-size: 11px;
-  color: var(--muted-2);
+  /* 미배정 핀도 **번호는 읽혀야 한다**. --muted-2(#b7b7ba)는 흰 종이에서 대비가
+     2.1:1 이라, 핀 번호를 핸들 자리로 옮겨 놓고도 정작 글자가 안 보였다(A3
+     출력에서 확인). 배정 여부는 패드 채움(--bg-subtle)과 글자 농도 차이로 계속
+     구분된다 — 대비를 4.6:1 로 올리는 대신 그 위계를 버리지는 않는다. */
+  color: var(--muted);
   overflow: hidden;
 }
+/* 번호는 칸 **가운데가 아니라 핸들 자리**에 앉는다.
+   left/top/width/height/line-height/font-size/text-align 은 nodes.tsx 가
+   geometry.pinNumberBox · pinNumberAlign 값을 인라인으로 박는다 — PDF 가 같은
+   함수를 부르므로, 여기서 flex 가운데 정렬 같은 걸로 자리를 다시 정하면
+   화면만 종이와 갈린다. (예전에는 .hz-pad 가 flex center 였다)
+   overflow 는 남겨 둔다: 상자는 패드 안으로 잘라 넣지만 실제 글꼴이 어림보다
+   넓게 나올 수 있고, 그때 옆 패드를 덮느니 말줄임이 낫다. */
 .hz-pad > span {
-  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  position: absolute;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .hz-pad.assigned { background: var(--bg-subtle); color: var(--text); }
 .hz-pad.hot { background: var(--accent-pad); border-color: var(--accent); color: var(--accent-dark); }

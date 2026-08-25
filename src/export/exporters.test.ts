@@ -5,6 +5,7 @@ import {
   RUN_CSV_COLUMNS, RUN_CSV_DEFAULT_COLS,
 } from './exporters';
 import { sampleDoc } from '../fixtures/sampleDoc';
+import { SEED_PARTS, instantiate } from '../library/seed';
 
 describe('buildPartList', () => {
   it('커넥터/와이어/케이블을 집계한다', () => {
@@ -455,5 +456,156 @@ describe('핀별 터미널 지정 반영', () => {
     // con-a는 4핀이지만 실제 배선(w1)은 1개 핀만 사용
     const qty = terms.reduce((n, t) => n + t.qty, 0);
     expect(qty).toBe(1);
+  });
+});
+
+// ============================================================
+// 단독 배치된 압착 러그 — **이중 계상이 없어야 한다**
+//
+// 러그를 노드로 놓으면 두 집계가 같은 물건을 본다. 하우징 집계는 노드 하나를
+// 세고, 단자 집계는 그 노드에 물린 배선 끝을 또 센다. 그대로 두면 발주 수량이
+// 정확히 두 배가 되고, 두 행의 이름이 서로 달라("파스톤 250 REC" 와
+// "파스톤 250 REC 용 터미널") 표만 봐서는 같은 물건인 줄도 모른다.
+// ============================================================
+
+const seedPart = (id: string) => {
+  const p = SEED_PARTS.find((x) => x.id === id);
+  if (!p) throw new Error(`시드에 없는 부품 — ${id}`);
+  return p;
+};
+
+const FASTON = 'lib-lug-faston-110-rec';
+const FERRULE = 'lib-lug-ferrule-0508';
+const RING = 'lib-lug-ring-2-4';
+
+/**
+ * 시럽 펌프 하네스 — **양 끝에 커넥터가 하나도 없다.**
+ * 한쪽은 파스톤 110 REC, 반대쪽은 페룰. 이 작업을 막고 있던 바로 그 형상이다.
+ */
+function lugOnlyDoc(): HarnessDocument {
+  const rec = seedPart(FASTON);
+  const fer = seedPart(FERRULE);
+  const cRec = instantiate(rec, { x: 40, y: 40 });
+  const cFer = instantiate(fer, { x: 300, y: 40 });
+  return {
+    ...sampleDoc,
+    connectors: [cRec, cFer],
+    devices: [],
+    cables: undefined,
+    wires: [{
+      id: 'w-lug',
+      from: { type: 'pin', connectorId: cRec.id, pinId: cRec.pins[0].id },
+      to: { type: 'pin', connectorId: cFer.id, pinId: cFer.pins[0].id },
+      color: { base: 'red' },
+      gauge: { system: 'awg', value: 18 },
+      lengthMm: 800,
+    }],
+    usedParts: [rec, fer],
+  };
+}
+
+describe('단독 배치된 압착 러그', () => {
+  it('러그 하나는 파트리스트에 한 줄 · 수량 1 로만 잡힌다', () => {
+    const rows = buildPartList(lugOnlyDoc());
+
+    for (const id of [FASTON, FERRULE]) {
+      const name = seedPart(id).name;
+      const hit = rows.filter((r) => r.part === name);
+      expect(hit.length, `${name} 행 수`).toBe(1);
+      expect(hit[0].qty, `${name} 수량`).toBe(1);
+      // 커넥터가 아니라 압착단자로 산다 — 발주처가 보는 칸도 그래야 한다
+      expect(hit[0].category, name).toBe('터미널');
+    }
+  });
+
+  it('러그를 커넥터 칸에도 세지 않는다 — 그것이 두 배가 되는 경로였다', () => {
+    const rows = buildPartList(lugOnlyDoc());
+    expect(rows.filter((r) => r.category === '커넥터')).toEqual([]);
+    // 러그 종류당 정확히 한 행, 합쳐서 두 행
+    expect(rows.filter((r) => r.category === '터미널').length).toBe(2);
+  });
+
+  it('있지도 않은 "…용 터미널" 을 만들지 않는다', () => {
+    // 러그는 자기 자신이 압착단자다. 하우징처럼 다루면 발주할 수 없는 이름이 나온다.
+    for (const r of buildPartList(lugOnlyDoc())) {
+      expect(r.part, r.part).not.toMatch(/용 터미널$/);
+    }
+    // 접속표의 '단자' 열에도 러그 이름 그대로 나온다
+    const run = buildRunList(lugOnlyDoc())[0];
+    expect(run.terminal).toContain('파스톤 110 REC');
+    expect(run.terminal).toContain('E0508');
+  });
+
+  it('배선이 없는 러그도 한 개로 잡힌다 — 도면에 그렸으면 사야 한다', () => {
+    const doc = { ...lugOnlyDoc(), wires: [] };
+    const rows = buildPartList(doc).filter((r) => r.category === '터미널');
+    expect(rows.map((r) => r.qty)).toEqual([1, 1]);
+  });
+
+  /**
+   * 러그를 **핀 단자로 고르는 길**은 그대로 살아 있어야 한다. 단자대를 커넥터로
+   * 그리고 그 핀에 링 러그를 지정하는 방식이다 — 노드로 놓는 방식이 생겼다고
+   * 이 방식이 죽으면 이미 그린 도면의 발주가 달라진다.
+   */
+  it('핀 단자로 지정한 러그는 예전 그대로 배선 수만큼 잡힌다', () => {
+    const ring = seedPart(RING);
+    const tb = seedPart('lib-tb-barrier-15a-3p');
+    const conn = instantiate(tb, { x: 40, y: 40 });
+    const wired = {
+      ...conn,
+      pins: conn.pins.map((p) => ({ ...p, terminalId: RING })),
+    };
+    const doc: HarnessDocument = {
+      ...sampleDoc,
+      connectors: [wired],
+      devices: [{ id: 'dev-1', name: '모터', terminals: ['+', '-'], positions: {} }],
+      cables: undefined,
+      wires: [0, 1].map((i) => ({
+        id: `w${i}`,
+        from: { type: 'pin' as const, connectorId: wired.id, pinId: wired.pins[i].id },
+        to: { type: 'device' as const, deviceId: 'dev-1', terminal: i ? '-' : '+' },
+        color: { base: 'black' },
+        gauge: { system: 'awg' as const, value: 16 },
+        lengthMm: 300,
+      })),
+      usedParts: [tb, ring],
+    };
+    const rows = buildPartList(doc);
+    const hit = rows.filter((r) => r.part === ring.name);
+    expect(hit.length).toBe(1);
+    expect(hit[0].qty).toBe(2);           // 배선 2본 = 러그 2개
+    // 단자대 자체는 여전히 커넥터로 잡힌다
+    expect(rows.some((r) => r.category === '커넥터' && r.part === tb.name)).toBe(true);
+  });
+
+  /**
+   * 같은 러그를 **두 방식으로 함께** 쓸 수 있다(단자대 핀에 지정 + 반대쪽은 노드).
+   * 그때 두 수는 같은 품목의 수량이므로 한 행으로 합쳐져야 한다 — 행이 갈리면
+   * 발주처가 두 줄을 각각 주문한다.
+   */
+  it('노드로 놓은 러그와 핀에 지정한 같은 러그는 한 행으로 합쳐진다', () => {
+    const ring = seedPart(RING);
+    const tb = seedPart('lib-tb-barrier-15a-3p');
+    const tbConn = instantiate(tb, { x: 40, y: 40 });
+    const wiredTb = { ...tbConn, pins: tbConn.pins.map((p) => ({ ...p, terminalId: RING })) };
+    const lugNode = instantiate(ring, { x: 300, y: 40 });
+    const doc: HarnessDocument = {
+      ...sampleDoc,
+      connectors: [wiredTb, lugNode],
+      devices: [],
+      cables: undefined,
+      wires: [{
+        id: 'w0',
+        from: { type: 'pin', connectorId: wiredTb.id, pinId: wiredTb.pins[0].id },
+        to: { type: 'pin', connectorId: lugNode.id, pinId: lugNode.pins[0].id },
+        color: { base: 'red' },
+        gauge: { system: 'awg', value: 16 },
+        lengthMm: 250,
+      }],
+      usedParts: [tb, ring],
+    };
+    const hit = buildPartList(doc).filter((r) => r.part === ring.name);
+    expect(hit.length).toBe(1);
+    expect(hit[0].qty).toBe(2);   // 단자대 쪽 1개 + 노드 1개
   });
 });

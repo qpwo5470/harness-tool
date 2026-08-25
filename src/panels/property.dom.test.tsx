@@ -207,6 +207,59 @@ describe('(B-2) 스플라이스', () => {
   });
 });
 
+/**
+ * (B-3) 단독으로 놓인 압착 러그.
+ *
+ * 스플라이스와 같은 자리를 쓰지만 이유가 다르다 — 스플라이스는 압착단자라는 것이
+ * 아예 없고, 러그는 **그 자신이 압착단자**다. 목록을 그냥 내주면 러그에 또 러그를
+ * 압착하는 지정이 만들어지는데 그 값은 파트리스트에서 조용히 무시된다.
+ * 고를 수는 있는데 아무 데도 안 나오는 것이 가장 나쁘다.
+ */
+describe('(B-3) 압착 러그', () => {
+  const lug: PartLibraryItem = {
+    id: 'lib-lug-faston-110-rec', category: 'terminal',
+    name: '파스톤 110 REC (암) 2.8mm', mpn: '110 REC', gender: 'neutral', pinCount: 1,
+  };
+  const showLug = () => {
+    const d = makeDoc();
+    d.usedParts = [...d.usedParts, lug];
+    d.connectors = [...d.connectors, {
+      id: 'lug1', kind: 'connector', housingId: lug.id, orientation: 180,
+      positions: { logical: { x: 400, y: 0 } },
+      pins: [{ id: 'lp1', index: 1 }],
+    }];
+    useHarnessStore.setState({ doc: d, selection: 'lug1' });
+    return render(<PropertyPanel />);
+  };
+
+  it('LUG 로 표시하고 단자 선택을 내놓지 않는다', () => {
+    const { container } = showLug();
+    expect(screen.getByText('LUG')).toBeTruthy();
+    expect(screen.getByText(/이 러그가 곧 압착단자입니다/)).toBeTruthy();
+    expect(container.querySelectorAll('select').length).toBe(0);
+    expect(screen.queryByText('모두 선택')).toBeNull();
+    // 발주에 몇 개로 잡히는지 그 자리에서 말한다
+    expect(screen.getByText(/노드 하나당 1개/)).toBeTruthy();
+  });
+
+  it('방향은 그대로 고를 수 있다 — 배선이 어느 쪽으로 나가는지는 러그도 정해야 한다', () => {
+    showLug();
+    fireEvent.click(screen.getByLabelText('방향 90° 위쪽'));
+    expect(doc().connectors.find((c) => c.id === 'lug1')!.orientation).toBe(90);
+  });
+
+  it('일반 커넥터에서는 러그가 여전히 단자 후보로 나온다', () => {
+    // 단자대를 커넥터로 그리고 그 핀에 링 러그를 지정하는 쓰임이 살아 있어야 한다.
+    show('c1');
+    const sel = screen.getByLabelText('터미널 선택') as HTMLSelectElement;
+    const values = [...sel.options].map((o) => o.value);
+    expect(values).toContain('lib-lug-ring-2-4');
+    expect(values).toContain('lib-lug-ferrule-0508');
+    // 하우징 컨택트도 그대로 있다
+    expect(values).toContain('lib-jst-sxh-001t');
+  });
+});
+
 describe('(C) 장치 — 단자 행 목록', () => {
   it('단자를 추가하고, 배선된 단자는 지울 수 없다', () => {
     show('d1');

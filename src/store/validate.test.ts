@@ -252,6 +252,55 @@ describe('3. 터미널 미지정', () => {
     );
     expect(only(doc, 'terminal-missing')).toHaveLength(0);
   });
+
+  /**
+   * 단독으로 놓인 압착 러그도 제외한다 — **그 자신이 압착단자**라 지정할 것이 없다.
+   *
+   * 빼지 않으면 러그로 끝나는 하네스가 통째로 "터미널 미지정 error" 로 잡혀
+   * 발주가 막히는데, 화면에서 고칠 방법도 없다(속성 패널이 러그에는 단자 선택을
+   * 내놓지 않는다). 검증과 statsOf 가 **같은 판정**을 쓰는지도 함께 본다.
+   */
+  it('단독으로 놓인 압착 러그는 제외한다 — 그 자신이 압착단자다', () => {
+    const doc = clean();
+    doc.usedParts.push({
+      id: 'lib-lug-ring-2-4', category: 'terminal', name: '링(O형) 압착단자 2-4',
+      mpn: '2-4', gender: 'neutral', pinCount: 1,
+    });
+    doc.connectors.push({
+      id: 'lug1', kind: 'connector', housingId: 'lib-lug-ring-2-4', orientation: 180,
+      positions: { logical: { x: 600, y: 0 } },
+      pins: [{ id: 'lp1', index: 1 }],       // terminalId 없음 — 있을 수가 없다
+    });
+    doc.wires.push(wire({
+      id: 'w3',
+      from: { type: 'pin', connectorId: 'c1', pinId: 'p3' },
+      to: { type: 'pin', connectorId: 'lug1', pinId: 'lp1' },
+    }));
+    expect(only(doc, 'terminal-missing')).toHaveLength(0);
+    expect(statsOf(doc).missingTerminal).toBe(0);
+  });
+
+  it('러그가 아닌 하우징 컨택트 쪽은 예전 그대로 잡는다', () => {
+    // 위 규칙이 넓게 새면 진짜 미지정이 조용히 통과한다.
+    const doc = clean();
+    doc.connectors[0].pins[0].terminalId = undefined;
+    doc.usedParts.push({
+      id: 'lib-lug-ring-2-4', category: 'terminal', name: '링(O형) 압착단자 2-4', pinCount: 1,
+    });
+    doc.connectors.push({
+      id: 'lug1', kind: 'connector', housingId: 'lib-lug-ring-2-4', orientation: 180,
+      positions: { logical: { x: 600, y: 0 } },
+      pins: [{ id: 'lp1', index: 1 }],
+    });
+    doc.wires.push(wire({
+      id: 'w3',
+      from: { type: 'pin', connectorId: 'c2', pinId: 'q2' },
+      to: { type: 'pin', connectorId: 'lug1', pinId: 'lp1' },
+    }));
+    const [issue] = only(doc, 'terminal-missing');
+    expect(issue.targetId).toBe('c1');
+    expect(statsOf(doc).missingTerminal).toBe(1);
+  });
 });
 
 describe('4. 길이 미입력', () => {

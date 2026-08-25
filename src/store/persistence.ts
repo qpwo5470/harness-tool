@@ -14,7 +14,7 @@
  */
 import type {
   Cable, Connector, Device, HarnessDocument, HarnessSet,
-  KitDocument, Pin, Wire,
+  KitDocument, Pin, Wire, WireRoute,
 } from '../types';
 import { toKit, letterAt } from './kit';
 // 구간 키의 규칙은 만드는 곳에만 있다 — 여기서 형식을 다시 정의하면
@@ -238,6 +238,29 @@ function normEndpoint(v: unknown): Wire['from'] | null {
 }
 
 /**
+ * 사람이 지정한 꺾임(레인) 위치.
+ *
+ * **0 을 떨어뜨리지 않는다.** 0 은 "가운데 레인"이라는 뜻의 유효한 지정이고,
+ * 없음은 키가 아예 없는 것이다(`WireRoute` 주석). `v.laneY && ...` 같은 참거짓
+ * 검사를 쓰면 사람이 가운데로 끌어다 놓은 배선이 파일을 다시 열 때마다 자동값으로
+ * 되돌아간다 — 조용히 도면이 달라지는 부류의 사고다.
+ *
+ * 두 축이 다 없으면 `undefined` 를 돌려 필드 자체를 붙이지 않는다. 그래야 이
+ * 기능을 쓴 적 없는 문서가 왕복해도 파일이 그대로다.
+ */
+function normWireRoute(v: unknown): WireRoute | undefined {
+  if (!isObj(v)) return undefined;
+  const num = (x: unknown) => (typeof x === 'number' && Number.isFinite(x) ? x : undefined);
+  const laneY = num(v.laneY);
+  const laneX = num(v.laneX);
+  if (laneY === undefined && laneX === undefined) return undefined;
+  return {
+    ...(laneY !== undefined ? { laneY } : {}),
+    ...(laneX !== undefined ? { laneX } : {}),
+  };
+}
+
+/**
  * 색·굵기가 없는 배선은 고칠 수 없다.
  * 임의의 기본색을 채우면 **틀린 값을 조용히 받아들이는 것**이라 발주에서 사고가 난다.
  * 대신 그 배선만 빼고, 몇 본을 왜 뺐는지 알린다.
@@ -263,6 +286,7 @@ function normWire(v: unknown): Wire | null {
     ...(typeof v.lengthMm === 'number' && Number.isFinite(v.lengthMm) ? { lengthMm: v.lengthMm } : {}),
     ...(str(v.cableId) != null ? { cableId: str(v.cableId)! } : {}),
     ...(str(v.label) != null ? { label: str(v.label)! } : {}),
+    ...(normWireRoute(v.route) ? { route: normWireRoute(v.route)! } : {}),
   };
 }
 

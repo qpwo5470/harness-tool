@@ -9,6 +9,7 @@ import type {
   AnyDocument, HarnessDocument, HarnessSet, KitDocument, Id,
 } from '../types';
 import { lengthResolver, tallyLengths } from './wireLength';
+import { isStandaloneLug } from '../library/taxonomy';
 
 let seq = 0;
 const newId = (p: string) => `${p}-${Date.now().toString(36)}-${seq++}`;
@@ -93,6 +94,19 @@ export type HarnessStats = {
   missingTerminal: number;
 };
 
+/**
+ * 이 커넥터가 **단독으로 놓인 압착 러그**인가.
+ *
+ * 문서에는 러그라는 표시가 따로 없다 — `housingId` 가 가리키는 부품이 러그면
+ * 러그다(`library/taxonomy.isStandaloneLug`). 사실을 문서에 한 번 더 적지 않는
+ * 이유는 seed.kindOf 머리말에 적어 뒀다. 검증(`store/validate.ts`)도 같은 판정을
+ * 쓴다 — 여기와 갈리면 화면의 경고 수와 발주 차단 수가 어긋난다.
+ */
+export function isLugConnector(h: HarnessDocument, housingId: Id): boolean {
+  const part = h.usedParts.find((p) => p.id === housingId);
+  return part != null && isStandaloneLug(part);
+}
+
 export function statsOf(h: HarnessDocument): HarnessStats {
   // 배선된 핀만 센다 — 안 쓰는 핀에 단자를 요구하면 잘못된 경고가 된다.
   const usedPins = new Set<string>();
@@ -104,6 +118,12 @@ export function statsOf(h: HarnessDocument): HarnessStats {
   let missingTerminal = 0;
   for (const c of h.connectors) {
     if (c.kind === 'splice') continue;   // 꼬임 접속은 단자가 없다
+    /*
+     * 단독으로 놓인 압착 러그는 **그 자신이 압착단자**라 지정할 단자가 없다.
+     * 빼지 않으면 러그로 끝나는 하네스가 전부 "터미널 미지정" 으로 잡혀
+     * 발주가 막힌다(blockersOf 가 이 수를 그대로 쓴다) — 고칠 방법도 없다.
+     */
+    if (isLugConnector(h, c.housingId)) continue;
     for (const p of c.pins) {
       if (usedPins.has(`${c.id}:${p.id}`) && !p.terminalId) missingTerminal++;
     }

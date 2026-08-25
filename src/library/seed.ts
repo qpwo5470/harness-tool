@@ -867,8 +867,20 @@ const LUG_WIRE: Record<string, string> = {
 };
 
 /**
- * 러그 한 종. `pinCount` 는 1 이다 — 전선 한 본에 하나 붙는다.
- * 캔버스에 노드로 놓을 것이 아니므로 `category: 'terminal'` 이고 핀맵도 없다.
+ * 러그 한 종.
+ *
+ * ## `pinCount: 1` 을 **적어 두는** 이유
+ * 러그의 압착 통은 하나다 — 전선 한 본이 러그 하나에 압착된다. 예전에는 이 값을
+ * 비워 뒀는데, 러그는 캔버스에 놓을 것이 아니라고 봤기 때문이다. 지금은 놓는다
+ * (`taxonomy.isStandaloneLug`). 비워 두면 `instantiate` 의 `pinCount ?? 2` 가
+ * 걸려 핀이 **두 개** 달린 러그가 도면에 생기고, 있지도 않은 자리에 배선할 수 있게
+ * 된다. 값을 적어 두면 검증(`pin-overflow`)도 손으로 고친 JSON 을 잡아낸다.
+ *
+ * `pinLayout` 은 두지 않는다. 그건 하우징 안에서 핀이 **어디 앉는가**를 적는 값인데
+ * 러그에는 앉을 하우징이 없다. 없으면 `instantiate` 가 pinCount 로 내려간다.
+ *
+ * `category` 는 `'terminal'` 그대로다 — 속성 패널의 핀 단자 후보 목록이 그 값으로
+ * 거르므로, 바꾸면 "단자대 커넥터의 핀에 링 러그를 지정" 하는 쓰임이 죽는다.
  */
 function lug(
   id: string, name: string, mpn: string, kind: string, wire: string, extra: Record<string, string>,
@@ -876,6 +888,7 @@ function lug(
   return {
     id, category: 'terminal', name, mpn,
     gender: 'neutral',
+    pinCount: 1,
     spec: {
       종류: kind,
       적용전선: wire,
@@ -1312,6 +1325,16 @@ export const SEED_PARTS: PartLibraryItem[] = [
   ...YEONHO_TERMINALS,
 ];
 
+/**
+ * 부품 종류 → 캔버스 인스턴스 종류.
+ *
+ * 단독 배치되는 압착 러그(`category: 'terminal'`)는 `'connector'` 로 떨어진다.
+ * `ConnectorKind` 에 `'lug'` 를 더하지 않은 이유: 그 값은 저장 파일에 그대로 나가는
+ * 동결 계약이라 새 값을 넣으면 옛 툴이 못 여는 문서가 생긴다(schemaVersion 을
+ * 올려야 한다). 러그인지 아닌지는 `housingId` 가 가리키는 부품에 **이미 적혀
+ * 있으므로**(`taxonomy.isStandaloneLug`) 문서에 사실을 하나 더 저장할 이유가 없다.
+ * 화면·발주는 전부 그 판정을 부른다.
+ */
 const kindOf = (cat: PartLibraryItem['category']): ConnectorKind =>
   cat === 'splice' ? 'splice' : cat === 'board-to-wire' ? 'board-to-wire' : 'connector';
 

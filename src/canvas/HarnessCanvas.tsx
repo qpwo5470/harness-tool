@@ -37,6 +37,7 @@ import { WireCard } from './WireCard';
 import type { Device, Endpoint, PartLibraryItem, Wire } from '../types';
 import { SEED_PARTS, instantiate, suggestedColor } from '../library/seed';
 import { loadCustomParts } from '../library/customParts';
+import { isCanvasPlaceable } from '../library/taxonomy';
 import { PART_DND_MIME, DEVICE_DND_ID } from '../library/LibraryPanel';
 
 let wireSeq = 0;
@@ -229,7 +230,9 @@ function Flow() {
 
     // 부품 목록은 [...custom, ...SEED_PARTS] — id 로 되찾는다
     const item = [...loadCustomParts(), ...SEED_PARTS].find((p) => p.id === payload);
-    if (!item || item.category === 'terminal') return; // 단자는 캔버스에 놓지 않음
+    // 놓을 수 있는지는 라이브러리 행(draggable)·클릭(addPart)과 **같은 판정**을 쓴다.
+    // 하우징 컨택트는 못 놓고, 압착 러그는 종단 그 자체라 놓는다(taxonomy).
+    if (!item || !isCanvasPlaceable(item)) return;
 
     const off = centerOffset(item);
     const conn = instantiate(item, { x: at.x - off.x, y: at.y - off.y });

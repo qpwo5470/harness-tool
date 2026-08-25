@@ -14,7 +14,7 @@ import { GENDER_LABEL, GENDER_LONG } from './gender';
 import { PartSymbol } from './PartSymbol';
 import {
   FAMILIES, SERIES_ORDERED, seriesOf, seriesLabel, roleOf, compareInSeries, searchTagsOf,
-  displayName,
+  displayName, isCanvasPlaceable, isStandaloneLug,
 } from './taxonomy';
 import { planPartSync, partSyncMessage } from './partSync';
 import { showToast, undoSteps } from '../ui/Toast';
@@ -137,7 +137,8 @@ export function LibraryPanel() {
   }, [q, allParts, roleFilter, genderFilter]);
 
   const addPart = (item: PartLibraryItem) => {
-    if (item.category === 'terminal') return; // 단자는 캔버스에 놓지 않음
+    // 하우징 컨택트는 하우징에 딸린 부속이라 놓지 않는다. 러그는 종단 그 자체라 놓는다.
+    if (!isCanvasPlaceable(item)) return;
     const at = { x: 120 + Math.random() * 200, y: 120 + Math.random() * 160 };
     const conn = instantiate(item, at);
     // 순서가 중요하다: 히스토리를 쌓는 addConnector 가 **먼저**여야 그 스냅샷에
@@ -266,8 +267,12 @@ export function LibraryPanel() {
   };
 
   const renderItem = (p: PartLibraryItem) => {
-    // 단자는 캔버스에 놓지 않는다 — 클릭과 마찬가지로 드래그도 막는다.
-    const droppable = p.category !== 'terminal';
+    /*
+     * 캔버스에 놓을 수 있는가 — 클릭·드래그가 **같은 판정**을 쓴다(taxonomy).
+     * 하우징 컨택트는 여전히 못 놓는다. 러그는 놓을 수 있고, 왜 다른지는
+     * 툴팁 마지막 줄이 말한다(막힌 행 앞에서 이유 없이 서 있지 않게).
+     */
+    const droppable = isCanvasPlaceable(p);
     const role = roleOf(p);
     const nrnd = isNrnd(p);
     /*
@@ -294,12 +299,16 @@ export function LibraryPanel() {
             p.mpn && `MPN ${p.mpn}`,
             `역할: ${role.long}`,
             p.gender ? `성별: ${GENDER_LABEL[p.gender]}(${GENDER_LONG[p.gender]})` : '성별: 미지정 — 발주 전 확인 필요',
-            p.pinCount ? `핀 수: ${p.pinCount}P` : null,
+            // 러그는 핀이 1개다 — "1P" 는 회로 수가 아니라 **전선 한 본**이라는 뜻이다
+            p.pinCount ? (isStandaloneLug(p) ? '전선 1본 (압착 통 1개)' : `핀 수: ${p.pinCount}P`) : null,
             ...Object.entries(p.spec ?? {}).map(([k, v]) => `${k}: ${v}`),
+            droppable
+              ? (isStandaloneLug(p) ? '캔버스에 단독으로 놓을 수 있습니다 (배선의 끝점)' : null)
+              : '캔버스에 놓지 않습니다 — 하우징 안에 들어가는 컨택트라 하우징에 딸려 발주됩니다',
           ]
             .filter(Boolean)
             .join('\n')}
-          disabled={p.category === 'terminal'}
+          disabled={!droppable}
         >
           {/* 형상 기호 — 역할·성별·핀 배열을 글자보다 먼저 읽게 한다 */}
           <PartSymbol part={p} />
@@ -314,7 +323,13 @@ export function LibraryPanel() {
           {/* 이름은 반드시 요소로 감싼다 — 텍스트 노드에는 ellipsis 가 걸리지 않아
               긴 이름이 한 행 안에서 줄바꿈되며 겹친다 */}
           <span className="lib-item-name">{displayName(p)}</span>
-          {p.pinCount ? <span className="pin-badge">{p.pinCount}P</span> : null}
+          {/*
+            러그의 pinCount 는 1 이지만 배지는 달지 않는다. 이 목록에서 `NP` 는
+            **회로 수**로 읽히는 자리라(옆 행이 2P·4P·24P 짜리 하우징이다),
+            거기에 "1P" 가 붙으면 러그가 1회로 커넥터로 보인다. 러그의 1 은
+            회로 수가 아니라 압착 통이 하나라는 뜻이고, 그 말은 툴팁에 적혀 있다.
+          */}
+          {p.pinCount && !isStandaloneLug(p) ? <span className="pin-badge">{p.pinCount}P</span> : null}
           {nrnd ? (
             <span className="nrnd-badge" title="Not Recommended For New Design — 신규 설계 비권장">
               NRND

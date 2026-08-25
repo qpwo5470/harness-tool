@@ -150,6 +150,29 @@ describe('라이브러리 행 드래그 시작', () => {
     fireEvent.dragStart(row, { dataTransfer: dt });
     expect(dt.types).not.toContain(PART_DND_MIME);
   });
+
+  /**
+   * 하우징 컨택트와 압착 러그는 둘 다 `category: 'terminal'` 이지만 도면에서
+   * 하는 일이 다르다. 컨택트는 하우징에 딸린 부속이라 놓을 자리가 없고, 러그는
+   * 전선 끝에 압착해 그대로 붙는 **종단 그 자체**라 놓을 자리가 있다.
+   * 한쪽을 살리다 다른 쪽을 죽이지 않았는지 두 시험이 함께 지킨다.
+   */
+  it('압착 러그는 드래그할 수 있다 — 커넥터 없이 단독으로 놓는다', () => {
+    const { container } = render(<App />);
+    const row = rowOf(container, /파스톤 110 REC/);
+    expect(row.getAttribute('draggable')).toBe('true');
+
+    const dt = makeDataTransfer();
+    fireEvent.dragStart(row, { dataTransfer: dt });
+    expect(dt.getData(PART_DND_MIME)).toBe('lib-lug-faston-110-rec');
+  });
+
+  it('하우징 컨택트는 클릭으로도 놓이지 않는다', () => {
+    const { container } = render(<App />);
+    const before = connectors().length;
+    fireEvent.click(itemOf(container, /Mini-Fit Jr 크림프핀/));
+    expect(connectors().length).toBe(before);
+  });
 });
 
 describe('캔버스 드롭 배치', () => {
@@ -186,6 +209,36 @@ describe('캔버스 드롭 배치', () => {
 
     expect(b.x - a.x).toBe(200);
     expect(b.y - a.y).toBe(150);
+  });
+
+  /**
+   * 이 작업을 막고 있던 형상 — 시럽 펌프 하네스는 한쪽 끝이 파스톤 110 REC,
+   * 반대쪽이 페룰이라 **커넥터가 하나도 없다.** 러그를 못 놓으면 그릴 수 없다.
+   */
+  it('러그를 놓으면 핀 1개짜리 끝점이 생긴다', () => {
+    const { container } = render(<App />);
+    dragTo(rowOf(container, /파스톤 110 REC/), canvasOf(container), 380, 260);
+
+    const doc = useHarnessStore.getState().doc;
+    const added = doc.connectors[doc.connectors.length - 1];
+    expect(added.housingId).toBe('lib-lug-faston-110-rec');
+    // 전선 한 본이 압착 통 하나에 들어간다 — 없는 두 번째 자리를 만들지 않는다
+    expect(added.pins).toHaveLength(1);
+    // 부품 스냅샷도 함께 저장돼야 다른 사람이 파일만 열어도 도면이 재현된다
+    expect(doc.usedParts.some((p) => p.id === 'lib-lug-faston-110-rec')).toBe(true);
+  });
+
+  it('하우징 컨택트는 캔버스가 받아 주지 않는다 — 드롭 이벤트가 와도', () => {
+    const { container } = render(<App />);
+    const before = connectors().length;
+
+    // 행 자체는 draggable=false 지만, 다른 경로로 페이로드가 들어와도 막혀야 한다.
+    const dt = makeDataTransfer();
+    dt.setData(PART_DND_MIME, 'lib-jst-sxh-001t');
+    fireEvent.dragOver(canvasOf(container), { dataTransfer: dt });
+    fireDrop(canvasOf(container), dt, 400, 300);
+
+    expect(connectors().length).toBe(before);
   });
 
   it('부품이 usedParts 에도 들어간다 (클릭 배치와 같은 순서)', () => {

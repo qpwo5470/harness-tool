@@ -17,7 +17,7 @@ import { describe, it, expect } from 'vitest';
 import { SEED_PARTS } from './seed';
 import {
   FAMILIES, SERIES, SERIES_ORDERED, seriesOf, seriesLabel, roleOf,
-  compareInSeries, displayName, searchTagsOf,
+  compareInSeries, displayName, searchTagsOf, isStandaloneLug, isCanvasPlaceable,
 } from './taxonomy';
 
 describe('분류 — 빠짐·겹침', () => {
@@ -108,7 +108,9 @@ describe('분류 — 체계', () => {
     expect(lugs.length).toBeGreaterThan(20);
     for (const p of lugs) {
       expect(seriesOf(p)?.family, p.id).toBe('lug');
-      expect(roleOf(p).key, p.id).toBe('terminal');   // 캔버스에 놓지 않는다
+      // 역할 표시는 '압착단자' 그대로다 — 캔버스에 놓느냐는 그것과 다른 축이고
+      // `isCanvasPlaceable` 이 따로 판정한다(아래 describe).
+      expect(roleOf(p).key, p.id).toBe('terminal');
     }
     // 하우징 컨택트는 반대로 러그 계열에 들어오면 안 된다
     const contact = SEED_PARTS.find((p) => p.id === 'lib-jst-sxh-001t')!;
@@ -213,6 +215,55 @@ describe('분류 — 체계', () => {
     expect(at('lib-xh-4p')).toBe('legacy');
     expect(at('lib-minifit-4p')).toBe('legacy');
     expect(at('lib-molex-2x5')).toBe('legacy');
+  });
+});
+
+/**
+ * 캔버스에 놓을 수 있느냐 — `category: 'terminal'` 안의 **두 부류를 가르는 선**.
+ *
+ * 하우징 컨택트는 하우징에 딸린 부속이라 도면 요소가 아니고, 러그는 전선 끝에
+ * 압착해 그대로 붙는 종단이라 도면 요소다. 선이 흐려지면 두 방향으로 다 틀린다 —
+ * 러그를 못 놓으면 커넥터 없는 하네스를 그릴 수 없고, 컨택트를 놓으면 하우징
+ * 없이 떠 있는 핀이 도면에 생기고 발주가 두 벌이 된다.
+ */
+describe('캔버스에 놓을 수 있는 부품', () => {
+  const lugs = SEED_PARTS.filter((p) => p.id.startsWith('lib-lug-'));
+
+  it('압착 러그 전부가 단독 배치 대상이다', () => {
+    expect(lugs.length).toBeGreaterThan(20);
+    for (const p of lugs) {
+      expect(isStandaloneLug(p), p.id).toBe(true);
+      expect(isCanvasPlaceable(p), p.id).toBe(true);
+    }
+  });
+
+  it('하우징 컨택트는 여전히 놓을 수 없다', () => {
+    // 하우징 안에 들어가는 부속이다 — 놓을 자리가 도면에 없다.
+    for (const id of ['lib-jst-sxh-001t', 'lib-yh-yst025', 'lib-minifit-5556']) {
+      const p = SEED_PARTS.find((x) => x.id === id);
+      expect(p, id).toBeDefined();
+      expect(isStandaloneLug(p!), id).toBe(false);
+      expect(isCanvasPlaceable(p!), id).toBe(false);
+    }
+  });
+
+  it('러그가 아닌 `terminal` 은 하나도 새어 나가지 않는다', () => {
+    // 계열이 근거이므로, 시드에 컨택트를 더하면서 실수로 `lib-lug-` id 를 쓰지
+    // 않는 한 이 관계는 저절로 유지된다. 그 관계 자체를 못박는다.
+    const blocked = SEED_PARTS.filter((p) => p.category === 'terminal' && !isCanvasPlaceable(p));
+    expect(blocked.length).toBeGreaterThan(0);
+    for (const p of blocked) expect(seriesOf(p)?.family, p.id).not.toBe('lug');
+  });
+
+  it('하우징·단자대·스플라이스는 예전 그대로 놓을 수 있다', () => {
+    for (const p of SEED_PARTS.filter((x) => x.category !== 'terminal')) {
+      expect(isCanvasPlaceable(p), p.id).toBe(true);
+    }
+  });
+
+  it('러그는 전선 한 본이 들어간다 — 핀이 1개다', () => {
+    // `instantiate` 가 `pinCount ?? 2` 라, 비워 두면 핀 두 개짜리 러그가 생긴다.
+    for (const p of lugs) expect(p.pinCount, p.id).toBe(1);
   });
 });
 

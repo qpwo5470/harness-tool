@@ -32,10 +32,16 @@ import type {
 import { SEED_PARTS } from '../library/seed';
 import { loadCustomParts } from '../library/customParts';
 import { GENDER_LABEL, GENDER_LONG } from '../library/gender';
-import { refLabels, colorAbbr, strokeColor } from '../canvas/docToFlow';
+import { isStandaloneLug } from '../library/taxonomy';
+// 꺾임(레인) 자동값도 **그리는 쪽에 물어본다** — 여기서 다시 계산하면 패널이
+// 말하는 자동값과 도면이 실제로 쓰는 값이 갈린다(§3-2 단일 출처).
+import {
+  refLabels, colorAbbr, strokeColor, assignLanes, LANE_Y_STEP, LANE_X_STEP,
+} from '../canvas/docToFlow';
 // 자켓이 도면에 실제로 그려지는지는 그리는 쪽에 물어본다 — 여기서 따로 판정하면
 // 카드가 "그려집니다" 라고 하는데 도면에는 없는 상태가 생긴다.
-import { planJackets } from '../canvas/wirePlan';
+// 경로도 그리는 쪽 함수로 다시 재서 "이 값이 정말 그림을 바꾸는가"를 판정한다
+import { planJackets, routeWire } from '../canvas/wirePlan';
 // 핀 격자 해석은 캔버스와 같은 출처를 쓴다 (기하는 geometry.ts 한 곳)
 import { PAD, layoutCells } from '../canvas/geometry';
 import { computeNets } from '../store/netlist';
@@ -561,6 +567,229 @@ function CableCard({
   );
 }
 
+// ============================================================
+// (A-2) 꺾임(레인) 수동 조정
+//
+// ── 왜 있나 (사용자 원문)
+// "선이 꺾여서 겹쳐서 구분이 힘듦. 선 꺾임 방향이나 위치도 수정 가능해야함."
+// 자동 배정(canvas/docToFlow.assignLanes)은 **겹치지 않게** 까지만 한다. 어느 가닥이
+// 어느 높이에 서야 읽기 좋은지는 도면 어디에도 적혀 있지 않은 사실이라 유도할
+// 근거가 없다 — 구간 길이(segmentLengths)와 같은 부류다. 그래서 사람이 넣는다.
+//
+// ── 왜 px 오프셋을 그대로 보여 주나
+// 라우터가 실제로 미는 값이 그 숫자다. "위/아래" 같은 말로 감싸면 두 번 꺾인
+// 배선에서 그 말이 무엇을 가리키는지 설명할 수 없고, 도면에서 눈으로 잰 몫과
+// 값을 대응시킬 수도 없다.
+//
+// ── 왜 ± 한 번이 레인 한 칸인가
+// 자동 배정이 배선을 벌리는 단위가 LANE_Y_STEP(12) · LANE_X_STEP(10)이다. 그 단위로
+// 옮기면 이웃 레인 자리로 정확히 한 칸 건너간다 — 눈금 없는 숫자를 더듬지 않아도 된다.
+//
+// ── 왜 "이렇게 하면 이렇게 됩니다" 를 단정하지 않나
+// 라우터는 노드 상자를 비켜 갈 때 **부호를 접는다**(route.pushAside 의 |lane|).
+// 그래서 상자를 돌아 나가는 배선에서는 −12 와 +12 가 같은 그림이 되기도 한다.
+// 지어낸 규칙을 화면에 적으면 그 순간 UI 가 거짓말을 한다(§10-3). 값이 어디에
+// 얹히는지만 밝히고, 결과는 도면에서 보라고 말한다.
+//
+// ── "눌렀는데 아무 일도 안 남" 을 화면이 직접 말한다 (브라우저에서 실측한 것)
+// 샘플 문서의 w2(SP1 → J2, 도착 핸들이 위쪽)는 경로가 이미 J2 상자를 비켜
+// 그 바깥으로 밀려 있어서, laneY 를 12 → 24 로 올려도 **꺾임점이 한 점도 바뀌지
+// 않는다**(pushOut 이 상자 바깥 변에서 잘라 낸다). 값만 바뀌고 도면은 그대로다.
+// §10-3 이 말하는 "눌러도 반응 없음" 이 바로 이 모양이라, 값이 그림을 못 바꾸면
+// **그 사실을 화면에 적는다.** 판정은 그리는 함수(routeWire)로 직접 다시 재서 한다 —
+// 라우터의 자기 신고를 받지 않는 것과 같은 태도다.
+// ============================================================
+
+/** 꺾임 한 축의 입력 줄 — 두 축이 모양이 같아 하나로 둔다 */
+function BendAxis({
+  label,
+  value,
+  auto,
+  step,
+  inert,
+  onSet,
+}: {
+  label: string;
+  /** 사람이 지정한 값. undefined 면 자동. **0 은 지정된 값이다** */
+  value: number | undefined;
+  auto: number;
+  step: number;
+  /** 지정했지만 이 배치에서는 경로가 자동일 때와 똑같이 나오는가 */
+  inert: boolean;
+  onSet: (v: number | null) => void;
+}) {
+  /** 타이핑마다 스토어에 쓰면 글자 수만큼 실행취소가 쌓인다 (케이블 길이와 같은 방식) */
+  const [draft, setDraft] = useState<string | null>(null);
+  const manual = value !== undefined;
+  const shown = manual ? value : auto;
+
+  const commit = () => {
+    if (draft == null) return;
+    const raw = draft.trim();
+    setDraft(null);
+    // 빈칸 = 자동으로 되돌리기. **0 을 넣지 않는다** — 0 은 "가운데 레인"이다.
+    if (!raw) {
+      onSet(null);
+      return;
+    }
+    const v = Number(raw);
+    if (!Number.isFinite(v)) return;      // 못 읽는 값은 조용히 무시(예전 값 유지)
+    onSet(v);
+  };
+
+  return (
+    <Field label={label}>
+      <input
+        className={`pp-input num w-len${manual ? '' : ' mixed'}`}
+        type="number"
+        step={step}
+        aria-label={`${label} 꺾임 위치`}
+        // 자동일 때는 값이 아니라 **자동값을 placeholder 로** 보여 준다.
+        // 자동값을 value 에 넣으면 손대지 않은 배선도 "지정됨" 으로 보이고,
+        // 그 상태에서 아무 키나 누르면 사실이 아닌 값이 문서에 저장된다.
+        value={draft ?? (manual ? String(value) : '')}
+        placeholder={String(auto)}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commit();
+          if (e.key === 'Escape') setDraft(null);
+        }}
+      />
+      <span className="pp-unit num">px</span>
+      <div className="pp-stepper">
+        {/* ± 는 지금 그려지는 값(자동이면 자동값)에서 한 칸 옮긴다 —
+            자동 0 에서 − 를 누르면 −step 이 되는 것이 눈에 보이는 대로다 */}
+        <button type="button" aria-label={`${label} 한 칸 빼기`} onClick={() => onSet(shown - step)}>−</button>
+        <button type="button" aria-label={`${label} 한 칸 더하기`} onClick={() => onSet(shown + step)}>+</button>
+      </div>
+      <span className="pp-spacer" />
+      <span className="pp-hint">
+        {!manual ? `자동 ${auto}` : inert ? '입력값 · 그림은 그대로' : `입력값 · 자동은 ${auto}`}
+      </span>
+    </Field>
+  );
+}
+
+function BendEditor({ doc, wire }: { doc: HarnessDocument; wire: Wire }) {
+  const setWireRoute = useHarnessStore((s) => s.setWireRoute);
+  // 선택 액션이라 계약상 없을 수 있다 — 없으면 updateWire 로 얹는다.
+  // 그 경로는 키를 지우지 못하고 undefined 로 덮을 뿐이지만(JSON 에서는 사라진다)
+  // 화면 동작은 같다.
+  const updateWire = useHarnessStore((s) => s.updateWire);
+
+  /**
+   * 자동값은 **도면을 그리는 그 함수**에서 받는다(§3-2). 문서가 바뀔 때만 다시 돈다 —
+   * assignLanes 는 배선마다 라우터를 한 번씩 돌리는 값비싼 계산이다.
+   */
+  const lanes = useMemo(() => assignLanes(doc, 'logical'), [doc]);
+  const i = doc.wires.findIndex((w) => w.id === wire.id);
+  const autoY = lanes.autoLaneY[i] ?? 0;
+  const autoX = lanes.autoLaneX[i] ?? 0;
+
+  /**
+   * 넣은 값이 **정말로 그림을 바꾸는가** — 그리는 함수로 직접 다시 재서 판정한다.
+   *
+   * 축 하나만 자동값으로 되돌린 경로를 그려 보고 지금 경로와 비교한다. 같으면
+   * 그 축은 이 배치에서 아무 일도 하지 않는다(상자 회피가 이미 그보다 멀리 밀어
+   * 놓았거나, 부호가 접혀 같은 자리로 간다). 그 사실을 감추면 사용자는 값이 바뀌는
+   * 화면만 보고 도면이 바뀐 줄 안다 — 이 레포에서 가장 비싼 부류의 결함이다(§10-3).
+   *
+   * 좌표는 geometry 계산값이라 React Flow 의 DOM 실측값과 몇 px 다를 수 있지만,
+   * **두 경로를 같은 좌표로 비교**하므로 "바뀌는가" 판정은 그대로 유효하다.
+   */
+  const inert = useMemo(() => {
+    if (i < 0) return { y: false, x: false };
+    const ends = {
+      sourceX: lanes.from[i].x, sourceY: lanes.from[i].y,
+      targetX: lanes.to[i].x, targetY: lanes.to[i].y,
+      sourcePosition: lanes.from[i].side, targetPosition: lanes.to[i].side,
+    };
+    const geo = { sourceBox: lanes.fromBox[i], targetBox: lanes.toBox[i], obstacles: lanes.obstacles };
+    const at = (ly: number, lx: number) => routeWire(ends, { ...geo, laneY: ly, laneX: lx }).d;
+    const now = at(lanes.laneY[i], lanes.laneX[i]);
+    return {
+      y: wire.route?.laneY !== undefined && at(autoY, lanes.laneX[i]) === now,
+      x: wire.route?.laneX !== undefined && at(lanes.laneY[i], autoX) === now,
+    };
+  }, [lanes, i, autoY, autoX, wire.route]);
+
+  /** 축 하나 이상을 한 번에 확정한다 — 한 손동작이면 실행취소도 한 단계여야 한다 */
+  const apply = (patch: { laneY?: number | null; laneX?: number | null }) => {
+    if (setWireRoute) {
+      setWireRoute(wire.id, patch);
+      return;
+    }
+    const next: { laneY?: number; laneX?: number } = { ...(wire.route ?? {}) };
+    for (const axis of ['laneY', 'laneX'] as const) {
+      if (!Object.prototype.hasOwnProperty.call(patch, axis)) continue;
+      const v = patch[axis];
+      if (v == null || !Number.isFinite(v)) delete next[axis];
+      else next[axis] = v;
+    }
+    updateWire(wire.id, { route: Object.keys(next).length ? next : undefined });
+  };
+  const set = (axis: 'laneY' | 'laneX', v: number | null) => apply({ [axis]: v });
+
+  const manual = wire.route?.laneY !== undefined || wire.route?.laneX !== undefined;
+
+  return (
+    <Section
+      label="꺾임"
+      note={manual ? '손으로 지정됨' : undefined}
+      action={
+        manual ? (
+          <button
+            type="button"
+            className="pp-mini-btn"
+            title="지정한 값을 지우고 자동 배정으로 되돌립니다"
+            // 두 축을 **한 번에** 지운다. 축마다 나눠 부르면 한 손동작에
+            // 실행취소가 두 단계 쌓여 ⌘Z 한 번이 반만 되돌린다.
+            onClick={() => apply({ laneY: null, laneX: null })}
+          >
+            자동으로
+          </button>
+        ) : undefined
+      }
+    >
+      <BendAxis
+        label="가로 간선"
+        value={wire.route?.laneY}
+        auto={autoY}
+        step={LANE_Y_STEP}
+        inert={inert.y}
+        onSet={(v) => set('laneY', v)}
+      />
+      <BendAxis
+        label="세로 간선"
+        value={wire.route?.laneX}
+        auto={autoX}
+        step={LANE_X_STEP}
+        inert={inert.x}
+        onSet={(v) => set('laneX', v)}
+      />
+      <p className="pp-hint indent">
+        <b>가로 간선</b>은 주행 구간의 y, <b>세로 간선</b>은 패드에서 옆으로 벌리는
+        몫입니다. 비우면 자동으로 돌아갑니다 — <b className="num">0</b> 은 비움이 아니라
+        <b> 가운데 레인</b>이라는 뜻입니다. 화면과 PDF 는 같은 경로를 씁니다.
+      </p>
+      {/*
+        값이 그림을 못 바꾸면 **그 사실을 적는다.** 이유(상자 회피가 이미 더 멀리
+        밀어 놓았다)와 다음에 할 일(더 크게 넣거나 부품을 옮겨라)까지 함께 준다 —
+        "규칙 위반" 만 적으면 고칠 수가 없다(§10-7).
+      */}
+      {(inert.y || inert.x) && (
+        <p className="pp-hint indent">
+          지금 {inert.y && inert.x ? '두 값' : inert.y ? '가로 간선 값' : '세로 간선 값'}은
+          이 배치에서 <b>도면을 바꾸지 못합니다</b> — 경로가 이미 부품 상자를 비켜 그
+          바깥으로 밀려 있어(상자를 넘을 때는 부호도 접힙니다) 상자보다 더 멀리 보내야
+          움직입니다. 값을 더 크게 넣거나 부품 자리를 옮기세요.
+        </p>
+      )}
+    </Section>
+  );
+}
+
 function WireEditor({ doc, wire }: { doc: HarnessDocument; wire: Wire }) {
   const updateWire = useHarnessStore((s) => s.updateWire);
   const addCable = useHarnessStore((s) => s.addCable);
@@ -726,6 +955,10 @@ function WireEditor({ doc, wire }: { doc: HarnessDocument; wire: Wire }) {
         </Field>
       </Section>
 
+      {/* 꺾임은 규격(무엇을 사는가) 다음, 소속(어느 케이블인가) 앞에 둔다 —
+          도면이 어떻게 보이는지에 대한 항목이라 발주 정보와 섞이지 않게. */}
+      <BendEditor doc={doc} wire={wire} />
+
       <Section label="케이블 소속">
         <div className="pp-seg-row">
           <button
@@ -837,8 +1070,18 @@ function ConnectorEditor({ doc, conn }: { doc: HarnessDocument; conn: Connector 
   const refs = useMemo(() => refLabels(doc), [doc]);
   const housing = doc.usedParts.find((p) => p.id === conn.housingId);
   const isSplice = conn.kind === 'splice';
+  /**
+   * 단독으로 놓인 압착 러그 — **그 자신이 압착단자**라 지정할 단자가 없다.
+   *
+   * 목록을 그냥 보여 주면 러그에 또 러그를 압착하는 지정이 만들어지고, 그 값은
+   * 파트리스트에서 조용히 무시된다(러그 노드는 자기 이름으로 집계된다). 고를 수
+   * 없게 막고 왜인지 적는 편이, 고를 수는 있는데 아무 데도 안 나오는 것보다 낫다.
+   */
+  const isLug = housing != null && isStandaloneLug(housing);
 
-  // 터미널 후보 — 내가 만든 부품 우선, 그다음 시드
+  // 터미널 후보 — 내가 만든 부품 우선, 그다음 시드.
+  // `category === 'terminal'` 로 거르므로 **러그도 후보에 그대로 남는다** —
+  // 배리어 단자대를 커넥터로 그리고 그 핀에 링 러그를 지정하는 쓰임이 살아 있다.
   const terminals: PartLibraryItem[] = useMemo(
     () => [
       ...loadCustomParts().filter((p) => p.category === 'terminal'),
@@ -932,7 +1175,7 @@ function ConnectorEditor({ doc, conn }: { doc: HarnessDocument; conn: Connector 
     <>
       <div className={`pp-card${isSplice ? ' dashed' : ''}`}>
         <div className="pp-card-top">
-          <span className="pp-badge num">{isSplice ? 'SPLICE' : 'CONN'}</span>
+          <span className="pp-badge num">{isSplice ? 'SPLICE' : isLug ? 'LUG' : 'CONN'}</span>
           <span className="pp-ref num">{refs.get(conn.id) ?? '—'}</span>
           <span className="pp-card-name">{housing?.name ?? conn.kind}</span>
         </div>
@@ -992,8 +1235,14 @@ function ConnectorEditor({ doc, conn }: { doc: HarnessDocument; conn: Connector 
         />
       </Field>
 
-      {isSplice ? (
-        <Section label="터미널" note={`핀 ${conn.pins.length}개`}>
+      {/*
+        단자를 **고를 수 없는** 두 부류가 같은 자리를 쓴다. 이유는 서로 다르므로
+        문구는 갈라 적는다 — "필요 없다" 는 말만으로는 왜인지 알 수 없다.
+          스플라이스  꼬여 이어지는 접속이라 압착단자라는 것이 없다
+          러그        그 자신이 압착단자라 더 압착할 것이 없다
+      */}
+      {isSplice || isLug ? (
+        <Section label="터미널" note={isLug ? '전선 1본' : `핀 ${conn.pins.length}개`}>
           <div className="pp-pads-card">
             <div className="pp-housing dashed">
               <div className="pp-pad-grid" style={{ gridTemplateColumns: `repeat(${cols}, ${PAD}px)` }}>
@@ -1005,9 +1254,11 @@ function ConnectorEditor({ doc, conn }: { doc: HarnessDocument; conn: Connector 
               </div>
             </div>
             <div className="pp-splice-msg">
-              압착단자가 필요 없습니다
+              {isLug ? '이 러그가 곧 압착단자입니다' : '압착단자가 필요 없습니다'}
               <span className="pp-splice-sub">
-                꼬임 접속이라 파트리스트에 단자가 잡히지 않습니다. 핀 {conn.pins.length}개는 모두 한 네트로 이어져 있습니다.
+                {isLug
+                  ? `파트리스트에는 ${housing?.name ?? '러그'} 가 이 노드 하나당 1개로 잡힙니다. 전선 끝에 압착하는 물건이라 따로 지정할 단자가 없습니다.`
+                  : `꼬임 접속이라 파트리스트에 단자가 잡히지 않습니다. 핀 ${conn.pins.length}개는 모두 한 네트로 이어져 있습니다.`}
               </span>
             </div>
           </div>
