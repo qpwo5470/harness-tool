@@ -195,10 +195,12 @@ export const SERIES: SeriesDef[] = [
   },
   {
     // 'REC'(암) · 'TAB'(수) 로 발주하는 계열 — 그 말 그대로 검색되게 태그를 단다.
+    // 절연슬리브는 압착단자가 아니지만 **호칭(110·187·250)이 REC 와 같은 축**이라
+    // 여기 함께 둔다. 계열을 새로 파면 "110 REC 슬리브는 어디" 가 답이 없어진다.
     key: 'lug-faston',
     family: 'lug',
-    series: '파스톤(평형) REC · TAB',
-    tags: ['REC', 'TAB', '파스톤', '페스톤', 'faston', '평형'],
+    series: '파스톤(평형) REC · TAB · 절연슬리브',
+    tags: ['REC', 'TAB', '파스톤', '페스톤', 'faston', '평형', '슬리브', '절연캡'],
     openByDefault: true,
     match: re(/^lib-lug-faston-/),
   },
