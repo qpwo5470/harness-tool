@@ -214,10 +214,14 @@ function overlapPairs(segs: Seg[], tol = 2): number {
  * @param useLanes false 면 레인을 끈다 — 이 시험이 정말 물리는지 보이는 대조군.
  */
 function segmentsOf(doc: HarnessDocument, useLanes = true) {
+  return splitOf(useLanes ? planWires(doc, 'logical') : plainRoutes(doc));
+}
+
+/** 경로 목록 → 가로·세로 선분과 라벨 자리. 사선은 어느 쪽에도 들어가지 않는다. */
+function splitOf(planned: { points: Pt[]; labelX: number; labelY: number }[]) {
   const horiz: Seg[] = [];
   const vert: Seg[] = [];
   const labels: Pt[] = [];
-  const planned = useLanes ? planWires(doc, 'logical') : plainRoutes(doc);
   planned.forEach((r, i) => {
     labels.push({ x: r.labelX, y: r.labelY });
     for (let k = 1; k < r.points.length; k++) {
@@ -235,13 +239,28 @@ function segmentsOf(doc: HarnessDocument, useLanes = true) {
 
 /** 대조군용 — 레인만 끄고 나머지(끝점·상자 회피)는 planWires 와 같게 둔다 */
 function plainRoutes(doc: HarnessDocument) {
+  return orthoRoutes(doc, 0);
+}
+
+/**
+ * **직교로만** 그린 경로 (레인은 켠 채).
+ *
+ * 왜 필요해졌나: 이 배치(마주 보는 커넥터 · 넉넉한 폭)는 이제 45° 사선으로
+ * 그려진다. 그래서 "세로 간선 겹침 0" 을 planWires 로 재면 잴 세로 간선이 아예
+ * 없어 시험이 헛돈다. 레인이 세로 간선을 벌린다는 성질은 **여전히 지켜야 한다** —
+ * 스플라이스 합류·되돌아오는 배치·케이블 심선은 직교로 남기 때문이다.
+ * 그래서 그 성질은 직교 라우터를 직접 불러 잰다.
+ *
+ * @param lane 0 이면 레인을 끈 대조군, 아니면 assignLanes 가 준 값
+ */
+function orthoRoutes(doc: HarnessDocument, lane: 0 | 1 = 1) {
   const lanes = assignLanes(doc, 'logical');
   return doc.wires.map((w, i) => {
     const r = routeOrthogonal({
       sourceX: lanes.from[i].x, sourceY: lanes.from[i].y,
       targetX: lanes.to[i].x, targetY: lanes.to[i].y,
       sourcePosition: lanes.from[i].side, targetPosition: lanes.to[i].side,
-      laneY: 0, laneX: 0,
+      laneY: lane && lanes.laneY[i], laneX: lane && lanes.laneX[i],
       sourceBox: lanes.fromBox[i],
       targetBox: lanes.toBox[i],
     });
@@ -262,8 +281,22 @@ describe('밀도 — 20본 두 열 팬아웃', () => {
     expect(overlapPairs(horiz)).toBe(0);
   });
 
-  it('세로 구간끼리 포개지는 쌍이 0 (예전엔 123쌍)', () => {
-    const { vert } = segmentsOf(doc);
+  /**
+   * 이 배치는 이제 45° 사선으로 그려진다 — **세로 간선이 아예 없다.**
+   * 겹칠 것이 없어졌으니 "겹침 0" 은 여기서 잴 수 없다. 사라졌다는 사실 자체를
+   * 못박는다(다음 시험이 그 대신 무엇이 좋아졌는지를 숫자로 잰다).
+   */
+  it('사선을 쓰므로 세로 간선이 아예 없다', () => {
+    expect(segmentsOf(doc).vert).toHaveLength(0);
+  });
+
+  /**
+   * 레인이 세로 간선을 벌린다는 성질은 **직교로 남는 배치에서 여전히 지켜야 한다**
+   * (스플라이스 합류 · 되돌아오는 배치 · 케이블 심선). 그래서 직교 라우터를
+   * 직접 불러 잰다 — 예전엔 planWires 로 쟀지만 이제 그 길로는 세로 간선이 안 나온다.
+   */
+  it('직교로 그리면 세로 구간끼리 포개지는 쌍이 0 (예전엔 123쌍)', () => {
+    const { vert } = splitOf(orthoRoutes(doc));
     expect(vert.length).toBeGreaterThan(20);
     expect(overlapPairs(vert)).toBe(0);
   });

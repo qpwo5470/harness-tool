@@ -1159,6 +1159,40 @@ function ConnectorEditor({ doc, conn }: { doc: HarnessDocument; conn: Connector 
 
   const allOn = padSel.length > 0 && padSel.length === conn.pins.length;
 
+  /*
+   * 의도적 미사용 핀 (개선안 §2-10).
+   *
+   * 저장은 **핀 번호(index)** 로 한다. 라벨로 적으면 라벨을 바꾼 순간 표시가
+   * 떨어져 나가는데, 핀 번호는 그 커넥터 안에서 바뀌지 않는다. 다만 옛 파일이
+   * 라벨로 적어 두었을 수 있어 **읽을 때는 둘 다** 받는다(검증도 같은 규칙).
+   */
+  const unusedKeys = useMemo(
+    () => new Set((conn.unused ?? []).map((u) => String(u))),
+    [conn.unused],
+  );
+  const isUnusedPin = (p: { index: number; label?: string }) =>
+    unusedKeys.has(String(p.index)) || (p.label != null && unusedKeys.has(p.label));
+  const toggleUnused = (p: { index: number; label?: string }) => {
+    const cur = conn.unused ?? [];
+    const next = isUnusedPin(p)
+      ? cur.filter((u) => String(u) !== String(p.index) && String(u) !== (p.label ?? ' '))
+      : [...cur, p.index];
+    // 빈 배열은 남기지 않는다 — 이 기능을 쓴 적 없는 문서와 저장 파일이
+    // 달라지면 형상관리에 없는 변경이 보인다(store/persistence.ts 와 같은 규칙).
+    updateConnector(conn.id, { unused: next.length ? next : undefined });
+  };
+
+  /**
+   * 이 하우징에 짝이 되는 절연 슬리브 부품 (개선안 §2-11).
+   * 켤 때 문서 스냅샷에 넣어 둬야 부품표가 **이름을 아는 줄**을 세운다 —
+   * 안 넣으면 품번만 적힌 줄이 나간다(export/exporters.ts).
+   */
+  const sleevePart = useMemo(() => {
+    const id = housing?.sleevePartId;
+    if (!id) return undefined;
+    return loadCustomParts().find((p) => p.id === id) ?? SEED_PARTS.find((p) => p.id === id);
+  }, [housing?.sleevePartId]);
+
   const assign = (value: string) => {
     if (!value || !padSel.length) return;
     const next = value === '__none__' ? undefined : value;
@@ -1234,6 +1268,129 @@ function ConnectorEditor({ doc, conn }: { doc: HarnessDocument; conn: Connector 
           onChange={(e) => updateConnector(conn.id, { note: e.target.value || undefined })}
         />
       </Field>
+
+      {/*
+        실물 핀 배열 (개선안 §2-8).
+
+        위 '터미널 지정' 격자는 **도면 좌표**다 — 배선이 나가는 변에 긴 축을
+        붙이는 작도 규칙을 따르므로 10P 1열 커넥터가 세로로 선다. 실물은 가로
+        한 줄이다. 두 그림을 한 패널에 나란히 두는 이유가 그것이다: 다르면
+        다르다는 것이 보여야 한다.
+
+        스플라이스는 꼬임 접속이라 그릴 배열이 없다.
+      */}
+      {isSplice ? null : (
+        <Section label="실물 핀 배열" note="도면 좌표가 아니라 실물 기준">
+          {housing?.layout?.length ? (
+            <>
+              <div className="pp-real">
+                {housing.layout.map((r, y) => (
+                  <div className="pp-real-row" key={y}>
+                    {r.map((cell, x) => (
+                      <span
+                        key={x}
+                        className={`pp-real-cell num${cell == null ? ' blank' : ''}`}
+                      >
+                        {cell == null ? '' : String(cell)}
+                      </span>
+                    ))}
+                  </div>
+                ))}
+              </div>
+              {housing.view?.trim() ? (
+                <p className="pp-hint">{housing.view}</p>
+              ) : (
+                <p className="pp-hint broken">
+                  뷰 기준이 비어 있습니다 — 커넥터는 뒤집으면 번호가 좌우로
+                  뒤집히므로, 어느 면에서 본 배열인지 적기 전까지 이 배열은
+                  거울상일 수 있습니다.
+                </p>
+              )}
+            </>
+          ) : (
+            <p className="pp-hint">
+              이 부품에는 실물 배열이 적혀 있지 않습니다. 위 격자는 배선 방향에
+              맞춰 돌려 그린 도면 좌표라 실물과 다를 수 있습니다 — 짐작으로 채우면
+              그 값이 그대로 오조립이 되므로, 실물이나 제조사 도면을 보고
+              라이브러리에 넣으세요.
+            </p>
+          )}
+        </Section>
+      )}
+
+      {/*
+        의도적 미사용 핀 (개선안 §2-10) — "안 쓰는 핀"과 "아직 안 그린 핀"을
+        가른다. 도면에서는 패드에 X 로 나간다(캔버스·PDF 렌더는 별건).
+      */}
+      {isSplice ? null : (
+        <Section
+          label="미사용 핀"
+          note={unusedKeys.size ? `${unusedKeys.size}핀` : '없음'}
+        >
+          <div className="pp-pads-card">
+            <div className="pp-housing dashed">
+              <div
+                className="pp-pad-grid"
+                style={{ gridTemplateColumns: `repeat(${cols}, ${PAD}px)` }}
+              >
+                {conn.pins.map((p) => {
+                  const on = isUnusedPin(p);
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      className={`pp-pad${on ? ' unused' : ''}`}
+                      aria-pressed={on}
+                      aria-label={`미사용 핀 ${p.label ?? p.index}`}
+                      onClick={() => toggleUnused(p)}
+                    >
+                      <span className="num">{p.label ?? p.index}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+          <p className="pp-hint">
+            일부러 비우는 핀입니다. 도면에서 X 로 표시되어 아직 안 그린 핀과
+            구분됩니다 — 배선이 붙은 핀을 표시하면 도면이 한 자리에서 두 말을
+            하게 되므로 검증이 경고합니다.
+          </p>
+        </Section>
+      )}
+
+      {/*
+        절연 슬리브 (개선안 §2-11). 부품의 성질이 아니라 **이 도면의 선택**이라
+        속성 패널에 있다 — 같은 REC 를 슬리브 없이 쓰는 도면도 있다.
+      */}
+      {isSplice ? null : (
+        <Field label="절연 슬리브">
+          <label className="pp-check">
+            <input
+              type="checkbox"
+              aria-label="절연 슬리브"
+              checked={!!conn.sleeve}
+              onChange={(e) => {
+                const on = e.target.checked;
+                updateConnector(conn.id, { sleeve: on || undefined });
+                // 켤 때 스냅샷에 넣는다 — 부품표가 품번이 아니라 이름을 쓰게 된다
+                if (on && sleevePart) addUsedPart(sleevePart);
+              }}
+            />
+            <span>
+              {sleevePart
+                ? `${sleevePart.name} 를 부품표에 1개 추가`
+                : '압착부에 절연 슬리브를 씌운다'}
+            </span>
+          </label>
+        </Field>
+      )}
+      {conn.sleeve && !housing?.sleevePartId ? (
+        <p className="pp-hint broken">
+          이 부품에는 짝이 되는 슬리브 품목이 지정돼 있지 않아, 부품표에 품번
+          없는 줄로 나갑니다 — 라이브러리에서 슬리브 품목을 걸어야 발주가 됩니다.
+        </p>
+      ) : null}
 
       {/*
         단자를 **고를 수 없는** 두 부류가 같은 자리를 쓴다. 이유는 서로 다르므로

@@ -609,3 +609,70 @@ describe('단독 배치된 압착 러그', () => {
     expect(hit[0].qty).toBe(2);   // 단자대 쪽 1개 + 노드 1개
   });
 });
+
+
+// ============================================================
+// 절연 슬리브 자동 집계 (개선안 §2-11)
+//
+// 슬리브는 압착부를 덮는 **따로 사는 물건**이다. 도면에 표기만 하고 부품표에
+// 줄을 세우지 않으면 현장에 도착하지 않는다 — 라이브러리에 품목이 있어도
+// 러그를 노드 수로만 세는 집계에서는 어디에도 잡히지 않았다.
+// ============================================================
+describe('절연 슬리브 집계', () => {
+  const rec = SEED_PARTS.find((p) => p.id === 'lib-lug-faston-250-rec')!;
+  const sleeve = SEED_PARTS.find((p) => p.id === 'lib-lug-faston-250-sleeve')!;
+
+  /** 파스톤 REC 러그 n 개를 놓은 문서. `sleeve` 를 켠 개수를 고른다 */
+  function lugDoc(total: number, sleeved: number): HarnessDocument {
+    return {
+      ...sampleDoc,
+      connectors: Array.from({ length: total }, (_, i) => ({
+        ...instantiate(rec, { x: 0, y: i * 60 }),
+        id: `lug${i + 1}`,
+        sleeve: i < sleeved ? true : undefined,
+      })),
+      devices: [],
+      wires: [],
+      cables: [],
+      usedParts: [rec, sleeve],
+    };
+  }
+
+  const sleeveRows = (doc: HarnessDocument) =>
+    buildPartList(doc).filter((r) => r.category === '부자재');
+
+  it('슬리브를 켠 끝단 수만큼 별도 품목으로 선다', () => {
+    const rows = sleeveRows(lugDoc(4, 3));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].part).toBe(sleeve.name);
+    expect(rows[0].qty).toBe(3);
+  });
+
+  it('켜지 않으면 한 줄도 나오지 않는다 — 안 쓰는 것을 발주하지 않는다', () => {
+    expect(sleeveRows(lugDoc(4, 0))).toHaveLength(0);
+  });
+
+  it("'터미널' 이 아니라 '부자재' 칸이다 — 슬리브는 압착단자가 아니라 압착 개소를 부풀리면 안 된다", () => {
+    const rows = buildPartList(lugDoc(2, 2));
+    const termQty = rows.filter((r) => r.category === '터미널').reduce((n, r) => n + r.qty, 0);
+    expect(termQty).toBe(2);              // 러그 2개. 슬리브가 여기 섞이면 4가 된다
+    expect(rows.filter((r) => r.category === '부자재')[0].qty).toBe(2);
+  });
+
+  it('슬리브 품목을 모르면 조용히 빼지 않고 이름 없는 줄로 세운다', () => {
+    // "절연하겠다" 는 뜻은 도면에 있다 — 지우면 그 뜻이 사라지고, 줄이 서 있으면
+    // 사람이 채운다. 어떤 슬리브인지는 검증(`sleeve-part-unknown`)이 말한다.
+    const doc = lugDoc(1, 1);
+    doc.usedParts = [{ ...rec, sleevePartId: undefined }];
+    const rows = sleeveRows(doc);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].qty).toBe(1);
+    expect(rows[0].part).toContain('절연 슬리브');
+  });
+
+  it('부품 스냅샷에 슬리브가 없으면 품번이라도 적는다 — 빈칸으로 내보내지 않는다', () => {
+    const doc = lugDoc(1, 1);
+    doc.usedParts = [rec];                // 슬리브 정의가 스냅샷에 없다
+    expect(sleeveRows(doc)[0].part).toBe('lib-lug-faston-250-sleeve');
+  });
+});

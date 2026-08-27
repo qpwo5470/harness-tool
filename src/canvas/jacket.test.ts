@@ -71,16 +71,47 @@ function overlapPairs(doc: HarnessDocument, tol = 2): string[] {
 
 // ============================================================
 describe('대조군 — 자켓이 없으면 케이블은 도면에서 사라진다', () => {
-  it('케이블을 걷어 내도 배선 경로는 한 점도 달라지지 않는다', () => {
+  /**
+   * ── 예전에는 "케이블을 걷어 내도 경로가 한 점도 안 바뀐다" 였다. 왜 바뀌었나
+   *
+   * 45° 사선이 들어오면서 **케이블 심선은 사선을 쓰지 않게** 됐다
+   * (docToFlow.assignDiagCenters 머리말: 심선이 저마다 사선을 그으면 나란히 가는
+   * 구간이 사라져 자켓이 통째로 없어진다 — 실측 1토막 → 0토막). 그래서 케이블을
+   * 걷어 내면 그 가닥들은 단선이 되어 사선으로 되돌아간다. 경로가 바뀌는 것이 맞다:
+   * "이 넷을 한 케이블로 묶는다" 는 곧 "이제 함께 간다" 는 선언이고, 도면은 그
+   * 사실을 그려야 한다.
+   *
+   * 케이블이 라우팅을 건드리는 것 자체는 새 일이 아니다 — 레인 배정도 이미
+   * 케이블을 본다(docToFlow.groupLanesByCable). 지키는 선은 그대로다:
+   * **자켓 사각형이 경로를 밀지는 않는다.** 아래에서 그것을 잰다.
+   */
+  it('케이블을 걷어 내면 심선이 사선으로 되돌아간다 — 남의 배선은 그대로다', () => {
     const doc = cableDoc();
-    // 자켓 자체는 **덧그리는 것**이지 라우팅이 아니다 — 사각형이 경로를 밀지 않는다.
-    //
-    // 다만 레인 배정은 케이블을 본다(docToFlow.groupLanesByCable): 같은 케이블
-    // 심선이 이웃 높이에 오도록 **레인 번호를 바꿔 달** 수 있다. 그 손질은
-    // 실제로 그려 보고 **이득이 있을 때만** 들어간다(laneCost). 이 픽스처는
-    // 이미 심선끼리 이웃이라 바꿀 이득이 없어 경로가 그대로다 —
-    // 바뀌는 배치는 아래 `레인 갈림` describe 가 따로 잰다.
-    expect(planWires(withoutCables(doc))).toEqual(planWires(doc));
+    const withCable = new Map(planWires(doc).map((r) => [r.id, r.points]));
+    const bare = new Map(planWires(withoutCables(doc)).map((r) => [r.id, r.points]));
+    const cores = new Set(doc.wires.filter((w) => w.cableId).map((w) => w.id));
+
+    // 심선은 달라진다 — 그리고 달라진 방향이 "사선이 생겼다" 여야 한다
+    const hasDiag = (pts: { x: number; y: number }[]) => pts.some((p, k) => k > 0
+      && Math.abs(p.x - pts[k - 1].x) > 1e-6 && Math.abs(p.y - pts[k - 1].y) > 1e-6);
+    const changed = [...cores].filter((id) => hasDiag(bare.get(id)!) && !hasDiag(withCable.get(id)!));
+    expect(changed.length).toBeGreaterThan(0);
+
+    // 케이블과 상관없는 배선은 한 점도 안 바뀐다 — 케이블이 남의 그림을 흔들지 않는다
+    for (const w of doc.wires) {
+      if (cores.has(w.id)) continue;
+      expect(bare.get(w.id), `배선 ${w.id}`).toEqual(withCable.get(w.id));
+    }
+  });
+
+  /** 자켓 **사각형**은 여전히 덧그리는 것이다 — 그 자체가 경로를 밀지 않는다 */
+  it('자켓색만 바꾸면 경로는 한 점도 달라지지 않는다', () => {
+    const a = cableDoc();
+    const b: HarnessDocument = {
+      ...a,
+      cables: (a.cables ?? []).map((c) => ({ ...c, jacketColor: 'red' })),
+    };
+    expect(planWires(b)).toEqual(planWires(a));
   });
 
   it('케이블이 없으면 그릴 자켓이 하나도 없다 — 그게 고치기 전 도면이었다', () => {
@@ -179,8 +210,21 @@ describe('레인 갈림 — 케이블 심선을 이웃 높이에 놓는다', () 
     expect(j.runs).toHaveLength(1);
     expect(j.runs[0].axis).toBe('h');
     expect(j.runs[0].wireIds).toEqual(['w1', 'w4']);
-    // 두 커넥터 사이를 가로지르는 주행 구간 전체를 덮는다 (600px 넘는 몸통)
-    expect(j.runs[0].w).toBeGreaterThan(600);
+    /*
+     * ── 몸통이 664px 에서 333px 로 짧아졌다. 왜 (실측해 확인한 원인)
+     *
+     * 45° 사선이 들어오면서 **단선은 도착 핀 y 로 곧장 들어간다**. w3 는 도착 핀이
+     * y=166 인데, 그건 심선 w4 의 주행 구간(y=163)에서 3px 떨어진 자리다. 예전
+     * 직교에서는 w3 의 주행 구간이 제 레인(y≈118)에 있다가 커넥터 바로 앞에서
+     * 내려왔으므로, 자켓과 부딪히는 구간이 x=806 부터였다. 지금은 사선이 끝나는
+     * x=475 부터 w3 가 자켓 벽 안쪽(JACKET_PAD 7px)을 나란히 달린다.
+     *
+     * 그래서 자켓은 x=475 에서 끊긴다. 이건 결함이 아니라 **사실**이다 — 그 구간에서
+     * 남의 전선이 정말로 심선 옆에 붙어 간다. 자켓을 거기까지 늘리면 도면이
+     * "w3 도 이 외피 안에 있다" 고 거짓말한다(wirePlan.bundleAt 머리말).
+     * 케이블이 그림에서 사라지지는 않는다는 것이 여기서 지킬 선이다.
+     */
+    expect(j.runs[0].w).toBeGreaterThan(300);
     expect(j.labelAt).not.toBeNull();
   });
 
@@ -320,8 +364,17 @@ describe('밀도 — 20본 팬아웃에서도 자켓이 남의 전선을 삼키�
     };
   }
 
-  it('케이블을 얹어도 배선 경로가 달라지지 않는다 (기존 밀도 시험의 전제)', () => {
-    expect(planWires(densely())).toEqual(planWires(fanoutDoc()));
+  /**
+   * 예전에는 "케이블을 얹어도 경로가 달라지지 않는다" 였다. 지금은 **묶은 세 본만**
+   * 사선을 그만두고 함께 간다(위 대조군 describe 의 그 이유). 나머지 17본은 한 점도
+   * 안 바뀌어야 한다 — 그래야 아래 밀도 시험들이 여전히 같은 도면을 재는 것이 된다.
+   */
+  it('케이블을 얹으면 묶은 세 본만 달라지고 나머지 17본은 그대로다', () => {
+    const before = new Map(planWires(fanoutDoc()).map((r) => [r.id, r.points]));
+    const after = new Map(planWires(densely()).map((r) => [r.id, r.points]));
+    const mine = new Set(['ac0', 'ac1', 'ac2']);
+    const moved = [...after.keys()].filter((id) => JSON.stringify(after.get(id)) !== JSON.stringify(before.get(id)));
+    expect(new Set(moved)).toEqual(mine);
   });
 
   it('그려진 자켓 안에 다른 배선의 꺾임점이 하나도 없다', () => {

@@ -128,13 +128,21 @@ describe('한 줄로 늘어선 커넥터 — 제3의 노드 관통', () => {
     expect(n).toBe(0);
   });
 
-  it('직교 불변식이 유지된다 (대각선 없음 · 양 끝 좌표 그대로)', () => {
+  /**
+   * 예전에는 "대각선 없음" 이었다. 45° 사선이 들어오면서 불변식이 **좁아졌다**:
+   * 임의 각은 여전히 금지이고, 허용되는 기울기는 0 · ∞ · ±1 셋뿐이다.
+   * (사선을 허용한 것이지 아무 각이나 허용한 것이 아니다 — 개선안 §2-1 은
+   *  "임의 각 금지" 를 못박았다. 기울기가 하나여야 사선끼리 평행 아니면 직각이
+   *  되고, 그래야 교차점이 규칙적으로 보인다.)
+   */
+  it('선분은 수평·수직 아니면 정확히 45° 다 (양 끝 좌표 그대로)', () => {
     const lanes = assignLanes(doc, 'logical');
     realRoutes(doc).forEach((r, i) => {
       for (let k = 1; k < r.points.length; k++) {
         const dx = Math.abs(r.points[k].x - r.points[k - 1].x);
         const dy = Math.abs(r.points[k].y - r.points[k - 1].y);
-        expect(dx < 1e-6 || dy < 1e-6, `배선 ${r.id} 대각선 ${dx}x${dy}`).toBe(true);
+        const ok = dx < 1e-6 || dy < 1e-6 || Math.abs(dx - dy) < 1e-6;
+        expect(ok, `배선 ${r.id} 임의 각 ${dx}x${dy}`).toBe(true);
       }
       expect(r.points[0]).toEqual({ x: lanes.from[i].x, y: lanes.from[i].y });
       expect(r.points[r.points.length - 1]).toEqual({ x: lanes.to[i].x, y: lanes.to[i].y });

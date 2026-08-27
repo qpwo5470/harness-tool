@@ -56,6 +56,72 @@ function row(signals: string[], colors?: string[]): PinSlot[] {
   }));
 }
 
+/* ================================================================
+   실물 핀 배열(layout) + 뷰 기준(view) — 개선안 §2-8 / §6-2
+   ----------------------------------------------------------------
+   `pinLayout` 은 **이 툴이 도면에 그리는 좌표**이고, 아래 `layout` 은 **부품을
+   손에 쥐었을 때 보이는 배열**이다. 다른 사실이라 필드가 다르다
+   (types/index.ts 의 `PartLibraryItem.layout` 주석).
+
+   ── 근거가 있는 것만 채운다
+   개선안 §6-2 가 실제로 확인한 제조사 도면 4건은 **전부** `viewed from …`
+   문구가 없었고, **Mini-Fit 과 Micro-Fit 의 번호 뷰는 서로 거울상**이었다.
+   즉 "커넥터 번호는 대개 이렇더라" 라는 규칙이 성립하지 않는다. 근거 없이
+   채우면 그 값이 그대로 오조립의 원인이 되므로, 근거가 없는 부품은 **비워
+   둔다**. 비어 있는 것은 검증 패널이 알린다(store/validate.ts).
+
+   ── 뷰 문구에 무엇을 적는가
+   "어디까지가 도면에 인쇄된 값이고 어디부터가 연장한 값인지" 를 반드시 남긴다.
+   그 구분이 없으면 실물 대조를 어디에 해야 하는지 아무도 모른다.
+   ================================================================ */
+
+/**
+ * Mini-Fit Jr 5557 **6회로**.
+ * 인쇄값: 10회로 예시의 번호뿐. 6회로 배열은 그 규칙을 연장한 값이다.
+ */
+const MINIFIT_6P_LAYOUT: (number | string | null)[][] = [
+  [6, 5, 4],
+  [3, 2, 1],
+];
+const MINIFIT_6P_VIEW =
+  '각인 탭이 위로 오게 잡고 본 배열. ' +
+  '**판매도면 SD-5557-003 에 뷰 기준(viewed from …) 문구가 없다.** ' +
+  '도면이 번호를 인쇄한 것은 10회로 예시 하나뿐이다 — 아랫행 왼→오 5·4·3·2·1 / ' +
+  '윗행 왼→오 10·9·(8)·7·6 (8번은 각인 탭에 가려 미인쇄). ' +
+  '**6회로 배열은 도면에 없어 같은 규칙을 연장한 값이다 — 실물 대조 필요.** ' +
+  'Micro-Fit(43025)의 번호 뷰와는 서로 거울상이므로 같은 면으로 가정하지 말 것.';
+
+/**
+ * Micro-Fit 3.0 43025 **10회로**.
+ * 인쇄값: `CIRCUIT 1` · `CIRCUIT 2` · `LAST CIRCUIT` 세 점뿐. 3~10 은 연장한 값.
+ */
+const MICROFIT_10P_LAYOUT: (number | string | null)[][] = [
+  [6, 7, 8, 9, 10],
+  [1, 2, 3, 4, 5],
+];
+const MICROFIT_10P_VIEW =
+  '**판매도면 430250000-SD 에 뷰 기준(viewed from …) 문구가 없다.** ' +
+  '도면이 번호를 인쇄한 곳은 세 군데뿐이다 — `CIRCUIT 1`(아랫행 왼쪽 끝) · ' +
+  '`CIRCUIT 2`(아랫행 왼쪽에서 둘째) · `LAST CIRCUIT`(윗행 오른쪽 끝). ' +
+  '**3~10 은 그 세 점을 이어 연장한 값이다 — 실물 대조 필요.** ' +
+  'Mini-Fit(5557)의 번호 뷰와는 서로 거울상이므로 같은 면으로 가정하지 말 것.';
+
+/**
+ * JST XH 하우징 XHP-n.
+ * 인쇄값: `No. 1 circuit` 지시선(오른쪽 끝) 하나뿐. 나머지는 1열이라는 사실에서 연장.
+ * 1열이라는 근거는 치수 A = (회로수−1)×피치 로 검산한 것이다(아래 시리즈 주석).
+ */
+const XH_VIEW =
+  'JST eXH.pdf 4쪽 하우징 도면 기준. ' +
+  '**뷰 기준(viewed from …) 문구가 없다.** ' +
+  '도면이 인쇄한 번호는 `No. 1 circuit` 지시선(오른쪽 끝) 하나뿐이고, ' +
+  '**나머지 번호는 1열이라는 사실(치수 A=(회로수−1)×피치로 검산)에서 연장한 값이다 — ' +
+  '실물 대조 필요.**';
+/** 오른쪽 끝이 1번이므로 왼→오 = n … 1 (1열) */
+function xhLayout(n: number): (number | string | null)[][] {
+  return [Array.from({ length: n }, (_, i) => n - i)];
+}
+
 // ── MDB (Molex Mini-Fit Jr 6way, 2열×3) ───────────────────
 const MDB_SIGNALS: PinSlot[] = [
   { index: 1, label: '1', offset: { x: 0, y: 0 }, signal: '+34V (무정전)', stdColor: 'red' },
@@ -382,6 +448,12 @@ function microFit30Housings(s: MicroFit30Series): PartLibraryItem[] {
       gender: s.gender,
       pinCount: n,
       pinLayout: grid(cols, 2),
+      // 실물 배열은 **10회로 리셉터클만** 채운다 — 개선안 §6-2 가 근거를 남긴 것이
+      // 그것뿐이다. 43020(플러그)은 결합하면 좌우가 뒤집히는데 그 뷰를 확인하지
+      // 못했고, 다른 회로 수도 도면에 번호가 없다. 규칙으로 늘리지 않는다.
+      ...(s.series === '43025' && n === 10
+        ? { layout: MICROFIT_10P_LAYOUT, view: MICROFIT_10P_VIEW }
+        : {}),
     };
   });
 }
@@ -525,6 +597,14 @@ type JstSeries = {
   출처: string;
   circuits: number[];
   비고: string;
+  /**
+   * 실물 핀 배열(회로 수별). **근거가 있는 시리즈에만 준다.**
+   * 헤더(BnB/SnB)에는 주지 않는다 — 헤더는 하우징과 맞물리는 면이라 번호가
+   * 좌우로 뒤집히는데, 그 뷰를 확인한 도면이 없다. 짐작으로 뒤집으면 그 값이
+   * 그대로 오조립이 된다.
+   */
+  layout?: (n: number) => (number | string | null)[][];
+  view?: string;
 };
 
 function jstItems(s: JstSeries): PartLibraryItem[] {
@@ -548,6 +628,8 @@ function jstItems(s: JstSeries): PartLibraryItem[] {
     gender: s.gender,
     pinCount: n,
     pinLayout: grid(n, 1),
+    ...(s.layout ? { layout: s.layout(n) } : {}),
+    ...(s.view ? { view: s.view } : {}),
   }));
 }
 
@@ -565,6 +647,9 @@ const JST_XH: PartLibraryItem[] = [
     결합: 'BnB-XH-A (수직 헤더) / SnB-XH-A (앵글 헤더)',
     터미널: 'SXH-001T-P0.6 (AWG#28~22) · SXH-002T-P0.6 (AWG#30~26)',
     출처: 'JST eXH.pdf — Housing 품번표',
+    // 실물 배열은 하우징(XHP-n)에만 준다 — 근거(§6-2)가 하우징 도면 하나뿐이다.
+    layout: xhLayout,
+    view: XH_VIEW,
     비고:
       `${JST_COLOR_NOTE} 데이터시트 표의 1~16 · 20회로만 등록했다. ` +
       '특수 피치품 XHP-2(10.0)-U · XHP-6(5.0)-U 는 피치가 달라 뺐다. ' +
@@ -793,6 +878,11 @@ const MINIFIT_5557: PartLibraryItem[] = MINIFIT_5557_CIRCUITS.map((n) => {
     gender: 'receptacle' as const,
     pinCount: n,
     pinLayout: grid(n / 2, 2),
+    // 실물 배열은 **6회로만** 채운다 — 개선안 §6-2 가 근거를 남긴 것이 그것뿐이다.
+    // (도면이 번호를 인쇄한 것은 10회로 예시이고, 6회로는 그 규칙을 연장한 값이다.
+    //  10회로 자체를 채우지 않는 이유는 8번이 각인 탭에 가려 미인쇄이기 때문 —
+    //  인쇄되지 않은 자리를 확정값처럼 적을 수 없다.)
+    ...(n === 6 ? { layout: MINIFIT_6P_LAYOUT, view: MINIFIT_6P_VIEW } : {}),
   };
 });
 
@@ -988,7 +1078,17 @@ const FERRULE_LUGS: PartLibraryItem[] = FERRULE_SIZES.flatMap(([sq, code, lens])
 const FASTON_LUGS: PartLibraryItem[] = [
   ['110', 2.8], ['187', 4.8], ['250', 6.35],
 ].flatMap(([size, w]) => ([
-  lug(
+  {
+    /*
+     * 짝이 되는 절연슬리브를 **id 로** 건다.
+     *
+     * 아래 `절연:` 스펙에도 같은 id 가 문장으로 적혀 있지만 그건 사람이 읽는
+     * 글이라 부품표가 알아볼 수 없다. 문장만 두면 발주서에 슬리브 줄이 서지
+     * 않고, 그 한 번을 빠뜨리면 압착부가 노출된 채 전압이 지난다(개선안 §2-11).
+     * 실제로 씌울지 말지는 도면이 정한다 — `Connector.sleeve`.
+     */
+    sleevePartId: `lib-lug-faston-${size}-sleeve`,
+    ...lug(
     `lib-lug-faston-${size}-rec`,
     `파스톤 ${size} REC (암) ${w}mm`,
     `${size} REC`,
@@ -1002,7 +1102,8 @@ const FASTON_LUGS: PartLibraryItem[] = [
         '모터·스위치·릴레이의 탭 단자에 끼운다. ' +
         '**슬리브 없이 쓰면 압착부가 노출된다** — 슬리브를 쓸지 말지는 발주 때 정해야 한다.',
     },
-  ),
+    ),
+  },
   lug(
     `lib-lug-faston-${size}-tab`,
     `파스톤 ${size} TAB (수) ${w}mm`,
@@ -1167,6 +1268,10 @@ export const SEED_PARTS: PartLibraryItem[] = [
     // Mini-Fit Jr 5557 은 Molex 카탈로그상 Receptacle Housing(5556 암 크림프핀).
     gender: 'receptacle',
     pinCount: 6, pinLayout: MDB_SIGNALS,
+    // lib-minifit-5557-06p 와 **같은 물건**이므로 실물 배열도 같아야 한다.
+    // 같은 상수를 쓴다 — 손으로 두 번 적으면 언젠가 두 부품이 다른 배열을 말한다.
+    layout: MINIFIT_6P_LAYOUT,
+    view: MINIFIT_6P_VIEW,
   },
   {
     id: 'lib-mdb-periph', category: 'housing', name: 'MDB 주변기기 6P',

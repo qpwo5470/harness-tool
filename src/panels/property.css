@@ -803,3 +803,37 @@
   color: var(--text-3);
 }
 .pp-dot { width: 7px; height: 7px; background: var(--accent); }
+
+/* ------------------------------------------------------------------
+   실물 핀 배열 · 미사용 핀 · 절연 슬리브 (개선안 §2-8 / §2-10 / §2-11)
+
+   실물 배열 격자는 터미널 격자(.pp-pad-grid)와 **일부러 다르게 생겼다.**
+   둘은 다른 사실이고(도면 좌표 ↔ 실물 배열) 나란히 놓이므로, 같은 모양이면
+   읽는 사람이 한쪽을 다른 쪽의 되풀이로 본다.
+   도면 요소는 각지게 — radius 0 (tokens.css 머리말).
+   ------------------------------------------------------------------ */
+.pp-real { display: flex; flex-direction: column; gap: 2px; }
+.pp-real-row { display: flex; gap: 2px; }
+.pp-real-cell {
+  min-width: 26px;
+  padding: 3px 4px;
+  border: 1px solid var(--line-strong);
+  background: var(--bg);
+  font-size: var(--fs-cap);
+  font-weight: 600;
+  text-align: center;
+  color: var(--text);
+}
+/* 빈 자리 — 회로가 없는 칸. 테두리는 남겨 격자의 모양이 보이게 한다. */
+.pp-real-cell.blank { background: var(--bg-subtle); border-style: dashed; color: transparent; }
+
+/* 미사용으로 표시한 핀 — 도면의 X 표기와 같은 뜻이다 */
+.pp-pad.unused {
+  color: var(--muted-2);
+  background:
+    linear-gradient(to top right, transparent calc(50% - 0.5px), var(--muted-2) 50%, transparent calc(50% + 0.5px)),
+    linear-gradient(to bottom right, transparent calc(50% - 0.5px), var(--muted-2) 50%, transparent calc(50% + 0.5px));
+}
+
+.pp-check { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sub); color: var(--text-2); }
+.pp-check input { margin: 0; }

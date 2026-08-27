@@ -29,6 +29,12 @@ import { routeWire } from './wirePlan';
 import { isPaleOnWhite } from './stubLabel';
 
 export type OrthoEdgeData = {
+  /**
+   * 45° 사선 구간의 중심 x(px). **있을 때만 사선을 시도한다.**
+   * 값은 docToFlow(assignDiagCenters)가 문서 전체를 보고 배분한다 — 옆 가닥이
+   * 어디 있는지 알아야 어긋 놓을 수 있는데, 엣지 하나 안에서는 알 수 없다.
+   */
+  diagCenter?: number;
   /** 가로 주행 구간의 y 오프셋(px) */
   laneY?: number;
   /** 세로 구간의 x 오프셋(px) — 패드에서 바깥으로 밀어내는 거리 */

@@ -301,9 +301,15 @@ describe('PDF 밀도 — 20본 팬아웃', () => {
     expect(overlapPairs(horiz)).toBe(0);
   });
 
-  it('세로 구간끼리 포개지는 쌍이 0 (예전 PDF 는 레인이 0 이라 통째로 포개졌다)', () => {
+  /**
+   * 이 배치는 45° 사선으로 그려지므로 **세로 간선이 아예 없다**
+   * (canvas/docToFlow.test.ts 의 같은 자리 참고). 겹칠 세로 간선이 없어졌다는
+   * 사실 자체를 종이에서도 못박는다 — 화면과 종이가 같은 함수를 쓰는 한 같아야 한다.
+   * 레인이 세로 간선을 벌린다는 성질은 직교로 남는 배치에서 canvas 쪽이 잰다.
+   */
+  it('사선을 쓰므로 세로 간선이 아예 없다 (예전 직교 PDF 는 여기가 123쌍이었다)', () => {
     const { vert } = splitSegments(buildDrawing(doc).wires);
-    expect(vert.length).toBeGreaterThan(20);
+    expect(vert).toHaveLength(0);
     expect(overlapPairs(vert)).toBe(0);
   });
 
@@ -495,9 +501,21 @@ describe('PDF 자켓 = 화면 자켓', () => {
     const b = buildDrawing(bare);
     expect(b.jackets).toEqual([]);
     expect(a.jackets.length).toBeGreaterThan(0);
-    // 배선·하우징은 한 점도 다르지 않다 — 자켓만이 유일한 차이다
-    expect(b.wires.map((w) => w.points)).toEqual(a.wires.map((w) => w.points));
+    // 하우징은 한 점도 다르지 않다
     expect(b.nodes).toEqual(a.nodes);
+    /*
+     * 배선은 **심선만** 달라진다. 45° 사선이 들어오면서 케이블 심선은 사선을
+     * 쓰지 않게 됐고(canvas/docToFlow.assignDiagCenters 머리말), 케이블을 걷어
+     * 내면 그 가닥들이 단선이 되어 사선으로 되돌아간다.
+     * 케이블과 상관없는 배선은 여전히 한 점도 안 바뀐다 — 그것이 여기서 지킬 선이다.
+     */
+    const cores = new Set(doc.wires.filter((w) => w.cableId).map((w) => w.id));
+    const pts = (d: typeof a) => new Map(d.wires.map((w) => [w.id, w.points]));
+    const [pa, pb] = [pts(a), pts(b)];
+    for (const w of doc.wires) {
+      if (cores.has(w.id)) continue;
+      expect(pb.get(w.id), `배선 ${w.id}`).toEqual(pa.get(w.id));
+    }
   });
 });
 

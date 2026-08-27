@@ -197,6 +197,26 @@ function normConnector(v: unknown, warn: string[]): Connector | null {
     ...(Array.isArray(v.bridges)
       ? { bridges: (v.bridges as unknown[]).filter(Array.isArray).map((g) => (g as unknown[]).filter((x): x is string => typeof x === 'string')) }
       : {}),
+    /*
+     * 의도적 미사용 핀 · 절연 슬리브 (개선안 §2-10 / §2-11).
+     *
+     * `unused` 는 숫자(핀 번호)와 문자열(라벨 "+" "−")을 둘 다 받는다 — 도면의
+     * 핀 id 가 숫자가 아닌 끝단이 있기 때문이다. 그 밖의 값은 버린다.
+     * **빈 배열이면 필드를 붙이지 않는다**: 빈 배열과 없음이 같은 뜻이라, 남겨
+     * 두면 이 기능을 쓴 적 없는 문서와 저장 파일이 달라져 형상관리에 없는
+     * 변경이 보인다(`WireRoute` 를 두 축 다 없을 때 지우는 것과 같은 이유).
+     *
+     * `sleeve` 는 **true 일 때만** 싣는다. false 는 기본값과 같은 뜻이다.
+     */
+    ...(() => {
+      if (!Array.isArray(v.unused)) return {};
+      const list = (v.unused as unknown[]).filter(
+        (x): x is number | string =>
+          (typeof x === 'number' && Number.isFinite(x)) || typeof x === 'string',
+      );
+      return list.length > 0 ? { unused: list } : {};
+    })(),
+    ...(v.sleeve === true ? { sleeve: true } : {}),
     ...(str(v.note) != null ? { note: str(v.note)! } : {}),
   };
 }

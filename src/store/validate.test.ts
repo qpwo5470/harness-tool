@@ -24,6 +24,10 @@ const housing4: PartLibraryItem = {
   name: 'JST XH 2.5 4P',
   pinCount: 4,
   pinLayout: [1, 2, 3, 4].map((i) => ({ index: i, label: String(i), offset: { x: i - 1, y: 0 } })),
+  // 실물 배열·뷰 기준이 적힌 부품이라야 "정상 문서" 다 — 없으면 규칙 20/21 이
+  // 잡는다(그게 이 규칙을 넣은 목적이다). 픽스처 값이므로 근거를 그렇게 밝힌다.
+  layout: [[1, 2, 3, 4]],
+  view: '시험 픽스처 — 결합면에서 본 배열 (실물 근거 아님)',
 };
 
 const rj45: PartLibraryItem = {
@@ -35,6 +39,8 @@ const rj45: PartLibraryItem = {
     { index: 1, label: '1', offset: { x: 0, y: 0 }, signal: 'TX+', stdColor: 'white/orange' },
     { index: 2, label: '2', offset: { x: 1, y: 0 }, signal: 'TX-', stdColor: 'orange' },
   ],
+  layout: [[1, 2]],
+  view: '시험 픽스처 — 래치가 아래로 오게 잡고 본 배열 (실물 근거 아님)',
 };
 
 const spliceItem: PartLibraryItem = {
@@ -115,8 +121,11 @@ describe('validateHarness — 정상 문서', () => {
 
   it('기존 샘플 문서에서 새 규칙이 엉뚱한 것을 잡지 않는다', () => {
     const ids = new Set(validateHarness(sampleDoc).map((i) => i.id));
-    // 샘플은 터미널·길이만 비어 있는 문서다 (스플라이스 3가닥 · 중복 · 자기연결 없음)
-    expect(ids).toEqual(new Set(['terminal-missing', 'length-missing']));
+    // 샘플은 터미널·길이만 비어 있는 문서다 (스플라이스 3가닥 · 중복 · 자기연결 없음).
+    // `pin-layout-missing` 은 샘플 부품에 실물 핀 배열이 적혀 있지 않아서 나는
+    // **참**이다 — 시드 부품 대부분이 아직 그렇다(개선안 §6-2 가 근거를 남긴
+    // 4종만 채웠다). info 라 발주를 막지 않는다.
+    expect(ids).toEqual(new Set(['terminal-missing', 'length-missing', 'pin-layout-missing']));
   });
 
   it('배선 200본 규모에서도 오탐 없이 끝난다', () => {
@@ -131,7 +140,13 @@ describe('validateHarness — 정상 문서', () => {
       },
     ];
     doc.usedParts = [
-      { id: 'big-h', category: 'housing', name: '대형 하우징 400P', pinCount: 400 },
+      {
+        id: 'big-h', category: 'housing', name: '대형 하우징 400P', pinCount: 400,
+        // 배열·뷰가 있어야 규칙 20/21 이 조용하다 — 이 시험이 보는 것은
+        // "대규모에서 오탐이 없는가" 이므로 그 둘을 채워 두고 잰다.
+        layout: [Array.from({ length: 400 }, (_, i) => i + 1)],
+        view: '시험 픽스처 (실물 근거 아님)',
+      },
       terminal,
     ];
     doc.wires = Array.from({ length: 200 }, (_, i) => wire({
@@ -692,5 +707,133 @@ describe('이슈 목록', () => {
       expect(i.detail.length).toBeGreaterThan(15);
       expect(i.title.length).toBeGreaterThan(0);
     }
+  });
+});
+
+// ================================================================
+// 20·21. 실물 핀 배열 / 뷰 기준 (개선안 §2-8 · §6-2)
+//
+// 이 규칙이 있는 이유는 "도면 좌표 ≠ 실물 배열" 이기 때문이고, 뷰 기준까지
+// 필요한 이유는 확인한 제조사 도면 4건이 **전부** 뷰 표기가 없었고 Mini-Fit 과
+// Micro-Fit 이 서로 거울상이었기 때문이다. 둘 다 시험으로 못 박는다.
+// ================================================================
+
+describe('20. 실물 핀 배열 없음', () => {
+  it('하우징에 layout 이 없으면 info 로 잡는다', () => {
+    const doc = clean();
+    delete doc.usedParts[0].layout;
+    delete doc.usedParts[0].view;
+    const [issue] = only(doc, 'pin-layout-missing');
+    expect(issue.level).toBe('info');
+    expect(issue.targetId).toBe('c1');
+    expect(issue.where).toContain('J1');
+  });
+
+  it('같은 하우징을 여러 개 놓아도 한 번만 잡는다 — 고칠 자리는 부품 하나다', () => {
+    const doc = clean();
+    delete doc.usedParts[0].layout;
+    doc.connectors.push({
+      ...structuredClone(doc.connectors[0]),
+      id: 'c3',
+      pins: [1, 2, 3, 4].map((i) => ({ id: `r${i}`, index: i, label: String(i), terminalId: 't1' })),
+      positions: { logical: { x: 0, y: 400 } },
+    });
+    expect(only(doc, 'pin-layout-missing')).toHaveLength(1);
+  });
+
+  it('배열이 있으면 잡지 않는다', () => {
+    expect(only(clean(), 'pin-layout-missing')).toHaveLength(0);
+  });
+});
+
+describe('21. 핀 배열 뷰 기준 없음', () => {
+  it('layout 은 있는데 view 가 비면 warn 이다 — 거울상이면 좌우가 통째로 바뀐다', () => {
+    const doc = clean();
+    doc.usedParts[0].view = '   ';
+    const [issue] = only(doc, 'pin-view-missing');
+    expect(issue.level).toBe('warn');
+    expect(issue.targetId).toBe('c1');
+    expect(issue.detail).toContain('거울상');
+  });
+
+  it('layout 이 아예 없으면 뷰를 따로 잡지 않는다 — 같은 말을 두 번 하지 않는다', () => {
+    const doc = clean();
+    delete doc.usedParts[0].layout;
+    delete doc.usedParts[0].view;
+    expect(only(doc, 'pin-view-missing')).toHaveLength(0);
+    expect(only(doc, 'pin-layout-missing')).toHaveLength(1);
+  });
+
+  it('스플라이스는 잡지 않는다 — 꼬임 접속에는 그릴 배열이 없다', () => {
+    const doc = clean();
+    doc.connectors.push({
+      id: 'sp1', kind: 'splice', housingId: 'sp', orientation: 0,
+      positions: { logical: { x: 150, y: 200 } },
+      pins: [1, 2, 3].map((i) => ({ id: `s${i}`, index: i, label: String(i) })),
+    });
+    expect(only(doc, 'pin-layout-missing')).toHaveLength(0);
+    expect(only(doc, 'pin-view-missing')).toHaveLength(0);
+  });
+});
+
+// ================================================================
+// 22·23. 의도적 미사용 핀 (개선안 §2-10)
+// ================================================================
+
+describe('22. 미사용 표시한 핀에 배선', () => {
+  it('배선이 붙은 핀을 미사용으로 표시하면 warn — 도면이 두 말을 한다', () => {
+    const doc = clean();
+    doc.connectors[0].unused = [1];              // p1 에는 w1 이 붙어 있다
+    const [issue] = only(doc, 'unused-pin-wired');
+    expect(issue.level).toBe('warn');
+    expect(issue.targetId).toBe('c1');
+    expect(issue.title).toContain('#1');
+  });
+
+  it('배선이 없는 핀을 미사용으로 표시하는 것은 정상이다', () => {
+    const doc = clean();
+    doc.connectors[0].unused = [3, 4];
+    expect(validateHarness(doc)).toEqual([]);
+  });
+
+  it('라벨로 적어 둔 미사용 표시도 알아본다', () => {
+    const doc = clean();
+    doc.connectors[0].unused = ['1'];
+    expect(only(doc, 'unused-pin-wired')).toHaveLength(1);
+  });
+});
+
+describe('23. 없는 핀을 미사용으로 표시', () => {
+  it('이 커넥터에 없는 핀이면 info 로 알린다 — 파일에만 남는 흔적이다', () => {
+    const doc = clean();
+    doc.connectors[0].unused = [9];
+    const [issue] = only(doc, 'unused-pin-unknown');
+    expect(issue.level).toBe('info');
+    expect(issue.title).toContain('9');
+  });
+});
+
+// ================================================================
+// 24. 절연 슬리브 품목 미상 (개선안 §2-11)
+// ================================================================
+
+describe('24. 절연 슬리브 품목 미상', () => {
+  it('슬리브를 켰는데 짝이 되는 품목이 없으면 warn', () => {
+    const doc = clean();
+    doc.connectors[0].sleeve = true;
+    const [issue] = only(doc, 'sleeve-part-unknown');
+    expect(issue.level).toBe('warn');
+    expect(issue.targetId).toBe('c1');
+  });
+
+  it('부품에 슬리브 품목이 걸려 있으면 잡지 않는다', () => {
+    const doc = clean();
+    doc.connectors[0].sleeve = true;
+    doc.usedParts[0].sleevePartId = 'sleeve-1';
+    expect(only(doc, 'sleeve-part-unknown')).toHaveLength(0);
+  });
+
+  it('슬리브를 켜지 않았으면 품목이 없어도 잡지 않는다', () => {
+    expect(only(clean(), 'sleeve-part-unknown')).toHaveLength(0);
   });
 });

@@ -38,12 +38,37 @@ import type { Device, HarnessDocument, Orientation, PartLibraryItem, Vec2 } from
 
 /* ── 판정기 — 라우터를 믿지 않고 직접 쓴다 ───────────────────────────────────── */
 
-/** 축 정렬 선분이 사각형 **속**을 지나는가. 변에 닿기만 하는 건 아니다(핸들이 변 위에 있다). */
+/**
+ * 선분이 사각형 **속**을 지나는가. 변에 닿기만 하는 건 아니다(핸들이 변 위에 있다).
+ *
+ * ── 왜 감싸는 사각형(bbox) 비교를 버렸나
+ * 예전 판정기는 선분의 bbox 와 상자가 겹치는지만 봤다. 선분이 전부 수평 아니면
+ * 수직이던 시절에는 그게 곧 선분·상자 교차였다. **45° 사선이 들어오면 갈린다** —
+ * 사선의 bbox 는 사선 자체보다 훨씬 넓어서, 멀찍이 비켜 가는 사선도 걸린 것으로
+ * 센다. 실제로 그랬다: 장치 이름표(x 300~471)를 사선이 x 567~584 구간에서
+ * 지나가는데 bbox 판정은 "가려졌다" 고 했다.
+ *
+ * 판정기가 틀리면 0 이 나와도 믿을 수 없고 1 이 나와도 믿을 수 없다.
+ * 그래서 축별 구간 자르기(Liang–Barsky)로 **진짜 선분**을 잰다.
+ */
 function segHitsRect(p: Pt, q: Pt, b: Box, eps = 1e-6): boolean {
-  const x0 = Math.min(p.x, q.x), x1 = Math.max(p.x, q.x);
-  const y0 = Math.min(p.y, q.y), y1 = Math.max(p.y, q.y);
-  return x1 > b.x + eps && x0 < b.x + b.w - eps
-    && y1 > b.y + eps && y0 < b.y + b.h - eps;
+  const lo = { x: b.x, y: b.y };
+  const hi = { x: b.x + b.w, y: b.y + b.h };
+  let t0 = 0;
+  let t1 = 1;
+  for (const k of ['x', 'y'] as const) {
+    const d = q[k] - p[k];
+    if (Math.abs(d) < eps) {
+      if (p[k] <= lo[k] + eps || p[k] >= hi[k] - eps) return false;
+      continue;
+    }
+    const a = (lo[k] - p[k]) / d;
+    const c = (hi[k] - p[k]) / d;
+    t0 = Math.max(t0, Math.min(a, c));
+    t1 = Math.min(t1, Math.max(a, c));
+    if (t1 - t0 <= eps) return false;
+  }
+  return t1 - t0 > eps;
 }
 
 /** 판정기 자체가 맞는지 먼저 확인한다 — 0 이 나왔을 때 믿을 수 있어야 한다 */
@@ -57,6 +82,18 @@ describe('선분·사각형 교차 판정', () => {
     expect(segHitsRect({ x: 0, y: 10 }, { x: 200, y: 10 }, b)).toBe(false);  // 위 변에 딱
     expect(segHitsRect({ x: 110, y: 0 }, { x: 110, y: 100 }, b)).toBe(false); // 오른 변에 딱
     expect(segHitsRect({ x: 0, y: 40 }, { x: 200, y: 40 }, b)).toBe(false);   // 아래로 비켜감
+  });
+
+  /**
+   * 사선까지 옳게 재는지 — **여기가 예전 판정기가 틀리던 자리다.**
+   * 두 선분의 bbox 는 둘 다 상자를 통째로 덮지만, 실제로 상자 속을 지나는 건 하나뿐이다.
+   */
+  it('사선은 bbox 가 아니라 선분으로 잰다', () => {
+    // (0,0) → (200,200) 45° — x=10..110 구간에서 y 도 10..110 이라 상자(y 10~30)를 지난다
+    expect(segHitsRect({ x: 0, y: 0 }, { x: 200, y: 200 }, b)).toBe(true);
+    // (0,60) → (200,260) 45° — 상자 x 범위(10~110)에서 y 는 70~170 이라 상자 아래로 비켜간다.
+    // bbox 판정이었다면 걸린 것으로 셌다.
+    expect(segHitsRect({ x: 0, y: 60 }, { x: 200, y: 260 }, b)).toBe(false);
   });
 });
 

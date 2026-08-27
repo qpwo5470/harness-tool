@@ -12,7 +12,9 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { render, cleanup } from '@testing-library/react';
 import { Position, type EdgeProps } from '@xyflow/react';
 import { OrthogonalEdge, type OrthoEdgeData } from './OrthogonalEdge';
-import { routeWire, type EdgeEnds } from './wirePlan';
+import { planWires, routeWire, type EdgeEnds } from './wirePlan';
+import { assignLanes, docToEdges } from './docToFlow';
+import { fanoutDoc } from '../fixtures/fanoutDoc';
 
 afterEach(cleanup);
 
@@ -51,6 +53,50 @@ describe('OrthogonalEdge — 화면 경로의 출처', () => {
     expect(container.querySelector('.hz-edge-hit')?.getAttribute('d')).toBe(
       routeWire(ENDS, DATA).d,
     );
+  });
+
+  /**
+   * ── 문서에서 화면까지 한 줄로 이어 붙인다
+   *
+   * 위 세 시험은 "엣지가 routeWire 를 쓴다" 만 잡는다. 그 사이에 `docToEdges` 가
+   * **엣지 data 에 무엇을 싣는가** 라는 고리가 하나 더 있고, 거기서 값 하나가
+   * 빠지면 화면만 다른 그림이 된다. 실제로 45° 사선을 넣으면서 `diagCenter` 를
+   * data 에 안 실으면 **화면만 직교로** 그려진다 — 종이(planWires)는 사선인데.
+   *
+   * 그래서 문서 → docToEdges → 화면 path 를 실제로 그려서, 종이가 받는
+   * `planWires` 의 d 와 글자 하나까지 같은지 본다.
+   */
+  it('문서 → 엣지 data → 화면 path 가 planWires 와 글자 하나까지 같다', () => {
+    const doc = fanoutDoc();
+    const edges = docToEdges(doc, new Set(), null, 'logical');
+    const lanes = assignLanes(doc, 'logical');
+    const planned = planWires(doc, 'logical');
+
+    let diagonals = 0;
+    edges.forEach((e, i) => {
+      const ends: EdgeEnds = {
+        sourceX: lanes.from[i].x, sourceY: lanes.from[i].y,
+        targetX: lanes.to[i].x, targetY: lanes.to[i].y,
+        sourcePosition: lanes.from[i].side, targetPosition: lanes.to[i].side,
+      };
+      // 라벨(abbr)은 뺀다 — EdgeLabelRenderer 가 ReactFlowProvider 를 요구하는데
+      // 여기서 재는 것은 **경로**이고 라벨 글자는 경로에 영향을 주지 않는다.
+      // (라벨 자리는 stubLabel.test.ts · docToFlow.test.ts 가 따로 잰다)
+      const { abbr: _a, signal: _s, ...data } = e.data as OrthoEdgeData;
+      const props = {
+        id: e.id, source: e.source, target: e.target, ...ends, data,
+      } as unknown as EdgeProps;
+      const c = render(<svg><OrthogonalEdge {...props} /></svg>).container;
+      const drawn = c.querySelector('.react-flow__edge-path')?.getAttribute('d');
+      expect(drawn, e.id).toBe(planned[i].d);
+      if (/L [\d.]+ [\d.]+ L [\d.]+ [\d.]+/.test(drawn ?? '')
+        && planned[i].points.some((p, k) => k > 0
+          && Math.abs(p.x - planned[i].points[k - 1].x) > 1e-6
+          && Math.abs(p.y - planned[i].points[k - 1].y) > 1e-6)) diagonals++;
+      cleanup();
+    });
+    // 이 문서는 사선으로 그려진다 — 시험이 직교만 보고 통과한 것이 아님을 못박는다
+    expect(diagonals).toBe(20);
   });
 
   it('레인·상자를 빼면 경로가 실제로 달라진다 (대조군 — 시험이 헛돌지 않는지)', () => {

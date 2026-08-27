@@ -486,3 +486,71 @@ describe('푸터', () => {
     expect(screen.getByText('장치 삭제')).toBeTruthy();
   });
 });
+
+
+// ============================================================
+// (B) 커넥터 — 실물 핀 배열 · 미사용 핀 · 절연 슬리브
+//     (개선안 §2-8 / §2-10 / §2-11)
+// ============================================================
+
+describe('(B) 커넥터 — 실물 핀 배열', () => {
+  it('부품에 배열이 없으면 도면 좌표를 실물로 믿지 말라고 말한다', () => {
+    show('c1');                       // 픽스처 하우징에는 layout 이 없다
+    expect(screen.getByText('실물 핀 배열')).toBeTruthy();
+    expect(screen.getByText(/실물 배열이 적혀 있지 않습니다/)).toBeTruthy();
+  });
+
+  it('배열이 있으면 그대로 그리고 뷰 기준을 같이 적는다', () => {
+    const d = makeDoc();
+    d.usedParts[0] = {
+      ...d.usedParts[0],
+      layout: [[6, 5, 4], [3, 2, 1]],
+      view: '각인 탭이 위로 오게 잡고 본 배열',
+    };
+    useHarnessStore.setState({ doc: d, selection: 'c1' });
+    render(<PropertyPanel />);
+    expect(screen.getByText('각인 탭이 위로 오게 잡고 본 배열')).toBeTruthy();
+  });
+
+  it('뷰 기준이 비면 거울상일 수 있다고 경고한다 — 배열만으로는 면을 정할 수 없다', () => {
+    const d = makeDoc();
+    d.usedParts[0] = { ...d.usedParts[0], layout: [[2, 1]] };
+    useHarnessStore.setState({ doc: d, selection: 'c1' });
+    render(<PropertyPanel />);
+    expect(screen.getByText(/뷰 기준이 비어 있습니다/)).toBeTruthy();
+  });
+});
+
+describe('(B) 커넥터 — 미사용 핀', () => {
+  it('패드를 누르면 미사용으로 표시되고, 다시 누르면 풀린다', () => {
+    show('c1');
+    fireEvent.click(screen.getByLabelText('미사용 핀 3'));
+    expect(doc().connectors[0].unused).toEqual([3]);
+
+    fireEvent.click(screen.getByLabelText('미사용 핀 3'));
+    // 빈 배열을 남기지 않는다 — 쓴 적 없는 문서와 저장 파일이 같아야 한다
+    expect(doc().connectors[0].unused).toBeUndefined();
+  });
+});
+
+describe('(B) 커넥터 — 절연 슬리브', () => {
+  it('체크하면 문서에 남고, 짝이 되는 품목이 없으면 그 사실을 말한다', () => {
+    show('c1');
+    fireEvent.click(screen.getByLabelText('절연 슬리브'));
+    expect(doc().connectors[0].sleeve).toBe(true);
+    expect(screen.getByText(/슬리브 품목이 지정돼 있지 않아/)).toBeTruthy();
+  });
+
+  it('짝이 되는 슬리브가 있으면 부품표에 그 품목이 1개 선다', () => {
+    const d = makeDoc();
+    d.usedParts[0] = { ...d.usedParts[0], sleevePartId: 'lib-lug-faston-250-sleeve' };
+    useHarnessStore.setState({ doc: d, selection: 'c1' });
+    render(<PropertyPanel />);
+    fireEvent.click(screen.getByLabelText('절연 슬리브'));
+
+    const rows = buildPartList(doc()).filter((r) => r.category === '부자재');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].qty).toBe(1);
+    expect(rows[0].part).toContain('슬리브');
+  });
+});

@@ -761,3 +761,100 @@ describe('압착 러그 인스턴스', () => {
     expect(c.positions.logical).toEqual({ x: 10, y: 20 });
   });
 });
+
+
+/**
+ * 실물 핀 배열(layout) + 뷰 기준(view) — 개선안 §2-8 / §6-2.
+ *
+ * 여기서 지키려는 것은 "값이 맞다" 가 아니라 **"근거 없는 값이 없다"** 이다.
+ * 핀 배열은 오조립으로 직결되므로, 근거가 적힌 4종 말고 다른 부품에 배열이
+ * 슬그머니 생기면 시험이 먼저 깨져야 한다.
+ */
+describe('실물 핀 배열 · 뷰 기준', () => {
+  const withLayout = SEED_PARTS.filter((p) => p.layout != null);
+
+  it('배열이 있는 부품은 뷰 기준도 반드시 있다 — 배열만으로는 거울상을 가릴 수 없다', () => {
+    for (const p of withLayout) {
+      expect(p.view, p.id).toBeTruthy();
+      expect(p.view!.trim().length, p.id).toBeGreaterThan(20);
+    }
+  });
+
+  it('뷰 문구는 어디까지가 도면 인쇄값이고 어디부터가 연장값인지 밝힌다', () => {
+    for (const p of withLayout) {
+      // 개선안 §6-2 의 핵심: 도면 4건 모두 뷰 표기가 없었고, 번호도 일부만 인쇄돼
+      // 있었다. 그 사실을 문구에서 지우면 "실물 대조" 를 어디에 할지 알 수 없다.
+      expect(p.view, p.id).toMatch(/연장한 값|실물 대조/);
+    }
+  });
+
+  it('배열의 칸 수가 핀 수와 맞는다 — 한 자리라도 어긋나면 오조립이다', () => {
+    for (const p of withLayout) {
+      const cells = p.layout!.flat().filter((c) => c != null);
+      expect(cells.length, p.id).toBe(p.pinCount);
+      // 번호가 겹치면 두 자리가 같은 핀을 가리킨다
+      expect(new Set(cells.map(String)).size, p.id).toBe(cells.length);
+    }
+  });
+
+  it('근거가 적힌 4종에만 채운다 — Mini-Fit 6P(2종) · Micro-Fit 10P · XH 하우징', () => {
+    const ids = new Set(withLayout.map((p) => p.id));
+    expect(ids.has('lib-mdb-vmc')).toBe(true);
+    expect(ids.has('lib-minifit-5557-06p')).toBe(true);
+    expect(ids.has('lib-mf3-43025-10p')).toBe(true);
+    expect(ids.has('lib-jst-xhp-4p')).toBe(true);
+    // 근거가 없는 것에는 없어야 한다 — 규칙으로 늘리면 그게 지어낸 값이다
+    expect(ids.has('lib-minifit-5557-10p')).toBe(false);   // 8번이 각인 탭에 가려 미인쇄
+    expect(ids.has('lib-mf3-43025-06p')).toBe(false);      // 10회로 말고는 근거 없음
+    expect(ids.has('lib-mf3-43020-10p')).toBe(false);      // 플러그 뷰 미확인
+    expect(ids.has('lib-jst-b-xh-a-4p')).toBe(false);      // 헤더는 결합면이라 거울상
+    expect(ids.has('lib-mdb-periph')).toBe(false);         // 5569 앵글 헤더 — 뷰 미확인
+  });
+
+  it('같은 물건인 MDB VMC 와 Mini-Fit 5557 6P 는 같은 배열·뷰를 말한다', () => {
+    const a = byId('lib-mdb-vmc');
+    const b = byId('lib-minifit-5557-06p');
+    expect(a.layout).toEqual(b.layout);
+    expect(a.view).toBe(b.view);
+  });
+
+  it('Mini-Fit 과 Micro-Fit 의 번호 뷰는 서로 거울상이다 (§6-2)', () => {
+    // 같은 면으로 가정하면 안 된다는 사실 자체를 데이터가 담고 있는지 본다.
+    // Mini-Fit 6P 아랫행은 왼→오 3·2·1, Micro-Fit 10P 아랫행은 1·2·3·4·5.
+    expect(byId('lib-mdb-vmc').layout!.at(-1)).toEqual([3, 2, 1]);
+    expect(byId('lib-mf3-43025-10p').layout!.at(-1)).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it('XH 하우징은 오른쪽 끝이 1번이다 — 도면이 인쇄한 유일한 번호', () => {
+    for (const n of [2, 4, 10]) {
+      const p = byId(`lib-jst-xhp-${n}p`);
+      expect(p.layout, `xhp-${n}`).toHaveLength(1);          // 1열
+      expect(p.layout![0].at(-1), `xhp-${n}`).toBe(1);
+    }
+  });
+});
+
+/**
+ * 절연 슬리브 (개선안 §2-11).
+ * 슬리브를 문장이 아니라 **id 로** 걸어야 부품표가 줄을 세운다.
+ */
+describe('절연 슬리브 품목 연결', () => {
+  it('파스톤 REC 는 짝이 되는 슬리브를 id 로 가리킨다', () => {
+    for (const size of ['110', '187', '250']) {
+      const rec = byId(`lib-lug-faston-${size}-rec`);
+      expect(rec.sleevePartId, size).toBe(`lib-lug-faston-${size}-sleeve`);
+    }
+  });
+
+  it('가리키는 슬리브 부품이 실제로 라이브러리에 있다 — 끊어진 참조 금지', () => {
+    const ids = new Set(SEED_PARTS.map((p) => p.id));
+    for (const p of SEED_PARTS) {
+      if (!p.sleevePartId) continue;
+      expect(ids.has(p.sleevePartId), p.id).toBe(true);
+    }
+  });
+
+  it('TAB(수)에는 슬리브를 걸지 않는다 — 씌우는 것은 REC 쪽이다', () => {
+    expect(byId('lib-lug-faston-250-tab').sleevePartId).toBeUndefined();
+  });
+});

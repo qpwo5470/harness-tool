@@ -229,6 +229,38 @@ export function buildPartList(doc: HarnessDocument, opts: PartListOptions = {}):
     rows.push({ category: '터미널', part, qty, detail: '압착단자' });
   }
 
+  /*
+   * 절연 슬리브 (개선안 §2-11) — 끝단 1개당 1개.
+   *
+   * ## 왜 자동으로 세는가
+   * 슬리브는 압착부를 덮는 **따로 사는 물건**이다. 도면에 점선 사각으로 표기만
+   * 하고 부품표에 줄을 세우지 않으면 현장에 도착하지 않는다. 러그를 노드 수로만
+   * 세는 지금 집계에서는 슬리브가 어디에도 잡히지 않아, 라이브러리에 품목이
+   * 있는데도 발주서에 한 글자도 안 나갔다.
+   *
+   * ## 왜 '터미널' 이 아니라 '부자재' 인가
+   * 슬리브는 압착단자가 아니다(라이브러리 항목 스스로 그렇게 적고 있다).
+   * 터미널 칸에 넣으면 압착 개소를 세는 사람이 그만큼 더 세고, 압착 공수 견적이
+   * 부풀린 채로 나간다. 칸을 옮기는 것이 표기상으로도 맞다.
+   *
+   * ## 품목을 모를 때 줄을 빼지 않는 이유
+   * "절연하겠다" 는 뜻은 도면에 분명히 있다. 조용히 빼면 그 뜻이 사라지지만,
+   * 이름 없는 줄이 서 있으면 사람이 채운다. 어떤 슬리브인지는 검증이 따로
+   * 경고한다(`sleeve-part-unknown`).
+   */
+  const sleeves = new Map<string, number>();
+  for (const c of doc.connectors) {
+    if (!c.sleeve) continue;
+    const housing = doc.usedParts.find((p) => p.id === c.housingId);
+    const sleeveId = housing?.sleevePartId;
+    const named = sleeveId ? doc.usedParts.find((p) => p.id === sleeveId) : undefined;
+    const part = named?.name ?? sleeveId ?? '절연 슬리브 (품목 미지정)';
+    sleeves.set(part, (sleeves.get(part) ?? 0) + 1);
+  }
+  for (const [part, qty] of sleeves) {
+    rows.push({ category: '부자재', part, qty, detail: '절연 슬리브 — 압착부에 씌운다' });
+  }
+
   // 케이블
   //
   // 자켓색·게이지는 **여기서 처음이자 유일하게 산출물에 나온다.** 속성 패널에는

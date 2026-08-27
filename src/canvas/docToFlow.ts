@@ -11,7 +11,7 @@ import {
 } from './geometry';
 // 세로 간선이 어디까지 뻗는지는 **상자를 비켜 간 뒤에야** 알 수 있다.
 // 그래서 레인을 정하기 전에 라우터를 한 번 돌려 본다(assignLanes 주석 참고).
-import { routeOrthogonal, DEFAULT_STUB, type Pt } from './route';
+import { routeOrthogonal, routeAuto, DEFAULT_STUB, type Pt } from './route';
 // 약호·신호명·폭은 stubLabel 한 곳에서 — 화면과 PDF 가 같은 값을 재야 한다
 import { planStubLabels, stubTextOf, colorAbbr } from './stubLabel';
 export { colorAbbr };
@@ -471,7 +471,121 @@ export function nodeBoxes(
   return out;
 }
 
+/**
+ * 사선 구간을 담기 위해 필요한 최소 폭(px) — 레퍼런스 `build.py` 의 60.
+ * 이보다 좁으면 배분해 봐야 전부 clamp 로 한 자리에 뭉친다.
+ */
+export const DIAG_MIN_SPAN = 60;
+
+/** 이웃한 두 가닥의 사선 중심 x 사이 최대 간격(px) — 레퍼런스 `build.py` 의 22 */
+export const DIAG_MAX_GAP = 22;
+
+/**
+ * 배선별 **사선 구간의 중심 x**. `undefined` 면 그 가닥은 직교로 그린다.
+ *
+ * ── 왜 가닥마다 중심을 어긋나게 두나 (개선안 §2-1)
+ * 전부 같은 중심을 쓰면 사선들이 한 다발로 겹쳐 직교 시절과 똑같은 문제가 된다.
+ * 중심을 벌리면 꺾임점이 x 축을 따라 흩어져 가닥을 눈으로 따라갈 수 있다.
+ *
+ * ── 왜 **도착 핀 y 오름차순**으로 자리를 나눠 주나
+ * 사선의 x 진행 방향은 왼→오 하나뿐이므로, 위쪽 핀으로 가는 가닥이 왼쪽에서
+ * 먼저 꺾이면 두 사선이 서로를 넘지 않는다. 도착 y 로 정렬하는 것이 곧
+ * **교차 최소화**다(레퍼런스가 같은 이유로 같은 정렬을 쓴다).
+ * 같은 y 로 들어오는 두 가닥은 문서 순서로 갈라 결정론을 지킨다.
+ *
+ * ── 사람이 꺾임을 손으로 잡은 배선(`Wire.route`)은 뺀다
+ * `laneY`·`laneX` 는 "가로 주행 구간의 y" 와 "세로 간선의 x" 를 미는 값이다.
+ * 사선 경로에는 그런 선분이 아예 없으므로 그 값이 아무 일도 하지 않는다 —
+ * 사용자가 넣은 숫자가 그림을 못 바꾸는 상태(§10-3 이 가장 싫어하는 것)가 된다.
+ * 그래서 **손으로 잡은 배선은 직교로 남긴다**: 값이 뜻을 그대로 유지하고,
+ * 값을 지우면 사선으로 되돌아간다. 사선을 쓸지 말지를 사용자가 고르는 손잡이가
+ * 사실상 이 칸이 된다.
+ *
+ * ── **케이블 심선은 사선을 쓰지 않는다** (판단이 갈린 자리 — 실측으로 갈랐다)
+ * 자켓 윤곽은 "이 심선들이 한 외피 안에서 **나란히** 간다" 를 그린다
+ * (wirePlan.planJackets). 심선마다 제 45° 사선을 그으면 나란히 가는 구간이
+ * 사라져 자켓이 통째로 없어진다 — 실측: `cb-s` 토막 1개 → **0개**,
+ * `cb-p`·`cb-y` 도 0 (jacket.test.ts 가 잡았다). 그 도면은 케이블이 있다는
+ * 사실 자체를 말하지 못한다.
+ *
+ * 물건이 실제로 그렇기도 하다. 심선은 외피 안에서 개별로 사선을 그리며 가지
+ * 않는다. 케이블에서 가닥을 눈으로 갈라야 하는 자리는 **자켓 밖 브레이크아웃**
+ * 이고 그건 이미 스텁 구간이다. 사선이 푸는 문제("어느 가닥인지 추적이 안 된다")가
+ * 실제로 일어나는 것은 자켓 없는 **단선**들이 한 통로에 몰릴 때다.
+ *
+ * 판정은 `coreCableOf` 를 쓴다 — "자켓이 그려질 수 있는 심선" 을 정하는 그 함수다.
+ * 자켓 판정과 사선 판정이 같은 하나를 봐야 둘이 어긋나지 않는다.
+ * (개선안 §2-1 은 자켓을 모른다. 레퍼런스 구현에는 자켓 개념이 아예 없다.)
+ *
+ * ── 무리는 **같은 두 노드를 잇는 배선**끼리 짓는다
+ * 중심 x 를 벌리려면 "같은 통로를 지나는 가닥이 몇이고 통로가 얼마나 넓은가" 를
+ * 알아야 하는데, 그 통로는 두 부품 사이의 빈칸이다. 노드 짝이 곧 통로다.
+ *
+ * @param from 배선별 출발 핸들 (assignLanes 가 이미 구한 것을 나눠 쓴다)
+ * @param to   배선별 도착 핸들
+ */
+export function assignDiagCenters(
+  doc: HarnessDocument,
+  from: Anchor[],
+  to: Anchor[],
+): (number | undefined)[] {
+  const out = new Array<number | undefined>(doc.wires.length).fill(undefined);
+  const groups = new Map<string, number[]>();
+  const isCore = coreCableOf(doc);
+
+  doc.wires.forEach((w, i) => {
+    // 마주 보는 가로 핸들만 — 그 밖의 조합은 라우터가 어차피 되돌린다(route.routeDiagonal).
+    // 여기서 미리 걸러야 무리의 **머릿수**(n)가 실제로 사선을 쓸 가닥 수와 같아진다.
+    if (from[i].side !== Position.Right || to[i].side !== Position.Left) return;
+    const key = `${endpointNodeId(w.from)} ${endpointNodeId(w.to)}`;
+    groups.set(key, [...(groups.get(key) ?? []), i]);
+  });
+
+  for (const g of groups.values()) {
+    // 통로의 양 벽 = 무리에서 가장 안쪽에 있는 스텁 끝. 한 가닥이라도 담기지
+    // 못할 폭이면 그 가닥에서 라우터가 알아서 직교로 되돌린다.
+    const a = Math.max(...g.map((i) => from[i].x + DEFAULT_STUB));
+    const b = Math.min(...g.map((i) => to[i].x - DEFAULT_STUB));
+    const span = b - a;
+    if (span <= 0) continue;
+    const mid = (a + b) / 2;
+    const n = g.length;
+    // 폭이 좁으면 간격을 0 으로 접는다. 레퍼런스 식은 span < 60 에서 **음수**가
+    // 되는데, 그러면 자리 순서가 뒤집혀 교차를 줄이려던 정렬이 되레 교차를 만든다.
+    const gap = Math.max(0, Math.min(DIAG_MAX_GAP, (span - DIAG_MIN_SPAN) / n));
+    [...g]
+      .sort((p, q) => (to[p].y - to[q].y) || (p - q))
+      .forEach((i, slot) => { out[i] = mid + (slot - (n - 1) / 2) * gap; });
+  }
+
+  /*
+   * 직교로 남길 가닥은 **무리를 다 짜고 난 뒤 마지막에** 뺀다 — 무리에서 아예
+   * 빼 버리지 않는다. 빼면 머릿수(n)와 자리(slot)가 다시 매겨져 **상관없는
+   * 가닥의 사선 중심이 함께 튄다**. 실측으로 두 번 확인했다:
+   *   · 배선 한 본에 laneY 를 넣었더니 그 통로의 다른 배선이 22px 옆으로 옮겨졌다
+   *   · 20본 중 3본을 케이블로 묶었더니 나머지 7본이 전부 움직였다
+   * 레인 배정에서 이미 한 번 겪고 고친 결함이고(`assignLanes` 의 `pick` 주석),
+   * 시험이 그 성질을 못박고 있다: "한 본만 옮기면 그 한 본만 움직인다".
+   *
+   * 빠진 가닥의 자리는 **비워 둔다**. 그 가닥도 같은 통로를 지나므로 자리를
+   * 내주는 것이 맞고, 무엇보다 남은 가닥들이 흔들리지 않는다.
+   */
+  doc.wires.forEach((w, i) => {
+    // (1) 사람이 꺾임을 손으로 잡은 배선. `laneY`·`laneX` 는 직교 경로의 선분을
+    //     미는 값인데 사선에는 밀 선분이 없다 — 값이 뜻을 잃지 않게 직교로 남긴다.
+    //     값을 지우면 사선으로 되돌아간다.
+    // (2) 케이블 심선. 머리말의 그 이유(자켓이 사라진다).
+    if (w.route?.laneY != null || w.route?.laneX != null || isCore(i)) out[i] = undefined;
+  });
+  return out;
+}
+
 export type WireLanes = {
+  /**
+   * 배선별 사선 구간의 중심 x — `undefined` 면 직교로 그린다.
+   * 값이 있어도 폭이 모자라거나 상자가 막으면 라우터가 직교로 되돌린다.
+   */
+  diagCenter: (number | undefined)[];
   /**
    * 배선별 가로 주행 구간 y 오프셋 — **실제로 그려지는 값**.
    * `Wire.route.laneY` 가 있으면 그 값이고, 없으면 `autoLaneY` 와 같다.
@@ -716,7 +830,17 @@ export function assignLanes(doc: HarnessDocument, view: ViewMode = 'logical'): W
   const autoLaneX = colorRuns(doc.wires.length, runs).map((k) => k * LANE_X_STEP);
   const laneX = pick(autoLaneX, 'laneX');
 
-  return { laneY, laneX, autoLaneY, autoLaneX, from, to, fromBox, toBox, obstacles };
+  /*
+   * 3) 사선 중심 x.
+   *
+   * 레인 배정과 **서로 보지 않는다**. 사선을 쓰는 가닥에는 레인이 얹힐 선분이
+   * 없고, 레인을 쓰는 가닥(직교로 되돌아간 것·사람이 손으로 잡은 것)에는 중심이
+   * 쓰이지 않는다. 두 값이 한 가닥에 함께 실려도 서로를 흔들지 않으므로,
+   * 위 1)·2) 의 계산과 그 결과(=기존 도면의 직교 좌표)는 **한 자리도 바뀌지 않는다**.
+   */
+  const diagCenter = assignDiagCenters(doc, from, to);
+
+  return { diagCenter, laneY, laneX, autoLaneY, autoLaneX, from, to, fromBox, toBox, obstacles };
 }
 
 /**
@@ -787,12 +911,14 @@ export function docToEdges(
       // 두 쪽이 폭을 따로 재면 겹침 계산이 갈라져 종이에서만 라벨이 포개진다.
       width: stubTextOf(doc, w).width,
       // `wirePlan.routeWire` 를 부르면 순환 참조가 된다(stubLabel.ts 머리말).
-      // 라우터를 직접 부르되 stub 기본값은 같은 상수를 쓴다.
-      points: routeOrthogonal({
+      // 라우터를 직접 부르되 stub 기본값과 **사선/직교 갈림길(routeAuto)** 은
+      // 같은 것을 쓴다 — 라벨을 다른 경로 위에 놓으면 선 밖에 라벨이 뜬다.
+      points: routeAuto({
         sourceX: lanes.from[i].x, sourceY: lanes.from[i].y,
         targetX: lanes.to[i].x, targetY: lanes.to[i].y,
         sourcePosition: lanes.from[i].side, targetPosition: lanes.to[i].side,
         laneY: lanes.laneY[i], laneX: lanes.laneX[i],
+        center: lanes.diagCenter[i],
         stub: DEFAULT_STUB,
         sourceBox: lanes.fromBox[i], targetBox: lanes.toBox[i], obstacles: lanes.obstacles,
       }).points,
@@ -822,6 +948,9 @@ export function docToEdges(
         opacity: dim && !on ? 0.16 : 1,
       },
       data: {
+        // 사선 중심 x — 화면 엣지도 이 값을 그대로 routeWire 에 넘긴다.
+        // 여기서 빠뜨리면 화면만 직교로 그려져 종이와 갈라진다.
+        diagCenter: lanes.diagCenter[i],
         laneY: lanes.laneY[i],
         laneX: lanes.laneX[i],
         // 노드보다 아래층에 그려지므로 두 끝 노드 박스를 피해 가야 한다

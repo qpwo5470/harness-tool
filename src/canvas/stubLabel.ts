@@ -12,10 +12,9 @@
  */
 import type { HarnessDocument, Endpoint, Wire } from '../types';
 import { estimateTextWidth } from './geometry';
-import { DEFAULT_LABEL_BACKOFF, DEFAULT_STUB, type Pt } from './route';
+import { DEFAULT_LABEL_BACKOFF, DEFAULT_STUB, segLen, type Pt } from './route';
 
 const EPS = 1e-6;
-const segLen = (a: Pt, b: Pt) => Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
 
 /**
  * 전선 색 약호. 도면에서는 색 이름을 다 쓸 자리가 없어 약호를 쓴다.

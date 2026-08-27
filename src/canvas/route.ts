@@ -158,9 +158,20 @@ function simplify(raw: Pt[]): Pt[] {
   return out;
 }
 
-/** 직교 경로라 구간 길이는 맨해튼 거리와 같다 */
-function segLen(a: Pt, b: Pt): number {
-  return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+/**
+ * 선분 길이.
+ *
+ * 예전에는 맨해튼 거리(|dx|+|dy|)였다 — 선분이 전부 수평 아니면 수직이던 시절에는
+ * 같은 값이라 그래도 됐다. 45° 사선이 들어오면 갈린다: 사선의 맨해튼 길이는
+ * 실제 길이의 √2 배라, 라벨을 "22px 되짚은 자리"에 놓는 계산이 사선 구간에서만
+ * 1.4배 짧게 잡힌다. 직교 경로에서는 두 값이 정확히 같으므로 **기존 좌표는
+ * 하나도 바뀌지 않는다**(시험이 못박고 있다).
+ *
+ * `stubLabel.backFrom` 도 같은 이유로 같은 식을 쓴다 — 두 곳이 다른 자를 쓰면
+ * 겹침을 푼 자리와 실제로 찍히는 자리가 갈라진다.
+ */
+export function segLen(a: Pt, b: Pt): number {
+  return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
 /** 경로 끝(도착 패드)에서 거리 dist 만큼 되짚어 올라간 점 */
@@ -354,8 +365,166 @@ export function routeOrthogonal(i: RouteInput): Route {
     raw = [S, { x: S.x, y: ay }, { x: bx, y: ay }, { x: bx, y: T.y }, T];
   }
 
+  return finish(raw, i.labelBackoff);
+}
+
+/** 꺾임점 → Route. 두 라우터가 **같은 자를 쓰도록** 마무리를 한 곳에 둔다. */
+function finish(raw: Pt[], labelBackoff?: number): Route {
   const points = simplify(raw);
   const d = points.map((p, k) => `${k === 0 ? 'M' : 'L'} ${round(p.x)} ${round(p.y)}`).join(' ');
-  const label = pointFromEnd(points, i.labelBackoff ?? DEFAULT_LABEL_BACKOFF);
+  const label = pointFromEnd(points, labelBackoff ?? DEFAULT_LABEL_BACKOFF);
   return { d, points, labelX: round(label.x), labelY: round(label.y) };
+}
+
+/* ── 45° 사선 라우터 ──────────────────────────────────────────────────────
+ *
+ * ── 왜 필요한가 (개선안 §2-1)
+ * 직교 라우터는 세로 꺾임을 **가로 주행 구간의 x 한 자리**에 모은다. 핀맵이 뒤섞인
+ * 배선(5P → 10P 역순 매핑)에서는 그 한 자리에 세로 선분 n개가 나란히 서고, 어느
+ * 가닥이 어느 핀으로 가는지 눈으로 못 따라간다. 레인(laneX)이 그 선분들을 벌려
+ * 주기는 하지만 벌린 만큼 **꺾임점이 같은 x 대역에 몰리는 것**은 그대로다.
+ *
+ * 45° 사선은 그 문제를 다르게 푼다. 가닥마다 사선 구간의 **중심 x** 를 어긋나게
+ * 두면 꺾임점 2n개가 x 축을 따라 고르게 흩어지고, 사선의 기울기가 언제나 같으므로
+ * (정확히 45°) 눈이 한 가닥을 끝까지 따라갈 수 있다. 이것이 손으로 그린 하네스
+ * 도면의 오래된 관행이기도 하다.
+ *
+ * ── 각도는 왜 "정확히 45°" 인가
+ * 임의 각을 쓰면 가닥마다 기울기가 달라 사선끼리 어디서 만날지 눈이 예측하지
+ * 못한다. 기울기를 하나로 못박으면 사선들이 서로 **평행 아니면 직각**이라
+ * 교차점이 규칙적으로 보인다. 그래서 `half = |dy|/2` 로 x 진행량을 dy 에
+ * 묶는다 — 이 식이 곧 45° 다.
+ *
+ * ── 기존 직교 라우터는 지운 게 아니라 **밑에 남는다**
+ * 스플라이스 합류처럼 사선이 어색한 자리, 사선을 담을 폭이 없는 자리, 상자를
+ * 비켜 가야 하는 자리는 전부 `routeOrthogonal` 로 되돌아간다(개선안이 "존치"
+ * 라고 못박았다). 그래서 이 함수는 **못 그리면 `null` 을 돌려준다** — 무엇을
+ * 대신 그릴지는 부르는 쪽(`routeAuto`)이 정한다.
+ */
+
+/** 사선 구간 양옆에 두는 최소 여유(px) — 레퍼런스 `render.py::route45` 의 4 */
+export const DIAG_MARGIN = 4;
+
+/**
+ * 이보다 작은 |dy| 는 꺾을 것이 없다 — 곧은 한 줄로 잇는다.
+ * **1:1 스트레이트 매핑이 여기 걸린다**(마주 보는 핀은 dy = 0).
+ */
+export const DIAG_FLAT = 0.6;
+
+export type DiagonalInput = RouteInput & {
+  /** 사선 구간의 중심 x. 없으면 두 스텁 끝의 중점 */
+  center?: number;
+};
+
+/** 점이 상자 안(변 포함)에 있는가 */
+function holds(b: Box, p: Pt): boolean {
+  return p.x >= b.x - EPS && p.x <= b.x + b.w + EPS
+    && p.y >= b.y - EPS && p.y <= b.y + b.h + EPS;
+}
+
+/**
+ * 선분이 (여백만큼 부풀린) 상자 **속**을 지나는가 — 변에 닿기만 하는 것은 통과.
+ *
+ * 직교 전용이던 `crosses` 를 못 쓰는 이유: 사선은 축에 정렬돼 있지 않다.
+ * 그래서 축별 구간 자르기(Liang–Barsky slab)로 일반 선분을 받는다.
+ * 판정 기준(변에 닿는 것은 통과)은 `crosses` 와 **같게** 맞췄다 — 스텁 첫 점이
+ * 제 패드가 붙은 상자 변 위에 있기 때문이다.
+ */
+export function segmentHitsBox(p: Pt, q: Pt, b: Box, clearance: number): boolean {
+  const lo = { x: b.x - clearance, y: b.y - clearance };
+  const hi = { x: b.x + b.w + clearance, y: b.y + b.h + clearance };
+  let t0 = 0;
+  let t1 = 1;
+  for (const k of ['x', 'y'] as const) {
+    const d = q[k] - p[k];
+    if (Math.abs(d) < EPS) {
+      // 이 축으로 움직이지 않는다 — 그 좌표가 띠 밖(또는 변 위)이면 통과
+      if (p[k] <= lo[k] + EPS || p[k] >= hi[k] - EPS) return false;
+      continue;
+    }
+    const a = (lo[k] - p[k]) / d;
+    const c = (hi[k] - p[k]) / d;
+    t0 = Math.max(t0, Math.min(a, c));
+    t1 = Math.min(t1, Math.max(a, c));
+    if (t1 - t0 <= EPS) return false;
+  }
+  return t1 - t0 > EPS;
+}
+
+/**
+ * 수평 → 정확히 45° 사선 → 수평. 담을 수 없으면 `null`.
+ *
+ * ── 못 그리는 자리 (전부 직교로 되돌아간다)
+ *  (1) **마주 보는 가로 핸들이 아니다.** 스텁이 목적지 반대로 나가면 되돌아오는
+ *      길이 필요하고, 그 길을 상자 밖으로 미는 것은 직교 라우터의 일이다
+ *      (`pushOut`·`pushAside`). 사선에는 밀어낼 손잡이가 없다.
+ *  (2) **스텁끼리 이미 지나쳤다**(B.x ≤ A.x). 사선을 놓을 x 가 없다.
+ *  (3) **폭 부족**(lo > hi). |dy| 가 클수록 사선이 x 를 많이 먹는다 —
+ *      레퍼런스와 같은 조건이다.
+ *  (4) **상자 관통.** 사선이 하우징을 지나면 지금(직교)보다 나쁘다. 하우징은
+ *      흰색으로 채워지므로 그 구간에서 선이 통째로 사라진다. 사선은 한 방향으로
+ *      비켜 밀 수 없으므로(밀면 45° 가 깨진다) 그 조합은 통째로 포기한다.
+ *
+ * ── laneY·laneX 를 쓰지 않는다
+ * 두 레인은 "가로 주행 구간의 y" 와 "세로 간선의 x" 를 미는 값인데, 사선 경로에는
+ * 그런 선분이 아예 없다. 가닥을 벌리는 일은 여기서 **중심 x**(center)가 한다.
+ * 그래서 사람이 레인을 손으로 지정한 배선은 사선을 쓰지 않는다 — 그 판단은
+ * 값을 만드는 쪽(`docToFlow.assignDiagCenters`)이 내린다.
+ */
+export function routeDiagonal(i: DiagonalInput): Route | null {
+  const stub = i.stub ?? DEFAULT_STUB;
+  const ds = OUTWARD[i.sourcePosition] ?? OUTWARD[Position.Right];
+  const dt = OUTWARD[i.targetPosition] ?? OUTWARD[Position.Left];
+  if (!(ds.x > 0 && dt.x < 0)) return null;                    // (1)
+
+  const S: Pt = { x: i.sourceX, y: i.sourceY };
+  const T: Pt = { x: i.targetX, y: i.targetY };
+  // 스텁 14 는 그대로다 — 패드에서 곧게 나온 뒤에 꺾인다(개선안 §1).
+  const A: Pt = { x: S.x + stub, y: S.y };
+  const B: Pt = { x: T.x - stub, y: T.y };
+  if (B.x - A.x <= EPS) return null;                           // (2)
+
+  const dy = B.y - A.y;
+  let raw: Pt[];
+  if (Math.abs(dy) < DIAG_FLAT) {
+    raw = [S, T];                                              // 1:1 스트레이트
+  } else {
+    const half = Math.abs(dy) / 2;                             // ← 이 식이 45° 다
+    const lo = A.x + DIAG_MARGIN + half;
+    const hi = B.x - DIAG_MARGIN - half;
+    if (lo > hi) return null;                                  // (3)
+    const c = Math.min(Math.max(i.center ?? (A.x + B.x) / 2, lo), hi);
+    raw = [S, { x: c - half, y: S.y }, { x: c + half, y: T.y }, T];
+  }
+
+  // (4) 상자 회피 — 양 끝 패드가 붙은 상자는 뺀다. 패드가 그 변 **위**에 있어
+  //     여백(clearance)을 재면 언제나 걸린다. 경로는 두 패드 사이에서만 x 가
+  //     늘어나므로(단조) 제 끝 상자를 관통할 일도 없다.
+  const boxes: Box[] = [];
+  if (i.sourceBox) boxes.push(i.sourceBox);
+  if (i.targetBox) boxes.push(i.targetBox);
+  if (i.obstacles?.length) boxes.push(...i.obstacles);
+  const cl = i.clearance ?? DEFAULT_CLEARANCE;
+  const walls = boxes.filter((b) => !holds(b, S) && !holds(b, T));
+  for (let k = 1; k < raw.length; k++) {
+    if (walls.some((b) => segmentHitsBox(raw[k - 1], raw[k], b, cl))) return null;
+  }
+
+  return finish(raw, i.labelBackoff);
+}
+
+/**
+ * 사선을 **쓸 수 있으면 쓰고 아니면 직교로** 그린다.
+ *
+ * 두 라우터 중 무엇을 쓸지는 **여기 한 곳에서만** 갈린다. 화면(OrthogonalEdge →
+ * wirePlan.routeWire)도 PDF(pdfDraw → wirePlan.planWires)도 스텁 라벨 배치
+ * (docToFlow.docToEdges)도 전부 이 함수를 지난다. 갈림길이 두 곳이면 그 둘이
+ * 언젠가 다르게 갈리고, 그때 화면과 종이가 갈라진다 — 이 레포가 두 번 낸 사고다.
+ *
+ * `center` 가 없으면 사선을 아예 시도하지 않는다. 그래서 **상자·레인만 넘기던
+ * 예전 호출부는 글자 하나까지 같은 경로를 받는다**(속성 패널의 꺾임 미리보기가
+ * 그렇게 부른다).
+ */
+export function routeAuto(i: DiagonalInput): Route {
+  return (i.center != null ? routeDiagonal(i) : null) ?? routeOrthogonal(i);
 }

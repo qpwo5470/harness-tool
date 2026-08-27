@@ -748,6 +748,147 @@ export function validateHarness(doc: HarnessDocument): Issue[] {
     });
   }
 
+  // ================================================================
+  // 20. 실물 핀 배열(layout) 없음 / 21. 뷰 기준(view) 없음
+  //
+  //     도면의 핀 좌표(`pinLayout`)는 "배선이 나가는 변에 긴 축을 붙인다" 는
+  //     **작도 규칙**을 따른다. 그래서 10P 1열 커넥터가 도면에서는 세로로 선다.
+  //     실물은 가로 한 줄이다. 조립자가 도면 좌표를 실물 배열로 믿고 압착하면
+  //     그대로 오조립이라, 도면에는 실물 배열(`layout`)을 따로 찍어야 한다.
+  //
+  //     그런데 배열만으로는 부족하다. 커넥터는 뒤집으면 번호가 좌우로 뒤집히고,
+  //     실제로 확인한 제조사 도면 4건은 **전부** `viewed from …` 표기가 없었으며
+  //     **Mini-Fit 과 Micro-Fit 의 번호 뷰는 서로 거울상**이었다(개선안 §6-2).
+  //     "대개 이 면이겠지" 가 성립하지 않는다는 뜻이라, 뷰 기준이 비어 있으면
+  //     배열이 있어도 어느 쪽 물건인지 정할 수 없다.
+  //
+  //     ── 왜 타입이 아니라 여기서 잡나
+  //     `view` 를 타입상 필수로 만들면 이 필드가 없던 저장 파일이 안 열리고,
+  //     그러려면 schemaVersion 을 올려야 한다. 강제하는 자리를 타입에서 검증으로
+  //     옮긴 것이다(types/index.ts 의 `PartLibraryItem.view` 주석).
+  //
+  //     ── 레벨이 갈리는 이유
+  //     layout 없음은 **아직 안 적은 것**이다. 도면에 미니 뷰가 안 나올 뿐 틀린
+  //     말을 하지는 않는다 → info.
+  //     view 없음은 **적어 놓고 어느 면인지 말하지 않은 것**이다. 도면이 배열을
+  //     확정적으로 찍는데 뒤집힌 면일 수 있다 → warn.
+  //
+  //     ── 왜 커넥터마다가 아니라 부품마다 한 번인가
+  //     고칠 자리가 라이브러리의 **부품** 한 곳이다. 같은 하우징을 여섯 개 놓은
+  //     도면에서 같은 말이 여섯 번 뜨면 목록이 그것만으로 찬다.
+  // ================================================================
+  {
+    /** 하우징 id → 그 하우징을 쓰는 첫 커넥터 (클릭 대상) */
+    const firstUser = new Map<Id, Connector>();
+    for (const c of doc.connectors) {
+      // 스플라이스는 꼬임 접속이라 그릴 핀 배열이 없다.
+      if (c.kind === 'splice') continue;
+      // 단독 러그는 전선 1본짜리라 "배열"이라 할 것이 없다.
+      if (isLugConnector(doc, c.housingId)) continue;
+      if (!firstUser.has(c.housingId)) firstUser.set(c.housingId, c);
+    }
+    for (const [housingId, c] of firstUser) {
+      const part = partById.get(housingId);
+      if (!part) continue;                       // 규칙 11 이 이미 잡았다
+      // 핀이 하나뿐인 부품(페룰·배럴 등)은 배열이 뜻을 갖지 않는다.
+      if ((part.pinCount ?? part.pinLayout?.length ?? 0) <= 1) continue;
+
+      if (!part.layout || part.layout.length === 0) {
+        out.push({
+          id: 'pin-layout-missing',
+          level: 'info',
+          title: `실물 핀 배열 없음 — ${part.name}`,
+          detail: '도면의 핀 좌표는 배선이 나가는 방향에 맞춰 돌려 그린 것이라 실물 배열과 다를 수 있다 — 실물 배열을 적어 두지 않으면 도면에 핀 배열 뷰가 나오지 않아, 조립자가 도면 좌표를 실물로 믿고 압착할 수 있다.',
+          targetId: c.id,
+          where: `${refs.get(c.id) ?? '?'} ${part.name}`,
+        });
+        continue;
+      }
+      if (!part.view || part.view.trim() === '') {
+        out.push({
+          id: 'pin-view-missing',
+          level: 'warn',
+          title: `핀 배열 뷰 기준 없음 — ${part.name}`,
+          detail: '커넥터는 뒤집으면 번호가 좌우로 뒤집힌다 — 어느 면에서 본 배열인지 적혀 있지 않으면 도면의 핀 배열이 거울상일 수 있고, 그대로 압착하면 좌우가 통째로 바뀐다. 제조사 도면에 뷰 표기가 없는 경우가 대부분이므로 실물을 보고 기준을 적어야 한다.',
+          targetId: c.id,
+          where: `${refs.get(c.id) ?? '?'} ${part.name}`,
+        });
+      }
+    }
+  }
+
+  // ================================================================
+  // 22. 미사용으로 적은 핀에 배선이 있다 / 23. 없는 핀을 미사용으로 적었다
+  //
+  //     `unused` 는 "여기는 비우는 것이 맞다" 고 도면이 못 박는 표시다(패드에 X).
+  //     그 자리에 배선이 붙어 있으면 도면이 한 자리에서 두 말을 하는 셈이라,
+  //     조립자는 X 를 믿고 그 가닥을 빼거나 배선을 믿고 X 를 무시한다. 어느 쪽이
+  //     사람의 뜻인지는 **사람만 안다** — 자동으로 고치지 않는다.
+  //
+  //     error 가 아니라 warn 인 이유: 부품 수량도 전선 길이도 멀쩡해서 발주는
+  //     그대로 나간다. 틀린 것은 도면이 말하는 내용이다.
+  //
+  //     23 은 하우징을 핀 수가 다른 것으로 바꾼 뒤 남은 흔적이다. 화면 어디에도
+  //     나오지 않은 채 파일에만 남아 다음 사람을 헷갈리게 한다(규칙 16 과 같은 부류).
+  // ================================================================
+  for (const c of doc.connectors) {
+    if (!c.unused || c.unused.length === 0) continue;
+    /** 미사용 표시는 핀 번호로도 라벨로도 적을 수 있다 — 둘 다로 찾는다 */
+    const keyOf = (p: Pin) => [String(p.index), p.label].filter(Boolean) as string[];
+    const byKey = new Map<string, Pin>();
+    for (const p of c.pins) for (const k of keyOf(p)) if (!byKey.has(k)) byKey.set(k, p);
+
+    const wiredUnused: Pin[] = [];
+    const unknown: string[] = [];
+    for (const u of c.unused) {
+      const p = byKey.get(String(u));
+      if (!p) { unknown.push(String(u)); continue; }
+      if (wiresAtPin.has(`${c.id}:${p.id}`)) wiredUnused.push(p);
+    }
+    if (wiredUnused.length > 0) {
+      out.push({
+        id: 'unused-pin-wired',
+        level: 'warn',
+        title: `미사용 표시한 핀에 배선 — ${wiredUnused.map((p) => `#${p.label ?? p.index}`).join(' ')}`,
+        detail: '도면이 이 핀을 "비운다"고 표시해 놓고 같은 자리에 배선을 그렸다 — 조립자는 X 표시를 믿고 그 가닥을 빼거나, 배선을 믿고 표시를 무시한다. 어느 쪽이 맞는지는 사람만 알 수 있으므로 미사용 표시를 지우거나 배선을 옮겨야 한다.',
+        targetId: c.id,
+        where: whereConn(c),
+      });
+    }
+    if (unknown.length > 0) {
+      out.push({
+        id: 'unused-pin-unknown',
+        level: 'info',
+        title: `없는 핀을 미사용으로 표시 — ${unknown.join(' ')}`,
+        detail: '미사용으로 적어 둔 핀이 이 커넥터에 없다 — 핀 수가 다른 하우징으로 바꿨을 때 남는 흔적이라, 도면에는 아무것도 표시되지 않고 파일에만 남는다.',
+        targetId: c.id,
+        where: whereConn(c),
+      });
+    }
+  }
+
+  // ================================================================
+  // 24. 절연 슬리브를 켰는데 어떤 슬리브인지 모른다
+  //
+  //     `sleeve` 를 켜면 부품표에 슬리브가 한 줄 선다(export/exporters.ts).
+  //     그런데 그 줄이 무엇인지는 하우징의 `sleevePartId` 가 안다. 그것이 없으면
+  //     부품표에는 품번 없는 "절연 슬리브" 한 줄만 남아, 발주처가 무엇을 보낼지
+  //     정할 수 없다. 켠 사람의 뜻(절연하겠다)은 살아 있으므로 지우지 않고 알린다.
+  // ================================================================
+  for (const c of doc.connectors) {
+    if (!c.sleeve) continue;
+    const part = partById.get(c.housingId);
+    if (!part || part.sleevePartId) continue;
+    out.push({
+      id: 'sleeve-part-unknown',
+      level: 'warn',
+      title: `절연 슬리브 품목 미상 — ${part.name}`,
+      detail: '이 끝단에 절연 슬리브를 씌우기로 했는데 어떤 슬리브가 맞는지가 부품에 적혀 있지 않다 — 부품표에는 품번 없는 한 줄만 나가므로 발주처가 무엇을 보낼지 정할 수 없다. 라이브러리에서 짝이 되는 슬리브 품목을 지정해야 한다.',
+      targetId: c.id,
+      where: whereConn(c),
+    });
+  }
+
   return sortIssues(out);
 }
 

@@ -23,7 +23,7 @@ import type { Position } from '@xyflow/react';
 import type { HarnessDocument, Id, ViewMode } from '../types';
 import { assignLanes, LANE_Y_STEP } from './docToFlow';
 import { PITCH } from './geometry';
-import { routeOrthogonal, DEFAULT_STUB, type Box, type Pt, type Route } from './route';
+import { routeAuto, DEFAULT_STUB, type Box, type Pt, type Route } from './route';
 
 /**
  * 엣지 양 끝 좌표.
@@ -45,6 +45,12 @@ export type EdgeEnds = {
  * `docToEdges` 가 엣지 data 에 싣는 필드와 **같은 모양**이라 그대로 넘길 수 있다.
  */
 export type WireGeometry = {
+  /**
+   * 사선 구간의 중심 x. **이 값이 있을 때만 45° 사선을 시도한다**(route.routeAuto).
+   * 값이 있어도 폭이 모자라거나 상자가 막으면 직교로 되돌아간다.
+   * 없으면 예전과 글자 하나까지 같은 직교 경로가 나온다.
+   */
+  diagCenter?: number;
   /** 가로 주행 구간의 y 오프셋 */
   laneY?: number;
   /** 세로 간선의 x 오프셋 */
@@ -72,8 +78,11 @@ export type WireGeometry = {
  * 적어 두고 있었다. 상수를 베끼면 한쪽만 고쳐지고 두 그림이 조용히 갈라진다.
  */
 export function routeWire(ends: EdgeEnds, g: WireGeometry = {}): Route {
-  return routeOrthogonal({
+  return routeAuto({
     ...ends,
+    // 사선을 쓸지 말지는 `route.routeAuto` 한 곳에서만 갈린다 — 여기서 한 번 더
+    // 판단하면 갈림길이 둘이 되고, 그 둘이 갈라지는 날 화면과 종이가 갈라진다.
+    ...(g.diagCenter != null ? { center: g.diagCenter } : {}),
     laneY: g.laneY ?? 0,
     laneX: g.laneX ?? 0,
     stub: DEFAULT_STUB,
@@ -129,6 +138,7 @@ export function planWires(doc: HarnessDocument, view: ViewMode = 'logical'): Pla
     targetPosition: lanes.to[i].side,
   });
   const geo = (i: number) => ({
+    diagCenter: lanes.diagCenter[i],
     laneY: lanes.laneY[i],
     laneX: lanes.laneX[i],
     sourceBox: lanes.fromBox[i],
