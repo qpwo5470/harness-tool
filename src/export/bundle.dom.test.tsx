@@ -24,12 +24,14 @@ import { crc32 } from './zip';
  * 다만 **어떤 옵션으로 불렸는지는 기록한다.** 용지·치수 단위가 대화상자에서
  * 도면 생성까지 실제로 흘러가는지는 이 경로에서만 확인할 수 있다.
  */
-const { pdfCalls } = vi.hoisted(() => ({
-  pdfCalls: [] as { id: string; paper?: string; unit?: string }[],
-}));
+type PdfCall = { id: string; paper?: string; unit?: string; layout?: string; perSet?: number };
+const { pdfCalls } = vi.hoisted(() => ({ pdfCalls: [] as PdfCall[] }));
 vi.mock('./pdf', () => ({
-  harnessPdfBytes: (doc: HarnessDocument, opts?: { paper?: string; unit?: string }) => {
-    pdfCalls.push({ id: doc.id, paper: opts?.paper, unit: opts?.unit });
+  harnessPdfBytes: (doc: HarnessDocument, opts?: Omit<PdfCall, 'id'>) => {
+    pdfCalls.push({
+      id: doc.id, paper: opts?.paper, unit: opts?.unit,
+      layout: opts?.layout, perSet: opts?.perSet,
+    });
     return new TextEncoder().encode(`%PDF-1.4 ${doc.id}`);
   },
 }));
@@ -395,23 +397,39 @@ describe('내보내기 옵션이 산출물에 반영된다', () => {
   });
 
   /** 용지는 이미 반영되고 있었다 — 끊긴 것은 나머지 셋이었다. 그 사실을 못 박는다 */
-  it('용지 A3/A4 와 치수 단위가 도면 생성까지 그대로 흘러간다', async () => {
+  it('용지 · 배치 · 치수 단위가 도면 생성까지 그대로 흘러간다', async () => {
     await exportWith(makeKit(), () => {
       // 도면 PDF 하나만 남긴다
       for (const n of ['접속표 CSV', '파트리스트 CSV']) {
         fireEvent.click(screen.getByRole('checkbox', { name: n }));
       }
     });
-    expect(pdfCalls).toEqual([{ id: 'h0', paper: 'A3', unit: 'mm' }]);
+    // 기본은 A4 1페이지다 (개선안 §2-2). 세트당 수량도 함께 넘어가야
+    // 제목블록 3행이 '세트당 미상' 이 되지 않는다.
+    expect(pdfCalls).toEqual([{ id: 'h0', paper: 'A4', unit: 'mm', layout: 'onepage', perSet: 1 }]);
 
     pdfCalls.length = 0;
     await exportWith(makeKit(), () => {
       for (const n of ['접속표 CSV', '파트리스트 CSV']) {
         fireEvent.click(screen.getByRole('checkbox', { name: n }));
       }
-      fireEvent.click(screen.getByRole('button', { name: 'A4' }));
+      // 3면 배치를 골라야 A3 를 고를 수 있다 — 1페이지는 A4 좌표 전용이다
+      fireEvent.click(screen.getByRole('button', { name: '3면' }));
+      fireEvent.click(screen.getByRole('button', { name: 'A3' }));
       fireEvent.click(screen.getByRole('button', { name: 'inch' }));
     });
-    expect(pdfCalls).toEqual([{ id: 'h0', paper: 'A4', unit: 'inch' }]);
+    expect(pdfCalls).toEqual([{ id: 'h0', paper: 'A3', unit: 'inch', layout: 'sheets', perSet: 1 }]);
+  });
+
+  /**
+   * 1페이지 배치에서 A3 를 **고를 수 없어야** 한다.
+   * 조용히 A4 로 바꿔 버리면 사람은 A3 를 골랐다고 믿은 채 A4 를 받는다 —
+   * 이 저장소가 파일명(Rev)에서 이미 한 번 낸 종류의 사고다.
+   */
+  it('1페이지 배치에서는 A3 를 고를 수 없다', async () => {
+    render(<ExportDialog kit={makeKit()} activeHarnessId="h0" onCancel={() => {}} onExport={() => {}} />);
+    expect((screen.getByRole('button', { name: 'A3' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: '3면' }));
+    expect((screen.getByRole('button', { name: 'A3' }) as HTMLButtonElement).disabled).toBe(false);
   });
 });

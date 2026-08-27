@@ -18,6 +18,8 @@ import {
   buildKitBom, buildPartList, buildRunList, kitBomToCsv, runListToCsv, toCsv,
 } from './exporters';
 import type { LengthUnit } from './units';
+import type { SheetLayout } from './pdfDraw';
+import { perSetOf } from '../store/kit';
 import { buildZip } from './zip';
 
 /**
@@ -57,6 +59,11 @@ const defaultYield = () => new Promise<void>((r) => { setTimeout(r, 0); });
 export type ExportBuildPlan = {
   files: ExportFile[];
   paper: 'A3' | 'A4';
+  /**
+   * 도면 배치. 기본은 `onepage` (A4 한 장) — 옛 3면 방식은 `sheets`.
+   * optional 인 이유는 시험이 파일 목록만 들고 부를 수 있게 하기 위해서다.
+   */
+  layout?: SheetLayout;
   unit?: LengthUnit;
   /** 전선 여유율(%) — **파트리스트 CSV 에만** 적용된다 */
   marginPct?: number;
@@ -140,7 +147,11 @@ async function bodyOf(
     return encode(toCsv(buildPartList(h, { unit }), { unit, marginPct: plan.marginPct ?? 0 }));
   }
   if (!pdfMod) throw new Error('PDF 모듈을 불러오지 못했습니다');
-  return pdfMod.harnessPdfBytes(h, { paper: plan.paper, unit });
+  // 세트당 수량은 `HarnessSet` 이 안다 — 제목블록 3행과 도면 위 치수 표기가
+  // 그 값을 적는다(개선안 §2-3 · §2-7). 세트를 아는 곳이 여기뿐이라 여기서 넘긴다.
+  return pdfMod.harnessPdfBytes(h, {
+    paper: plan.paper, unit, layout: plan.layout ?? 'onepage', perSet: perSetOf(kit.set, h.id),
+  });
 }
 
 /**

@@ -22,7 +22,7 @@ import { ToastHost, showToast } from './ui/Toast';
 import { EmptyCanvas } from './ui/EmptyCanvas';
 import { ValidationPanel } from './panels/ValidationPanel';
 import { validateHarness } from './store/validate';
-import { letterAt, orderText } from './store/kit';
+import { letterAt, orderText, perSetOf } from './store/kit';
 import { buildPartList, toCsv, buildRunList, runListToCsv } from './export/exporters';
 import { buildExportEntries, packForDownload } from './export/bundle';
 import { zipFileName } from './export/exportPlan';
@@ -288,7 +288,9 @@ export default function App() {
   async function exportPdf() {
     // 더 이상 화면 스냅샷을 찍지 않는다 — 문서에서 벡터로 직접 그린다.
     const { downloadPdf } = await import('./export/pdf'); // 코드 스플릿
-    await downloadPdf(doc);
+    // 툴바의 빠른 내보내기는 기본 배치(A4 1페이지) 그대로다. 세트당 수량은
+    // 여기서도 알 수 있으므로 넘긴다 — 제목블록 3행이 '세트당 미상' 이 되지 않게.
+    await downloadPdf(doc, { perSet: perSetOf(kit.set, doc.id) });
   }
   const runMenu = (fn: () => void) => () => {
     setMenuOpen(false);

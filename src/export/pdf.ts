@@ -2,8 +2,17 @@
  * Agent D 소유 — 브라우저 출력 (PDF 다운로드).
  *
  * 이 툴의 핵심 산출물은 **인쇄해서 현장에 들고 가는 종이**다. 그래서 PDF 는
- * 화면 스냅샷이 아니라 벡터로 다시 그린다(pdfDraw.ts). 한 하네스당 세 면:
- *   1) 배선도 (프레임 · 제목블록 · 하우징 심볼 · 직교 배선 · 스텁 라벨)
+ * 화면 스냅샷이 아니라 벡터로 다시 그린다(pdfDraw.ts).
+ *
+ * 종이에 앉히는 방식은 두 가지다(pdfDraw.SheetLayout):
+ *   · `onepage` (기본) — A4 가로 **한 장**. 배선도 · 접속표 · 부품표 · 핀 배열
+ *     뷰 · 제목블록이 전부 한 면에 있다(개선안 §2-2). 표가 넘치면 이어지는
+ *     면으로 흘려 보낸다 — 한 장에 못 넣는다고 행을 버리지는 않는다.
+ *   · `sheets` — 옛 3면 방식(배선도 / 접속표 / 파트리스트), A3 기본.
+ *     배선이 수십 본이라 큰 종이에 크게 뽑아야 하는 하네스를 위해 남겨 둔다.
+ *
+ * 세 면 방식의 구성:
+ *   1) 배선도 (프레임 · 제목블록 · 하우징 심볼 · 직교/45° 배선 · 치수 표기)
  *   2) 접속표 — buildRunList()
  *   3) 파트리스트 — buildPartList() (분류별 소계)
  *
@@ -18,13 +27,17 @@
  *   - 같은 글자는 캐시해 재사용한다(접속표에서 같은 단어가 수십 번 나온다).
  */
 import { jsPDF } from 'jspdf';
-import type { HarnessDocument, KitDocument } from '../types';
+import type { Endpoint, HarnessDocument, KitDocument } from '../types';
 import { buildPartList, buildRunList, type PartRow, type RunRow } from './exporters';
 import { formatLength, unitLabel, type LengthUnit } from './units';
-import { colorAbbr, strokeColor } from '../canvas/docToFlow';
+import { colorAbbr, refLabels, strokeColor } from '../canvas/docToFlow';
+import { perSetOf } from '../store/kit';
 import {
-  C, PAPER_PT, SHEET_MARGIN, chunk, drawSheet, estimateTextWidth, needsRaster,
-  truncateToWidth, type DrawText, type Paper, type PdfLike, type TextStyle,
+  C, HEAD_H, ONEPAGE, PAPER_PT, ROW_H, SHEET_MARGIN, TB, chunk, drawDrawingInto,
+  drawFrameAndTitleBlock, drawPinViews, drawSheet, drawTable, estimateTextWidth,
+  needsRaster, truncateToWidth,
+  type Cell, type Col, type DrawText, type Paper, type PdfLike, type SheetLayout,
+  type TextStyle,
 } from './pdfDraw';
 
 // ============================================================
@@ -74,12 +87,52 @@ function rasterText(text: string, size: number, color: string, bold: boolean): R
   return out;
 }
 
+/**
+ * 잘라내기 전용 — **실제로 그릴 폭**으로 자른다.
+ *
+ * `estimateTextWidth` 는 ASCII 를 한 글자 0.52em 으로 어림한다. 그런데 jsPDF
+ * 기본 폰트(Helvetica)의 **대문자**는 0.65em 쯤이라, `N1 JST XHP-5 XH …` 처럼
+ * 대문자가 많은 문자열에서 20% 넘게 적게 잡혔다. 그러면 잘리지 않은 채로
+ * 칸을 넘어 옆 칸 글자를 덮는다 — A3 접속표의 NET 칸에서 실제로 그랬다.
+ *
+ * 벡터로 그리는 문자열(Latin-1)은 jsPDF 가 정확히 재 줄 수 있으므로 그 값을
+ * 쓰고, 래스터로 나가는 한글이나 목(mock) 환경에서는 예전 어림으로 내려간다.
+ * **경계 상자 계산은 건드리지 않는다** — 그쪽은 화면과 공유하는 값이라
+ * 여기서 다른 수를 쓰면 두 그림이 갈린다(pdfDraw 머리말).
+ */
+function fitToWidth(pdf: PdfLike, text: string, size: number, maxW: number): string {
+  if (typeof pdf.getTextWidth !== 'function') return truncateToWidth(text, size, maxW);
+  pdf.setFontSize(size);
+  /*
+   * 섞인 문자열(`N1 JST XHP-5 XH 하우징 (5P)#1`)은 조각마다 다르게 잰다.
+   * Latin-1 조각은 그대로 벡터로 나가므로 jsPDF 가 정확히 재고, 한글 조각은
+   * 래스터라 여기서 잴 수 없으므로 예전 어림(전각 1em)을 쓴다. 한글 어림은
+   * 실제와 거의 맞고, 어긋나던 것은 **대문자 ASCII** 쪽이었다.
+   */
+  const measure = (v: string): number => {
+    let w = 0;
+    for (const run of v.match(/[ -ÿ]+|[^ -ÿ]+/g) ?? []) {
+      w += needsRaster(run) ? estimateTextWidth(run, size) : (pdf.getTextWidth?.(run) ?? 0);
+    }
+    return w;
+  };
+  if (measure(text) <= maxW) return text;
+  const mark = needsRaster(text) ? '…' : '..';
+  const markW = measure(mark);
+  let out = '';
+  for (const ch of text) {
+    if (measure(out + ch) + markW > maxW) break;
+    out += ch;
+  }
+  return out + mark;
+}
+
 /** jsPDF 인스턴스 하나에 묶인 텍스트 그리기 함수를 만든다 */
 export function createTextDrawer(pdf: PdfLike): DrawText {
   return (raw: string, x: number, y: number, s: TextStyle = {}) => {
     const size = s.size ?? 9;
     const color = s.color ?? C.text;
-    const t = s.maxWidth != null ? truncateToWidth(String(raw), size, s.maxWidth) : String(raw);
+    const t = s.maxWidth != null ? fitToWidth(pdf, String(raw), size, s.maxWidth) : String(raw);
     if (!t) return 0;
 
     if (needsRaster(t)) {
@@ -118,14 +171,15 @@ type Ctx = {
    * 적는다 — 종이는 현장이 자르는 치수다(README §6).
    */
   unit: LengthUnit;
+  layout: SheetLayout;
+  /** 세트당 수량 — 제목블록 3행과 치수 표기에 쓴다(§2-3 · §2-7) */
+  perSet?: number;
 };
 
 /** 표 위쪽 시작선 (제목 아래) */
 const TABLE_TOP = SHEET_MARGIN + 42;
 /** 푸터 위 여백 */
 const FOOT_GAP = 26;
-const ROW_H = 15;
-const HEAD_H = 18;
 /**
  * 표 최대 폭. A3 폭에 그대로 맞추면 열이 화면 반쪽만큼 벌어져 FROM 과 TO 가
  * 눈으로 이어지지 않는다. 표는 왼쪽에 붙여 두고 폭을 묶는다.
@@ -135,6 +189,34 @@ const MAX_TABLE_W = 760;
 /** 이 페이지에서 표가 차지할 x · 폭 */
 function tableRect(ctx: Ctx): { x: number; w: number } {
   return { x: SHEET_MARGIN, w: Math.min(ctx.pageW - SHEET_MARGIN * 2, MAX_TABLE_W) };
+}
+
+/**
+ * 접속표 FROM/TO 에 적는 끝점 표기 — `J1-1` · `J1 (+)` (개선안 §2-12 마지막 줄).
+ *
+ * ## 왜 CSV 의 `from`/`to` 와 다른 글자인가
+ * CSV 의 `describeEndpoint` 는 `JST XHP-10 XH 하우징 (10P)#1` 처럼 **부품명**으로
+ * 적는다. 그 헤더는 받는 쪽 엑셀 매크로가 참조하는 발표된 인터페이스라 못
+ * 건드린다(exporters.RUN_CSV_COLUMNS 주석). 그런데 같은 종이 위의 배선도는
+ * 커넥터를 `J1`·`J2` 로 부른다 — 표가 부품명으로 적으면 읽는 사람이 이름을
+ * 레퍼런스로 되짚어야 한다. **한 장짜리 도면에서는 그 되짚기가 곧 오독이다.**
+ * 그래서 종이에서만 도면 레퍼런스로 적고, CSV 는 그대로 둔다.
+ *
+ * ## 왜 숫자가 아니면 괄호인가
+ * `-` 와 `−` 가 붙으면(`J1--`) 판독이 안 된다. 숫자 핀은 `J1-1`, 그 밖은
+ * `J1 (+)` 로 갈라 적는다.
+ */
+function endpointRef(doc: HarnessDocument, refs: Map<string, string>, e: Endpoint): string {
+  if (e.type === 'device') {
+    const d = doc.devices.find((x) => x.id === e.deviceId);
+    const ref = refs.get(e.deviceId) ?? d?.name ?? e.deviceId;
+    return e.terminal ? `${ref} (${e.terminal})` : ref;
+  }
+  const c = doc.connectors.find((x) => x.id === e.connectorId);
+  const pin = c?.pins.find((p) => p.id === e.pinId);
+  const ref = refs.get(e.connectorId) ?? e.connectorId;
+  const label = String(pin?.label ?? pin?.index ?? '?');
+  return /^\d+$/.test(label) ? `${ref}-${label}` : `${ref} (${label})`;
 }
 
 function startPage(ctx: Ctx, doc: HarnessDocument): void {
@@ -160,139 +242,128 @@ function stampFooters(ctx: Ctx): void {
 }
 
 // ============================================================
-// 표 공통
+// 접속표 (FROM → TO)
 // ============================================================
 
-type Col = { title: string; w: number; align?: 'left' | 'right' | 'center' };
-
-/** 비율(합 1.0)을 실제 폭으로 편다 */
-function layoutCols(cols: Col[], total: number): number[] {
-  const sum = cols.reduce((n, c) => n + c.w, 0) || 1;
-  return cols.map((c) => (c.w / sum) * total);
-}
-
-function drawTableHead(ctx: Ctx, cols: Col[], widths: number[], x: number, y: number, w: number): void {
-  ctx.pdf.setFillColor(C.subtle);
-  ctx.pdf.setLineDashPattern([], 0);
-  ctx.pdf.rect(x, y, w, HEAD_H, 'F');
-  let cx = x;
-  cols.forEach((c, i) => {
-    const inner = widths[i] - 8;
-    const tx = c.align === 'right' ? cx + widths[i] - 4 : c.align === 'center' ? cx + widths[i] / 2 : cx + 4;
-    ctx.text(c.title, tx, y + 12.5, { size: 8.5, bold: true, color: C.text3, align: c.align, maxWidth: inner });
-    cx += widths[i];
-  });
-  ctx.pdf.setDrawColor(C.lineStrong);
-  ctx.pdf.setLineWidth(0.7);
-  ctx.pdf.line(x, y + HEAD_H, x + w, y + HEAD_H);
-}
-
-function drawCells(
-  ctx: Ctx,
-  cells: string[],
-  cols: Col[],
-  widths: number[],
-  x: number,
-  y: number,
-  style: { bold?: boolean; color?: string; size?: number } = {},
-): void {
-  let cx = x;
-  cells.forEach((v, i) => {
-    if (v) {
-      const inner = widths[i] - 8;
-      const tx = cols[i].align === 'right' ? cx + widths[i] - 4
-        : cols[i].align === 'center' ? cx + widths[i] / 2
-        : cx + 4;
-      ctx.text(v, tx, y, {
-        size: style.size ?? 8.5,
-        bold: style.bold,
-        color: style.color ?? C.text,
-        align: cols[i].align,
-        maxWidth: inner,
-      });
-    }
-    cx += widths[i];
-  });
-}
-
-// ============================================================
-// 2면 — 접속표 (FROM → TO)
-// ============================================================
-
-/** 길이 열 제목만 단위를 따라간다 — 숫자만 바뀌면 mm 인지 in 인지 알 수 없다 */
-function runCols(unit: LengthUnit): Col[] {
+/**
+ * 접속표 열 구성 — **용지 폭에 따라 접는다** (개선안 §2-12 의 단서).
+ *
+ * 개선안은 `NET / FROM / TO / 색 / 신호 / 길이` 6열을 제시하면서 "이 세트는 전
+ * 가닥 게이지가 같아 뺐다. 툴에서는 게이지까지 7열로 두거나 용지 폭에 따라 열을
+ * 접는 편이 낫다" 는 단서를 달았다. 툴은 게이지가 섞인 하네스를 그린다 —
+ * 그래서 **접을 수 있을 때만 접는다**:
+ *
+ *  · `sheets` (전폭 ≤760pt) → **7열.** 게이지를 남긴다. 폭이 충분하고, 이 면은
+ *    접속표만 있는 면이라 게이지를 읽을 다른 표가 같은 종이에 없다.
+ *  · `onepage` (320pt) → **6열.** 320pt 에 7열이면 한 칸이 45pt 라 `AWG22` 와
+ *    `1600 (케이블)` 이 나란히 말줄임된다. 게이지는 **같은 면의 부품표**가
+ *    `AWG22 · red` 로 이미 적으므로 종이에서 정보가 사라지지 않는다.
+ *
+ * `RUN_CSV_COLUMNS`(CSV 열의 단일 출처)와 어긋나지 않는다 — 거기에도 `신호`가
+ * 있고, 여기서 새로 만든 열은 하나도 없다. 종이가 CSV 의 부분집합이다.
+ */
+function runCols(unit: LengthUnit, compact: boolean): Col[] {
+  const len = { title: `길이 (${unitLabel(unit)})`, w: compact ? 0.16 : 0.12, align: 'right' as const };
+  if (compact) {
+    /*
+     * 320pt 를 여섯으로 나눈 값. 개선안의 `.11/.19/.19/.22/.17/.12` 를 **실제
+     * 내용 폭을 재서** 조정했다 — 그 비율은 색 이름이 `R 빨강` 처럼 두 글자인
+     * 세트를 놓고 정한 값이라, 툴이 적는 영문 색 이름에는 맞지 않는다.
+     *
+     * 320pt 안에서 다 담을 수는 없어 **무엇을 자를지 골라야 했다** (실측):
+     *  · `W/Br white/brown` 은 약호까지 75pt, `Master Rx` 는 40pt. 둘 다
+     *    온전히 넣으면 FROM·TO·길이가 잘린다.
+     *  · 잘린 `Mast..` 는 **아무 말도 하지 않는다.** 그런데 신호명을 도면에서
+     *    뺀 근거가 바로 이 열이다(§2-5) — 이 열이 잘리면 그 근거가 무너진다.
+     *  · 반대로 색 이름은 잘려도 **약호(W/Br)와 견본과 선 색**이 남는다.
+     *    같은 사실을 말하는 단서가 셋이나 더 있다.
+     * 그래서 좁은 표에서는 색 **이름을 빼고 약호만** 적고, 그 몫을 신호에 준다.
+     * 이름은 전폭 접속표와 CSV `color` 열에 그대로 있다.
+     */
+    return [
+      { title: 'NET', w: 0.09 },
+      { title: 'FROM', w: 0.15 },
+      { title: 'TO', w: 0.15 },
+      { title: '색', w: 0.16 },
+      { title: '신호', w: 0.29 },
+      len,
+    ];
+  }
+  /*
+   * 전폭 표(≤760pt)는 7열이다. 예전 6열에서 FROM·TO 가 각각 .23 이었는데,
+   * 그 폭은 `JST XHP-5 XH 하우징 (5P)#1` 같은 **부품명**을 담으려던 것이다.
+   * 지금은 도면 레퍼런스(`J1-1`)로 적으므로 .16 이면 남는다 — 그 몫을 새
+   * `신호` 열과, 네트 이름이 긴 문서를 위해 NET 에 돌린다.
+   */
   return [
-    { title: 'NET', w: 0.16 },
-    { title: 'FROM', w: 0.23 },
-    { title: 'TO', w: 0.23 },
-    { title: '색', w: 0.15 },
-    { title: '게이지', w: 0.10, align: 'right' },
-    { title: `길이 (${unitLabel(unit)})`, w: 0.13, align: 'right' },
+    { title: 'NET', w: 0.18 },
+    { title: 'FROM', w: 0.16 },
+    { title: 'TO', w: 0.16 },
+    { title: '색', w: 0.16 },
+    { title: '신호', w: 0.14 },
+    { title: '게이지', w: 0.08, align: 'right' },
+    len,
   ];
 }
 
-function runCells(r: RunRow, unit: LengthUnit): string[] {
+function runCells(
+  doc: HarnessDocument,
+  refs: Map<string, string>,
+  r: RunRow,
+  unit: LengthUnit,
+  compact: boolean,
+): Cell[] {
   const [base, stripe] = r.color.split('/');
-  const net = r.netCode ? (r.net ? `${r.netCode} ${r.net}` : r.netCode) : (r.net || '—');
-  // 색은 흑백 인쇄를 대비해 **약호 + 이름**을 함께 적는다
-  const color = base ? `${colorAbbr(base, stripe)} ${r.color}` : '—';
+  /*
+   * 좁은 표에서는 **네트 코드만** 적는다(`N1`). 32pt 칸에 `N1 +12V_MAIN` 을
+   * 넣으면 `N1 …` 으로 잘려 코드조차 못 읽는다 — 이름을 잘라 붙이는 것보다
+   * 코드를 온전히 남기는 편이 낫다. 이름은 도면의 네트 라벨과 접속표 CSV 의
+   * `net` 열에 그대로 있으므로 종이에서 사실이 사라지지는 않는다.
+   */
+  const net = compact
+    ? (r.netCode || r.net || '—')
+    : (r.netCode ? (r.net ? `${r.netCode} ${r.net}` : r.netCode) : (r.net || '—'));
+  // 색은 흑백 인쇄를 대비해 **약호**를 적고 견본을 보조로 붙인다.
+  // 전폭 표에서는 이름까지 함께 — 좁은 표에서 이름을 빼는 근거는 runCols 주석에.
+  const abbr = base ? colorAbbr(base, stripe) : '';
+  const color: Cell = base
+    ? { swatch: strokeColor(base), text: compact ? abbr : `${abbr} ${r.color}` }
+    : '—';
   // 케이블 심선은 케이블 길이로 재단된다 — 값은 적되 어디서 온 값인지 밝힌다.
   // 그냥 숫자만 적으면 이 심선에 직접 지정된 길이처럼 읽힌다.
   const num = r.lengthMm ? formatLength(Number(r.lengthMm), unit) : '';
   const len = num ? (r.lengthSource === 'cable' ? `${num} (케이블)` : num) : '—';
-  return [net, r.from || '—', r.to || '—', color, r.gauge || '—', len];
+  const w = doc.wires.find((x) => x.id === r.wireId);
+  const from = w ? endpointRef(doc, refs, w.from) : (r.from || '—');
+  const to = w ? endpointRef(doc, refs, w.to) : (r.to || '—');
+  const signal = r.signal || '—';
+  return compact
+    ? [net, from, to, color, signal, len]
+    : [net, from, to, color, signal, r.gauge || '—', len];
+}
+
+function runRowCells(ctx: Ctx, doc: HarnessDocument, compact: boolean): Cell[][] {
+  const refs = refLabels(doc);
+  return buildRunList(doc).map((r) => runCells(doc, refs, r, ctx.unit, compact));
 }
 
 function drawRunList(ctx: Ctx, doc: HarnessDocument): void {
-  const rows = buildRunList(doc);
-  const RUN_COLS = runCols(ctx.unit);
+  const rows = runRowCells(ctx, doc, false);
+  const cols = runCols(ctx.unit, false);
   const { x, w } = tableRect(ctx);
-  const widths = layoutCols(RUN_COLS, w);
   const bottom = ctx.pageH - FOOT_GAP;
   const perPage = Math.max(1, Math.floor((bottom - (TABLE_TOP + HEAD_H)) / ROW_H));
   const pages = chunk(rows, perPage);
 
   pages.forEach((page, pi) => {
     startPage(ctx, doc);
-    ctx.text('접속표 (FROM → TO)', x, SHEET_MARGIN + 20, { size: 12, bold: true, color: C.text });
-    ctx.text(
-      pages.length > 1 ? `${rows.length}본 · ${pi + 1}/${pages.length}` : `${rows.length}본`,
-      x + w, SHEET_MARGIN + 20,
-      { size: 9, color: C.muted, align: 'right' },
-    );
     // 헤더는 **페이지마다 반복** — 넘어간 장만 봐도 무슨 열인지 알아야 한다
-    drawTableHead(ctx, RUN_COLS, widths, x, TABLE_TOP, w);
-
-    let y = TABLE_TOP + HEAD_H;
-    for (const r of page) {
-      y += ROW_H;
-      const cells = runCells(r, ctx.unit);
-      const colorText = cells[3];
-      cells[3] = ''; // 색 칸은 견본과 함께 따로 그린다
-      drawCells(ctx, cells, RUN_COLS, widths, x, y - 4.5);
-
-      // 색 견본은 **보조** 단서다 — 흑백으로 뽑으면 사라지므로
-      // 같은 칸에 적는 약호(R/W)가 본 단서다.
-      const cellX = x + widths[0] + widths[1] + widths[2];
-      const base = r.color.split('/')[0];
-      if (base) {
-        ctx.pdf.setFillColor(strokeColor(base));
-        ctx.pdf.setDrawColor(C.lineMid);
-        ctx.pdf.setLineWidth(0.3);
-        ctx.pdf.setLineDashPattern([], 0);
-        ctx.pdf.rect(cellX + 4, y - 11.5, 8, 8, 'FD');
-      }
-      ctx.text(colorText, cellX + (base ? 16 : 4), y - 4.5, {
-        size: 8.5, color: C.text, maxWidth: widths[3] - (base ? 24 : 8),
-      });
-
-      ctx.pdf.setDrawColor(C.line);
-      ctx.pdf.setLineWidth(0.3);
-      ctx.pdf.line(x, y, x + w, y);
-    }
-    if (!page.length) {
-      ctx.text('배선이 없다.', x + 4, TABLE_TOP + HEAD_H + 16, { size: 9, color: C.muted });
-    }
+    drawTable(ctx.pdf, ctx.text, {
+      x, y: TABLE_TOP, w,
+      title: '접속표 (FROM → TO)',
+      note: pages.length > 1 ? `${rows.length}본 · ${pi + 1}/${pages.length}` : `${rows.length}본`,
+      cols, rows: page, empty: '배선이 없다.',
+    });
   });
 }
 
@@ -333,59 +404,158 @@ export function partLines(rows: PartRow[]): PartLine[] {
   return out;
 }
 
+/**
+ * 파트리스트 줄 → 표 셀.
+ *
+ * 분류 머리줄·소계는 `drawTable` 의 평범한 행으로 접어 넣는다. 예전에는 여기에
+ * 회색 띠·굵은 밑줄을 직접 그렸는데, 그러면 표를 그리는 코드가 두 벌이 되어
+ * `onepage` 의 좁은 부품표와 행 높이·정렬이 갈린다. 띠 대신 `[분류]` 꼴로 적어
+ * 한 함수만 남긴다 — 종이 두 장이 같은 표를 그린다는 것이 띠보다 중요하다.
+ */
+function partCells(lines: PartLine[]): Cell[][] {
+  return lines.map((ln) =>
+    ln.kind === 'group' ? [`[${ln.title}]`, '', '']
+    // 소계는 **품목 칸 왼쪽**에 적는다. 비고 칸(오른쪽)에 두면 그 줄이 바로 위
+    // 부품의 비고처럼 읽힌다 — 좁은 표에서 실제로 그렇게 보였다.
+    : ln.kind === 'sub' ? [ln.label, '', '']
+    : [ln.row.part || '—', String(ln.row.qty), ln.row.detail || '—'],
+  );
+}
+
 function drawPartList(ctx: Ctx, doc: HarnessDocument): void {
   // 도면의 파트리스트도 **도면 길이 그대로**다. 발주용 여유율은 파트리스트
   // CSV 에만 붙는다(export/bundle.ts 의 bodyOf 주석).
   const rows = buildPartList(doc, { unit: ctx.unit });
   const lines = partLines(rows);
   const { x, w } = tableRect(ctx);
-  const widths = layoutCols(PART_COLS, w);
   const bottom = ctx.pageH - FOOT_GAP;
   const perPage = Math.max(1, Math.floor((bottom - (TABLE_TOP + HEAD_H)) / ROW_H));
-  const pages = chunk(lines, perPage);
+  const pages = chunk(partCells(lines), perPage);
   const totalQty = rows.reduce((n, r) => n + r.qty, 0);
+  const note = `${rows.length}품목 · 합계 ${totalQty}개`;
 
   pages.forEach((page, pi) => {
     startPage(ctx, doc);
-    ctx.text('파트리스트', x, SHEET_MARGIN + 20, { size: 12, bold: true, color: C.text });
-    ctx.text(
-      pages.length > 1
-        ? `${rows.length}품목 · 합계 ${totalQty}개 · ${pi + 1}/${pages.length}`
-        : `${rows.length}품목 · 합계 ${totalQty}개`,
-      x + w, SHEET_MARGIN + 20,
-      { size: 9, color: C.muted, align: 'right' },
-    );
-    drawTableHead(ctx, PART_COLS, widths, x, TABLE_TOP, w);
-
-    let y = TABLE_TOP + HEAD_H;
-    for (const ln of page) {
-      y += ROW_H;
-      if (ln.kind === 'group') {
-        ctx.pdf.setFillColor(C.subtle);
-        ctx.pdf.setLineDashPattern([], 0);
-        ctx.pdf.rect(x, y - ROW_H + 2, w, ROW_H - 2, 'F');
-        ctx.text(ln.title, x + 4, y - 4.5, { size: 9, bold: true, color: C.text2, maxWidth: w - 8 });
-      } else if (ln.kind === 'sub') {
-        ctx.text(ln.label, x + w - 4, y - 4.5, { size: 8.5, bold: true, color: C.text3, maxWidth: w - 8 });
-        ctx.pdf.setDrawColor(C.lineStrong);
-        ctx.pdf.setLineWidth(0.6);
-        ctx.pdf.line(x, y, x + w, y);
-        continue;
-      } else {
-        drawCells(
-          ctx,
-          [ln.row.part || '—', String(ln.row.qty), ln.row.detail || '—'],
-          PART_COLS, widths, x, y - 4.5,
-        );
-      }
-      ctx.pdf.setDrawColor(C.line);
-      ctx.pdf.setLineWidth(0.3);
-      ctx.pdf.line(x, y, x + w, y);
-    }
-    if (!page.length) {
-      ctx.text('부품이 없다.', x + 4, TABLE_TOP + HEAD_H + 16, { size: 9, color: C.muted });
-    }
+    drawTable(ctx.pdf, ctx.text, {
+      x, y: TABLE_TOP, w,
+      title: '파트리스트',
+      note: pages.length > 1 ? `${note} · ${pi + 1}/${pages.length}` : note,
+      cols: PART_COLS, rows: page, empty: '부품이 없다.',
+    });
   });
+}
+
+// ============================================================
+// A4 가로 1페이지 (개선안 §2-2)
+// ============================================================
+
+/**
+ * 한 면에 들어가는 접속표 행 수.
+ *
+ * 표 아래 끝은 프레임 안쪽(= 용지 높이 - 여백 - 8)이다. 제목블록은 오른쪽
+ * 300pt 만 차지하므로 왼쪽 접속표는 프레임 바닥까지 내려갈 수 있고, 부품표는
+ * 제목블록 위에서 멈춰야 한다 — 그래서 둘의 상한이 다르다.
+ */
+function onePageRows(y: number, bottom: number): number {
+  return Math.max(1, Math.floor((bottom - (y + HEAD_H)) / ROW_H));
+}
+
+/**
+ * A4 가로 한 장 — 배선도 · 접속표 · 부품표 · 핀 배열 뷰 · 제목블록.
+ *
+ * 표가 한 면에 안 들어가면 **버리지 않고** 이어지는 면으로 흘려 보낸다
+ * (`sheets` 와 같은 전폭 표를 쓴다). 한 장에 담자고 행을 지우면 그 도면으로는
+ * 하네스를 만들 수 없다.
+ */
+function addOnePage(ctx: Ctx, doc: HarnessDocument): void {
+  startPage(ctx, doc);
+  const page = { w: ctx.pageW, h: ctx.pageH };
+  const info = ctx.perSet != null ? { perSet: ctx.perSet } : {};
+  drawFrameAndTitleBlock(ctx.pdf, doc, ctx.text, page, info);
+
+  // ── 상단 도면 (§2-2 의 DRAW 좌표 그대로) ────────────────────────────────
+  drawDrawingInto(ctx.pdf, doc, ctx.text, { ...ONEPAGE.draw }, info);
+
+  const frameBottom = ctx.pageH - SHEET_MARGIN - 8;
+  const tbTop = ctx.pageH - SHEET_MARGIN - TB.rowH * TB.rows - 8;
+
+  // ── 접속표 (6열, §2-12) ─────────────────────────────────────────────────
+  const runAll = runRowCells(ctx, doc, true);
+  const runCap = onePageRows(ONEPAGE.run.y, frameBottom);
+  const runHere = runAll.slice(0, runCap);
+  const runRest = runAll.slice(runCap);
+  drawTable(ctx.pdf, ctx.text, {
+    ...ONEPAGE.run,
+    title: '접속표 (FROM → TO)',
+    note: runRest.length ? `${runAll.length}본 · 이어짐` : `${runAll.length}본`,
+    cols: runCols(ctx.unit, true),
+    rows: runHere,
+    empty: '배선이 없다.',
+  });
+
+  /*
+   * ── 부품표 — 좁은 배치에서는 **분류 머리줄·소계를 빼고 평평하게** 적는다
+   *
+   * 이 칸은 세로로 7줄밖에 못 쓴다(y=380 부터 제목블록 위 511pt 까지). 그런데
+   * `partLines` 는 분류마다 머리줄 1 + 소계 1 을 더하므로, 부품 5품목짜리
+   * 하네스가 11줄이 되어 절반이 다음 면으로 넘어갔다(실측: EW-08).
+   * 한 장에 담자고 만든 배치인데 부품표만 두 장이 되는 것은 앞뒤가 안 맞는다.
+   *
+   * 분류는 버려도 되는가 — 버려도 된다. 품목 이름이 이미 분류를 말하고
+   * (`AWG22 · black`, `… 용 터미널`), 분류별 소계가 필요한 사람이 보는 것은
+   * 파트리스트 CSV 와 `sheets` 배치의 전폭 파트리스트다. 그 둘은 그대로다.
+   */
+  const partRows = buildPartList(doc, { unit: ctx.unit });
+  const partAll: Cell[][] = partRows.map((r) => [r.part || '—', String(r.qty), r.detail || '—']);
+  const partCap = onePageRows(ONEPAGE.part.y, tbTop);
+  const partHere = partAll.slice(0, partCap);
+  const partRest = partAll.slice(partCap);
+  const totalQty = partRows.reduce((n, r) => n + r.qty, 0);
+  drawTable(ctx.pdf, ctx.text, {
+    ...ONEPAGE.part,
+    title: '부품',
+    // 좁은 칸이라 짧게 — 합계 개수는 소계 줄이 이미 말한다. 길게 적으면
+    // 바로 오른쪽의 '핀 배열 (실물 기준)' 제목과 맞붙는다(236pt · 실측).
+    note: partRest.length ? `${partRows.length}품목 · 이어짐` : `${partRows.length}품목`,
+    cols: PART_COLS,
+    rows: partHere,
+    empty: '부품이 없다.',
+  });
+
+  // ── 핀 배열 뷰 (§2-8) ───────────────────────────────────────────────────
+  drawPinViews(ctx.pdf, doc, ctx.text, { ...ONEPAGE.pinView, bottom: tbTop });
+
+  // ── 넘친 표는 이어지는 면으로 (전폭 표) ─────────────────────────────────
+  if (runRest.length) {
+    const { x, w } = tableRect(ctx);
+    const bottom = ctx.pageH - FOOT_GAP;
+    const cap = Math.max(1, Math.floor((bottom - (TABLE_TOP + HEAD_H)) / ROW_H));
+    // 이어지는 면은 전폭이므로 **7열**로 다시 만든다(게이지가 살아난다).
+    const wide = runRowCells(ctx, doc, false).slice(runCap);
+    chunk(wide, cap).forEach((p, i, all) => {
+      startPage(ctx, doc);
+      drawTable(ctx.pdf, ctx.text, {
+        x, y: TABLE_TOP, w,
+        title: '접속표 (FROM → TO) — 이어짐',
+        note: `${runAll.length}본 중 ${runCap + 1}~${runAll.length} · ${i + 1}/${all.length}`,
+        cols: runCols(ctx.unit, false), rows: p,
+      });
+    });
+  }
+  if (partRest.length) {
+    const { x, w } = tableRect(ctx);
+    const bottom = ctx.pageH - FOOT_GAP;
+    const cap = Math.max(1, Math.floor((bottom - (TABLE_TOP + HEAD_H)) / ROW_H));
+    chunk(partRest, cap).forEach((p, i, all) => {
+      startPage(ctx, doc);
+      drawTable(ctx.pdf, ctx.text, {
+        x, y: TABLE_TOP, w,
+        title: '부품 — 이어짐',
+        note: `${partRows.length}품목 · 합계 ${totalQty}개 · ${i + 1}/${all.length}`,
+        cols: PART_COLS, rows: p,
+      });
+    });
+  }
 }
 
 // ============================================================
@@ -393,14 +563,38 @@ function drawPartList(ctx: Ctx, doc: HarnessDocument): void {
 // ============================================================
 
 export type PdfOptions = {
-  /** 기본 A3 (가로). 좁은 프린터만 있으면 A4 */
+  /**
+   * 용지. `layout: 'onepage'` 이면 **A4 로 맞춰진다** — 1페이지 배치 좌표가
+   * A4 가로 기준으로 정해져 있고, 근거 없는 좌표를 지어내지 않기 때문이다
+   * (pdfDraw.ONEPAGE 주석). `sheets` 는 A3 가 기본이다.
+   */
   paper?: Paper;
   /** 기본 mm — 화면·저장값과 같은 단위다 */
   unit?: LengthUnit;
+  /** 기본 `onepage` (A4 한 장). 배선이 많으면 `sheets` (A3 3면) */
+  layout?: SheetLayout;
+  /** 세트당 수량 — 제목블록 3행·치수 표기에 쓴다. 모르면 '미상' 으로 찍힌다 */
+  perSet?: number;
   filename?: string;
 };
 
-function makeCtx(paper: Paper, unit: LengthUnit = 'mm'): Ctx {
+/**
+ * 배치와 용지를 함께 정한다.
+ * `onepage` + A3 는 **조용히 A4 로 내린다** — 아무것도 안 그리거나 좌표를
+ * 지어내는 것보다 낫고, 대화상자는 A3 를 고를 수 없게 막아 이 강제가 사용자
+ * 눈에 보이지 않는 일이 없게 한다.
+ */
+function paperFor(layout: SheetLayout, paper?: Paper): Paper {
+  if (layout === 'onepage') return 'A4';
+  return paper ?? 'A3';
+}
+
+function makeCtx(
+  paper: Paper,
+  unit: LengthUnit = 'mm',
+  layout: SheetLayout = 'onepage',
+  perSet?: number,
+): Ctx {
   const pdf = new jsPDF({
     orientation: 'landscape',
     unit: 'pt',
@@ -415,6 +609,8 @@ function makeCtx(paper: Paper, unit: LengthUnit = 'mm'): Ctx {
     pageH: Number.isFinite(h) && h > 0 ? h : PAPER_PT[paper].h,
     pageDocs: [],
     unit,
+    layout,
+    ...(perSet != null ? { perSet } : {}),
   };
 }
 
@@ -428,8 +624,13 @@ function makeCtx(paper: Paper, unit: LengthUnit = 'mm'): Ctx {
  * 여기서 다시 계산하면 화면과 종이가 다른 숫자를 말하게 된다.
  */
 function addHarness(ctx: Ctx, doc: HarnessDocument): void {
+  if (ctx.layout === 'onepage') {
+    addOnePage(ctx, doc);
+    return;
+  }
   startPage(ctx, doc);
-  drawSheet(ctx.pdf, doc, ctx.text, { w: ctx.pageW, h: ctx.pageH });
+  drawSheet(ctx.pdf, doc, ctx.text, { w: ctx.pageW, h: ctx.pageH },
+    ctx.perSet != null ? { perSet: ctx.perSet } : {});
   drawRunList(ctx, doc);
   drawPartList(ctx, doc);
 }
@@ -448,9 +649,10 @@ function safeName(s: string): string {
  */
 export function harnessPdfBytes(
   doc: HarnessDocument,
-  opts?: { paper?: Paper; unit?: LengthUnit },
+  opts?: { paper?: Paper; unit?: LengthUnit; layout?: SheetLayout; perSet?: number },
 ): Uint8Array<ArrayBuffer> {
-  const ctx = makeCtx(opts?.paper ?? 'A3', opts?.unit ?? 'mm');
+  const layout = opts?.layout ?? 'onepage';
+  const ctx = makeCtx(paperFor(layout, opts?.paper), opts?.unit ?? 'mm', layout, opts?.perSet);
   addHarness(ctx, doc);
   stampFooters(ctx);
   const buf = ctx.pdf.output?.('arraybuffer');
@@ -469,8 +671,8 @@ export async function downloadPdf(
   arg?: PdfOptions | HTMLElement | null,
 ): Promise<void> {
   const opts: PdfOptions = arg && typeof (arg as HTMLElement).nodeType === 'number' ? {} : ((arg as PdfOptions) ?? {});
-  const paper: Paper = opts.paper ?? 'A3';
-  const ctx = makeCtx(paper, opts.unit ?? 'mm');
+  const layout: SheetLayout = opts.layout ?? 'onepage';
+  const ctx = makeCtx(paperFor(layout, opts.paper), opts.unit ?? 'mm', layout, opts.perSet);
   addHarness(ctx, doc);
   stampFooters(ctx);
   ctx.pdf.save(opts.filename ?? `${safeName(doc.name || 'harness')}.pdf`);
@@ -479,11 +681,16 @@ export async function downloadPdf(
 /** 세트 전체를 한 PDF 로 — 하네스마다 위 세 면을 이어 붙인다 */
 export async function downloadKitPdf(
   kit: KitDocument,
-  opts?: { paper?: Paper; unit?: LengthUnit },
+  opts?: { paper?: Paper; unit?: LengthUnit; layout?: SheetLayout },
 ): Promise<void> {
-  const paper: Paper = opts?.paper ?? 'A3';
-  const ctx = makeCtx(paper, opts?.unit ?? 'mm');
-  for (const h of kit.harnesses) addHarness(ctx, h);
+  const layout: SheetLayout = opts?.layout ?? 'onepage';
+  const ctx = makeCtx(paperFor(layout, opts?.paper), opts?.unit ?? 'mm', layout);
+  // 세트당 수량은 하네스마다 다르다 — 면을 그리기 직전에 그 하네스 것으로 바꾼다.
+  for (const h of kit.harnesses) {
+    ctx.perSet = perSetOf(kit.set, h.id);
+    addHarness(ctx, h);
+  }
+  ctx.perSet = undefined;
   if (!kit.harnesses.length) {
     startPage(ctx, {
       schemaVersion: 1, id: kit.id, name: kit.name, createdAt: kit.createdAt,

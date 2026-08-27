@@ -10,7 +10,7 @@
  * 꺼지고 pdf.text 폴백을 타므로 그려진 글자를 문자열로 볼 수 있다.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import type { HarnessDocument, KitDocument, Wire } from '../types';
+import type { HarnessDocument, KitDocument, PartLibraryItem, Wire } from '../types';
 import { sampleDoc } from '../fixtures/sampleDoc';
 import { buildPartList, buildRunList } from './exporters';
 
@@ -86,7 +86,7 @@ vi.mock('jspdf', () => {
 const { downloadPdf, downloadKitPdf, partLines } = await import('./pdf');
 const {
   buildDrawing, chunk, estimateTextWidth, fitTransform, needsRaster,
-  truncateToWidth, wireWidthPx,
+  truncateToWidth, wireWidthPx, C,
 } = await import('./pdfDraw');
 
 // ── 헬퍼 ────────────────────────────────────────────────────────────────────
@@ -120,6 +120,28 @@ function docWithWires(n: number): HarnessDocument {
   return { ...sampleDoc, wires };
 }
 
+/**
+ * 1페이지에 **정말로 한 장으로** 들어가는 하네스.
+ * sampleDoc 은 스플라이스·장치·케이블까지 든 8품목짜리라 부품표가 넘친다 —
+ * 넘칠 때 어떻게 되는지는 따로 검사하고, 여기서는 안 넘칠 때를 본다.
+ */
+function smallDoc(): HarnessDocument {
+  return {
+    ...sampleDoc,
+    devices: [],
+    cables: [],
+    connectors: sampleDoc.connectors.filter((c) => c.id === 'con-a' || c.id === 'sp-1'),
+    wires: [{
+      id: 'w1',
+      from: { type: 'pin', connectorId: 'con-a', pinId: 'a1' },
+      to: { type: 'pin', connectorId: 'sp-1', pinId: 's1' },
+      color: { base: 'red' },
+      gauge: { system: 'awg', value: 22 },
+      lengthMm: 800,
+    }],
+  };
+}
+
 function kitOf(...docs: HarnessDocument[]): KitDocument {
   return {
     schemaVersion: 2,
@@ -140,14 +162,29 @@ beforeEach(() => rec.reset());
 
 // ============================================================
 describe('downloadPdf — 페이지 구성', () => {
-  it('하네스 하나는 배선도 · 접속표 · 파트리스트 세 면이다', async () => {
-    await downloadPdf(sampleDoc);
+  /**
+   * 기본은 **A4 가로 1페이지** 다(개선안 §2-2). 배선도 · 접속표 · 부품표 ·
+   * 핀 배열 뷰가 한 면에 있다 — 현장이 케이블 하나를 잡고 종이 한 장만 본다.
+   */
+  it('기본 배치는 A4 한 장이다', async () => {
+    await downloadPdf(smallDoc());
+    expect(rec.pages).toBe(1);
+    expect(opCount('addPage')).toBe(0);
+    expect((rec.ctorArgs[0] as { format: string }).format).toBe('a4');
+    const p1 = textsOnPage(1);
+    expect(p1).toContain('접속표 (FROM → TO)');
+    expect(p1).toContain('부품');
+    expect(p1).toContain('핀 배열 (실물 기준)');
+  });
+
+  it('3면 배치를 고르면 배선도 · 접속표 · 파트리스트 세 면이다', async () => {
+    await downloadPdf(sampleDoc, { layout: 'sheets' });
     expect(rec.pages).toBe(3);
     expect(opCount('addPage')).toBe(2); // 첫 면은 생성 시 이미 있다
   });
 
   it('DOM 스냅샷을 쓰지 않는다 — 선과 사각형으로 그린다', async () => {
-    await downloadPdf(sampleDoc);
+    await downloadPdf(sampleDoc, { layout: 'sheets' });
     // node 환경엔 canvas 가 없으니 addImage 가 한 번도 불리면 안 된다
     expect(opCount('addImage')).toBe(0);
     // 배선도 면(1면)에 선·사각형이 실제로 그려졌다
@@ -156,12 +193,22 @@ describe('downloadPdf — 페이지 구성', () => {
     expect(page1.filter((o: Op) => o.op === 'rect').length).toBeGreaterThan(5);
   });
 
-  it('용지는 기본 A3, 옵션으로 A4', async () => {
-    await downloadPdf(sampleDoc);
+  it('3면 배치의 용지는 기본 A3, 옵션으로 A4', async () => {
+    await downloadPdf(sampleDoc, { layout: 'sheets' });
     expect((rec.ctorArgs[0] as { format: string }).format).toBe('a3');
 
     rec.reset();
-    await downloadPdf(sampleDoc, { paper: 'A4' });
+    await downloadPdf(sampleDoc, { layout: 'sheets', paper: 'A4' });
+    expect((rec.ctorArgs[0] as { format: string }).format).toBe('a4');
+  });
+
+  /**
+   * 1페이지 배치의 좌표는 A4 가로 기준으로 손으로 정한 값이다(pdfDraw.ONEPAGE).
+   * A3 로 비례해 늘리면 셀·글꼴 같은 절대 치수만 그대로라 검증된 배치가 아닌
+   * 다른 그림이 된다 — 근거 없는 좌표를 지어내지 않고 A4 로 내린다.
+   */
+  it('1페이지 배치는 A3 를 달라고 해도 A4 로 그린다', async () => {
+    await downloadPdf(sampleDoc, { layout: 'onepage', paper: 'A3' });
     expect((rec.ctorArgs[0] as { format: string }).format).toBe('a4');
   });
 
@@ -176,8 +223,8 @@ describe('downloadPdf — 페이지 구성', () => {
 
   it('옛 호출부가 넘기던 DOM 요소는 무시하고 그대로 그린다', async () => {
     const fakeEl = { nodeType: 1 } as unknown as HTMLElement;
-    await downloadPdf(sampleDoc, fakeEl);
-    expect(rec.pages).toBe(3);
+    await downloadPdf(smallDoc(), fakeEl);
+    expect(rec.pages).toBe(1);
     expect(opCount('addImage')).toBe(0);
   });
 });
@@ -194,16 +241,33 @@ describe('제목블록 · 푸터', () => {
     expect(p1.some((s) => s.startsWith('SCALE 1:1'))).toBe(true);
   });
 
-  it('도번 · Rev 가 없으면 지어내지 않고 — 로 둔다', async () => {
-    await downloadPdf(sampleDoc); // drawingNo · rev 없음
-    const p1 = textsOnPage(1);
-    expect(p1.filter((s) => s === '—').length).toBe(2);
-    expect(p1.some((s) => s.includes('Rev.'))).toBe(false);
+  /**
+   * 개선안 §2-3 — 제작 도면에 길이·수량이 없으면 발주가 안 된다.
+   * 3행 왼쪽에 `길이 … · 세트당 …`, 오른쪽에 날짜가 온다.
+   */
+  it('제목블록 3행에 길이와 세트당 수량을 적는다', async () => {
+    await downloadPdf(sampleDoc, { perSet: 6 });
+    // sampleDoc — w1 은 120mm, 케이블 심선 둘은 300mm → 범위로 적는다
+    expect(textsOnPage(1)).toContain('길이 120~300mm · 세트당 6EA');
+  });
+
+  it('길이를 모르면 지어내지 않고 미상이라고 적는다', async () => {
+    const doc: HarnessDocument = {
+      ...sampleDoc,
+      cables: [],
+      wires: sampleDoc.wires.map((w) => {
+        const { lengthMm: _drop, ...rest } = w;
+        return rest;
+      }),
+    };
+    await downloadPdf(doc);
+    // 수량도 안 넘겼으니 둘 다 미상이다
+    expect(textsOnPage(1)).toContain('길이 미상 · 세트당 미상');
   });
 
   it('모든 면 아래에 문서명 · 도번 · Rev · N/M 푸터가 붙는다', async () => {
     const doc: HarnessDocument = { ...sampleDoc, drawingNo: 'HW-001', rev: 'B' };
-    await downloadPdf(doc);
+    await downloadPdf(doc, { layout: 'sheets' });
     const feet = allText().filter((s) => /\d+\/\d+$/.test(s));
     expect(feet).toEqual([
       '샘플 하네스 · HW-001 · Rev.B · 1/3',
@@ -214,19 +278,54 @@ describe('제목블록 · 푸터', () => {
 });
 
 // ============================================================
+// 도면 안의 치수 표기 (개선안 §2-7)
+// ============================================================
+describe('전선 구간 길이 표기', () => {
+  it('도면 위에 길이와 세트당 수량을 적는다', async () => {
+    await downloadPdf(sampleDoc, { perSet: 6 });
+    expect(textsOnPage(1)).toContain('120~300mm  (6EA)');
+  });
+
+  it('수량을 모르면 길이만 적는다 — 숫자를 지어내지 않는다', async () => {
+    await downloadPdf(sampleDoc);
+    expect(textsOnPage(1)).toContain('120~300mm');
+  });
+});
+
+// ============================================================
 describe('접속표', () => {
   it('buildRunList 의 모든 행을 FROM · TO · 게이지까지 적는다', async () => {
-    await downloadPdf(sampleDoc);
+    await downloadPdf(sampleDoc, { layout: 'sheets' });
     const rows = buildRunList(sampleDoc);
     expect(rows.length).toBe(3);
     const p2 = textsOnPage(2);
     expect(p2).toContain('접속표 (FROM → TO)');
-    for (const r of rows) {
-      expect(p2).toContain(r.from);
-      expect(p2).toContain(r.to);
-    }
+    // 종이에서는 **도면 레퍼런스**로 적는다 (§2-12) — 같은 면의 배선도가
+    // 커넥터를 J1·J2 로 부르는데 표만 부품명으로 적으면 되짚어야 한다.
+    expect(p2).toContain('J1-1');
+    expect(p2).toContain('SP1-1');
     // 색은 약호 + 이름을 함께 — 흑백 인쇄 대비
     expect(p2.some((s) => s.startsWith('R/W red/white'))).toBe(true);
+  });
+
+  /**
+   * 개선안 §2-12 — 신호 열. 스텁 라벨을 도면에서 뺐으므로(§2-5) 신호명을
+   * 읽을 자리가 여기밖에 없다. 열이 사라지면 정보가 사라진다.
+   */
+  it('신호 열이 있고, 좁은 배치에서도 남는다', async () => {
+    await downloadPdf(sampleDoc, { layout: 'sheets' });
+    expect(textsOnPage(2)).toContain('신호');
+    // 전폭 표에서는 게이지까지 7열
+    expect(textsOnPage(2)).toContain('게이지');
+
+    rec.reset();
+    await downloadPdf(sampleDoc);
+    const p1 = textsOnPage(1);
+    expect(p1).toContain('신호');
+    // 좁은 표(320pt)에서는 게이지를 접는다 — 같은 면의 부품표가 `AWG22 · red`
+    // 로 이미 적으므로 종이에서 정보가 사라지지 않는다.
+    expect(p1).not.toContain('게이지');
+    expect(p1.some((s) => s.startsWith('AWG22'))).toBe(true);
   });
 
   /**
@@ -235,14 +334,14 @@ describe('접속표', () => {
    * 이 심선에 직접 지정된 것이 아님을 함께 밝힌다.
    */
   it('케이블 심선의 재단 길이를 적고 출처를 밝힌다', async () => {
-    await downloadPdf(sampleDoc);
+    await downloadPdf(sampleDoc, { layout: 'sheets' });
     const p2 = textsOnPage(2);
     expect(p2.filter((s) => s === '300 (케이블)')).toHaveLength(2); // w2 · w3
     expect(p2).toContain('120'); // w1 은 배선에 직접 입력된 길이
   });
 
   it('행이 넘치면 페이지를 나누고 헤더를 페이지마다 반복한다', async () => {
-    await downloadPdf(docWithWires(140));
+    await downloadPdf(docWithWires(140), { layout: 'sheets' });
     // 배선도 1 + 접속표 2 + 파트리스트 1 이상
     expect(rec.pages).toBeGreaterThan(3);
     const headCount = allText().filter((s) => s === 'FROM').length;
@@ -252,24 +351,61 @@ describe('접속표', () => {
   });
 
   it('A4 는 A3 보다 접속표 페이지가 더 많이 필요하다', async () => {
-    await downloadPdf(docWithWires(100), { paper: 'A3' });
+    await downloadPdf(docWithWires(100), { layout: 'sheets', paper: 'A3' });
     const a3 = rec.pages;
     rec.reset();
-    await downloadPdf(docWithWires(100), { paper: 'A4' });
+    await downloadPdf(docWithWires(100), { layout: 'sheets', paper: 'A4' });
     expect(rec.pages).toBeGreaterThan(a3);
+  });
+
+  /**
+   * 1페이지 배치라도 **행을 버리지 않는다.** 한 장에 담자고 접속표를 잘라 내면
+   * 그 도면으로는 하네스를 만들 수 없다 — 넘친 몫은 이어지는 면으로 흘린다.
+   */
+  it('1페이지에 안 들어가는 접속표는 이어지는 면으로 넘긴다', async () => {
+    await downloadPdf(docWithWires(40));
+    expect(rec.pages).toBeGreaterThan(1);
+    expect(allText()).toContain('접속표 (FROM → TO) — 이어짐');
+    expect(allText().some((s) => s.startsWith('40본 · 이어짐'))).toBe(true);
+    // 첫 면 11행 + 나머지 29행 = 40행. 한 줄도 사라지지 않는다.
+    const lens = allText().filter((s) => /^1\d\d$/.test(s));
+    expect(new Set(lens).size).toBe(40);
   });
 });
 
 // ============================================================
 describe('파트리스트', () => {
   it('분류별로 묶고 소계를 붙인다', async () => {
-    await downloadPdf(sampleDoc);
+    await downloadPdf(sampleDoc, { layout: 'sheets' });
     const rows = buildPartList(sampleDoc);
     const cats = [...new Set(rows.map((r) => r.category))];
     const p3 = textsOnPage(3);
     expect(p3).toContain('파트리스트');
-    for (const c of cats) expect(p3).toContain(c);
+    for (const c of cats) expect(p3).toContain(`[${c}]`);
     expect(p3.filter((s) => s.startsWith('소계 ')).length).toBe(cats.length);
+  });
+
+  /**
+   * 1페이지의 부품 칸은 세로로 7줄뿐이다. 분류 머리줄·소계까지 넣으면
+   * 5품목짜리 하네스가 11줄이 되어 절반이 다음 면으로 넘어간다 — 한 장에
+   * 담자고 만든 배치에서 부품표만 두 장이 되는 것은 앞뒤가 안 맞는다.
+   */
+  it('1페이지 부품표는 분류 머리줄 없이 평평하게 적는다', async () => {
+    const doc = smallDoc();
+    await downloadPdf(doc);
+    const p1 = textsOnPage(1);
+    expect(p1).toContain('부품');
+    expect(p1.some((s) => s.startsWith('소계 '))).toBe(false);
+    expect(p1.some((s) => s.startsWith('['))).toBe(false);
+    for (const r of buildPartList(doc)) expect(p1).toContain(r.part);
+  });
+
+  /** 넘치면 이어지는 면으로 — 부품표도 행을 버리지 않는다 */
+  it('1페이지에 안 들어가는 부품표는 이어지는 면으로 넘긴다', async () => {
+    await downloadPdf(sampleDoc);   // 8품목 · 칸은 7줄
+    expect(rec.pages).toBeGreaterThan(1);
+    expect(allText()).toContain('부품 — 이어짐');
+    for (const r of buildPartList(sampleDoc)) expect(allText()).toContain(r.part);
   });
 
   it('partLines 는 분류마다 머리줄 + 행 + 소계를 만든다', () => {
@@ -287,14 +423,21 @@ describe('파트리스트', () => {
 describe('downloadKitPdf — 세트 묶음', () => {
   it('하네스 수 × 3면을 한 PDF 에 이어 붙인다', async () => {
     const b: HarnessDocument = { ...sampleDoc, id: 'doc-2', name: 'B 하네스', drawingNo: 'HW-002' };
-    await downloadKitPdf(kitOf(sampleDoc, b));
+    await downloadKitPdf(kitOf(sampleDoc, b), { layout: 'sheets' });
     expect(rec.pages).toBe(6);
     expect(rec.saved[0]).toBe('KIT-2408.pdf');
   });
 
+  it('기본 배치에서는 하네스당 한 장이다', async () => {
+    const a = smallDoc();
+    const b: HarnessDocument = { ...a, id: 'doc-2', name: 'B 하네스', drawingNo: 'HW-002' };
+    await downloadKitPdf(kitOf(a, b));
+    expect(rec.pages).toBe(2);
+  });
+
   it('푸터는 그 면이 속한 하네스를 가리킨다', async () => {
     const b: HarnessDocument = { ...sampleDoc, id: 'doc-2', name: 'B 하네스', drawingNo: 'HW-002' };
-    await downloadKitPdf(kitOf(sampleDoc, b));
+    await downloadKitPdf(kitOf(sampleDoc, b), { layout: 'sheets' });
     const feet = allText().filter((s) => /\d+\/\d+$/.test(s));
     expect(feet).toHaveLength(6);
     expect(feet[0]).toBe('샘플 하네스 · — · — · 1/6');
@@ -305,6 +448,98 @@ describe('downloadKitPdf — 세트 묶음', () => {
     await downloadKitPdf(kitOf());
     expect(rec.pages).toBe(1);
     expect(allText()).toContain('세트에 하네스가 없다.');
+  });
+});
+
+// ============================================================
+// 핀 배열 미니 뷰 (개선안 §2-8)
+// ============================================================
+describe('핀 배열 (실물 기준)', () => {
+  /** layout / view 를 마음대로 바꿔 끼울 수 있는 최소 문서 */
+  function docWithPart(over: Partial<PartLibraryItem>, conn: Record<string, unknown> = {}): HarnessDocument {
+    const base = smallDoc();
+    const housing = base.usedParts.find((p) => p.id === base.connectors[0].housingId)!;
+    return {
+      ...base,
+      connectors: base.connectors.map((c, i) => (i === 0 ? { ...c, ...conn } : c)),
+      usedParts: base.usedParts.map((p) => (p.id === housing.id ? { ...p, ...over } : p)),
+    } as HarnessDocument;
+  }
+
+  it('layout 과 view 가 다 있으면 배열을 격자로 그린다', async () => {
+    await downloadPdf(docWithPart({ layout: [[4, 3], [2, 1]], view: '결합면 기준' }));
+    const p1 = textsOnPage(1);
+    expect(p1).toContain('핀 배열 (실물 기준)');
+    // 제목은 도면 레퍼런스 + 부품명, 부제는 MPN + 뷰 기준
+    expect(p1.some((s) => s.startsWith('J1 '))).toBe(true);
+    expect(p1.some((s) => s.includes('결합면 기준'))).toBe(true);
+    for (const n of ['1', '2', '3', '4']) expect(p1).toContain(n);
+  });
+
+  /**
+   * **뷰 기준이 없으면 배열을 그리지 않는다.** 커넥터는 뒤집으면 번호가 좌우로
+   * 뒤집히므로, 뷰 없는 배열은 절반의 확률로 거울상이다 — 아무것도 안 그리는
+   * 편이 낫고(사람이 실물을 본다), 그 사실은 --danger 로 말한다.
+   */
+  it('view 가 비면 배열을 그리지 않고 --danger 로 알린다', async () => {
+    await downloadPdf(docWithPart({ layout: [['A', 'B']] }));
+    const p1 = textsOnPage(1);
+    expect(p1.some((s) => s.includes('뷰 기준 없음'))).toBe(true);
+    // 배열 칸의 글자(A·B)는 한 개도 나오면 안 된다
+    expect(p1).not.toContain('A');
+    expect(p1).not.toContain('B');
+    // 경고는 --danger 색이다 (개선안 §2-14 가 잡은 누락 토큰)
+    expect(rec.ops.some((o: Op) => o.op === 'setTextColor' && o.args[0] === C.danger)).toBe(true);
+  });
+
+  it('layout 이 없으면 뷰 자체를 그리지 않고 왜 비었는지 적는다', async () => {
+    await downloadPdf(smallDoc());  // 씨앗 하우징에 layout 이 없다
+    const p1 = textsOnPage(1);
+    expect(p1).toContain('핀 배열 (실물 기준)');
+    expect(p1.some((s) => s.includes('등록된 실물 배열이 없다'))).toBe(true);
+  });
+
+  /**
+   * `layout` 을 `pinLayout` 으로 대신 그리면 이 기능의 존재 이유가 사라진다 —
+   * `pinLayout` 은 "배선이 나가는 변에 긴 축" 이라는 **작도 규칙**을 따르는
+   * 도면 좌표이고, 조립자가 그걸 실물로 믿으면 그대로 오조립이다.
+   */
+  it('pinLayout 만 있는 부품은 미니 뷰에 나오지 않는다', async () => {
+    const doc = docWithPart({
+      pinLayout: [{ index: 1, offset: { x: 0, y: 0 } }, { index: 2, offset: { x: 1, y: 0 } }],
+      view: '결합면 기준',
+    });
+    await downloadPdf(doc);
+    expect(textsOnPage(1).some((s) => s.includes('등록된 실물 배열이 없다'))).toBe(true);
+  });
+
+  it('unused 는 X 두 줄로, sleeve 는 점선 사각 + 라벨로 그린다', async () => {
+    await downloadPdf(docWithPart(
+      { layout: [[1, 2]], view: '결합면 기준' },
+      // 숫자로도 문자로도 들어온다 — String() 으로 맞춰 비교한다
+      { unused: ['2'], sleeve: true },
+    ));
+    expect(textsOnPage(1)).toContain('절연 슬리브');
+    // 점선 패턴이 한 번은 켜졌다 (슬리브 사각형)
+    expect(rec.ops.some((o: Op) =>
+      o.op === 'setLineDashPattern' && Array.isArray(o.args[0]) && (o.args[0] as number[]).length === 2,
+    )).toBe(true);
+  });
+});
+
+// ============================================================
+describe('스텁 라벨 (개선안 §2-5)', () => {
+  /**
+   * PDF 에서는 스텁 라벨을 그리지 않는다. 10P 케이블이면 상자 열 개가 패드 앞
+   * 좁은 띠에 몰려 판독이 안 됐다. 색은 선 색과 접속표 `색` 열이, 신호는
+   * 접속표 `신호` 열이 대신한다 — 뺀 정보에 대안이 있다.
+   */
+  it('색 약호를 도면에 찍지 않는다 — 표에서 읽는다', async () => {
+    await downloadPdf(sampleDoc, { layout: 'sheets' });
+    // 1면(배선도)에는 없고
+    expect(textsOnPage(1).some((s) => s === 'R/W')).toBe(false);
+    // 2면(접속표)의 색 칸에는 약호가 남아 있다
+    expect(textsOnPage(2).some((s) => s.startsWith('R/W '))).toBe(true);
   });
 });
 
@@ -353,8 +588,10 @@ describe('pdfDraw 순수 함수', () => {
     expect(xf.scale).toBeCloseTo(0.5);
     expect(xf.tx).toBeCloseTo(0);
     expect(xf.ty).toBeCloseTo(250); // 세로 가운데
-    // 작은 도면을 무한정 키우지는 않는다
-    expect(fitTransform({ x: 0, y: 0, w: 10, h: 10 }, { x: 0, y: 0, w: 1000, h: 1000 }).scale).toBe(2);
+    // 작은 도면을 무한정 키우지는 않는다. 상한은 2 → 1.6 으로 내려왔다(§2-2) —
+    // 2배까지 키우면 배선 두 본짜리 하네스에서 패드가 52pt 사각형이 되어
+    // 도면이 아니라 도해처럼 보인다.
+    expect(fitTransform({ x: 0, y: 0, w: 10, h: 10 }, { x: 0, y: 0, w: 1000, h: 1000 }).scale).toBe(1.6);
   });
 
   it('전선 굵기는 게이지를 따른다 — 흑백에서도 굵기로 구분된다', () => {
@@ -421,7 +658,9 @@ describe('한글 처리', () => {
     expect(drawn.filter((s) => s === '샘플 하네스')).toHaveLength(1);
     // ASCII(품번 · 게이지)는 벡터 텍스트 그대로 — 인쇄물에서 검색된다
     expect(allText()).toContain('HW-001');
-    expect(allText()).toContain('AWG22');
+    // 게이지는 부품표에 `AWG22 · red/white` 로 나온다 — `·` 는 Latin-1 이라
+    // 통째로 벡터 텍스트다(래스터로 넘어가지 않는다).
+    expect(allText().some((s) => s.startsWith('AWG22'))).toBe(true);
     expect(allText().some((s) => s.includes('하네스'))).toBe(false);
   });
 });

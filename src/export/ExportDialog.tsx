@@ -20,6 +20,7 @@ import {
   buildPartList, buildRunList, RUN_CSV_COLUMNS, RUN_CSV_DEFAULT_COLS,
 } from './exporters';
 import { clampMarginPct, MAX_MARGIN_PCT } from './units';
+import type { SheetLayout } from './pdfDraw';
 import {
   harnessLetter, planExportFiles, revTag as revTagOf, targetsOf,
   type ExportFile, type ExportItems, type ExportScope,
@@ -33,6 +34,12 @@ export type ExportPlan = {
   marginPct: number;
   unit: 'mm' | 'inch';
   paper: 'A3' | 'A4';
+  /**
+   * 도면 배치 (개선안 §2-2).
+   *  · `onepage` — A4 가로 한 장에 배선도 · 접속표 · 부품표 · 핀 배열 뷰
+   *  · `sheets`  — 옛 3면 방식 (배선도 / 접속표 / 파트리스트)
+   */
+  layout: SheetLayout;
   /** 켜진 CSV 열 */
   csvCols: string[];
   /**
@@ -67,11 +74,33 @@ const MARGIN_PRESETS = [0, 5, 10];
 type MarginSel = 0 | 5 | 10 | 'custom';
 
 /**
- * 도면 한 종이 차지하는 면 수 — 배선도 · 접속표 · 파트리스트 셋이 최소치다
- * (export/pdf.ts 의 addHarness). 표가 길면 더 늘어나므로 '이상' 으로 적는다.
- * 예전 값 2 는 어느 면도 세지 않은 숫자였다.
+ * 도면 한 종이 차지하는 면 수.
+ *  · `onepage` — 한 장. 표가 넘치면 이어지는 면이 붙으므로 '이상' 이다.
+ *  · `sheets`  — 배선도 · 접속표 · 파트리스트 셋이 최소치다(export/pdf.ts).
+ * 예전에는 3 으로 고정돼 있었는데, 배치를 고를 수 있게 된 지금 그 숫자는
+ * 어느 배치도 세지 않는 값이다.
  */
-const PDF_PAGES_PER_HARNESS = 3;
+const PDF_PAGES_PER_HARNESS: Record<SheetLayout, number> = { onepage: 1, sheets: 3 };
+
+/**
+ * 도면 배치 선택지.
+ *
+ * ## 기본이 `onepage` 인 근거
+ * 현장이 케이블 하나를 잡고 **종이 한 장만** 보면 되는 형식이다. 실제 세트
+ * 문서(EW-에보카 10종 · 배선 47본)에서 하네스당 배선 수의 최댓값이 10본이고
+ * 1페이지 접속표는 11행까지 프레임 안에 들어가므로, 기본 경로에서는 언제나
+ * 한 장으로 끝난다. 3면 방식은 같은 하네스에 종이를 세 장 쓰면서 두 장은
+ * 표만 있는 면이라, 도면과 접속표를 따로 들고 대조해야 했다.
+ *
+ * ## 3면을 지우지 않은 이유
+ * 배선이 수십 본인 하네스는 접속표가 한 장에 안 들어간다. `onepage` 도 그때
+ * 행을 버리지는 않지만(이어지는 면으로 흘린다), 애초에 큰 종이에 크게 뽑고
+ * 싶은 경우가 있다. 고르는 축을 여기 두고 판단은 사람에게 맡긴다.
+ */
+const LAYOUTS: { key: SheetLayout; label: string; desc: string }[] = [
+  { key: 'onepage', label: 'A4 1페이지', desc: '배선도 · 접속표 · 부품표 · 핀 배열이 한 장에' },
+  { key: 'sheets', label: '3면', desc: '배선도 / 접속표 / 파트리스트 · 배선이 많을 때' },
+];
 
 export function ExportDialog(props: {
   kit: KitDocument;
@@ -99,7 +128,9 @@ export function ExportDialog(props: {
   const [marginSel, setMarginSel] = useState<MarginSel>(5);
   const [customPct, setCustomPct] = useState(7);
   const [unit, setUnit] = useState<ExportPlan['unit']>('mm');
-  const [paper, setPaper] = useState<ExportPlan['paper']>('A3');
+  // 1페이지 배치가 기본이고, 그 배치의 좌표는 A4 가로 기준이다(pdfDraw.ONEPAGE).
+  const [layout, setLayout] = useState<SheetLayout>('onepage');
+  const [paper, setPaper] = useState<ExportPlan['paper']>('A4');
   const [cols, setCols] = useState<string[]>(DEFAULT_COLS);
 
   // Esc 로 닫는다 (스크림 클릭도 같은 동작). 내보내는 중에는 닫히지 않는다 —
@@ -126,13 +157,13 @@ export function ExportDialog(props: {
     const runs = targets.reduce((n, h) => n + buildRunList(h).length, 0);
     const parts = targets.reduce((n, h) => n + buildPartList(h).length, 0);
     return {
-      pdf: `${targets.length * PDF_PAGES_PER_HARNESS}매 이상`,
+      pdf: `${targets.length * PDF_PAGES_PER_HARNESS[layout]}매 이상`,
       runsCsv: `${runs}행`,
       partsCsv: `${parts}행`,
       bomCsv: `${kit.set.items.length}행`,
       json: '1개',
     } as Record<ItemKey, string>;
-  }, [targets, kit.set.items.length]);
+  }, [targets, kit.set.items.length, layout]);
 
   /**
    * 파일명 규칙 `[세트]_[하네스]_[종류]_[Rev]`.
@@ -177,7 +208,10 @@ export function ExportDialog(props: {
       items,
       marginPct,
       unit,
-      paper,
+      // 1페이지 배치는 A4 좌표로 설계돼 있다 — 용지를 함께 못박아 넘긴다
+      // (pdf.ts 도 같은 판단을 하지만, 계획에 적힌 값과 실제가 갈리면 안 된다).
+      paper: layout === 'onepage' ? 'A4' : paper,
+      layout,
       // 화면에 보인 순서 그대로 넘긴다 — CSV 열 순서가 곧 파일 열 순서다.
       csvCols: CSV_COLS.filter((c) => cols.includes(c)),
       files,
@@ -348,14 +382,41 @@ export function ExportDialog(props: {
                     <button
                       key={p}
                       type="button"
-                      className={`ex-seg-btn ex-seg-sm num${paper === p ? ' on' : ''}`}
-                      aria-pressed={paper === p}
+                      className={`ex-seg-btn ex-seg-sm num${(layout === 'onepage' ? 'A4' : paper) === p ? ' on' : ''}`}
+                      aria-pressed={(layout === 'onepage' ? 'A4' : paper) === p}
+                      // 1페이지 배치는 A4 좌표 전용이다. 막는 대신 조용히 A4 로
+                      // 바꿔 버리면 사람이 A3 를 골랐다고 믿은 채 A4 를 받는다.
+                      disabled={layout === 'onepage' && p === 'A3'}
                       onClick={() => setPaper(p)}
                     >
                       {p}
                     </button>
                   ))}
                 </div>
+              </div>
+
+              <div className="ex-row ex-row-top">
+                <span className="ex-row-label ex-row-label-pad">도면 배치</span>
+                <div className="ex-seg" role="group" aria-label="도면 배치">
+                  {LAYOUTS.map((l) => (
+                    <button
+                      key={l.key}
+                      type="button"
+                      className={`ex-seg-btn${layout === l.key ? ' on' : ''}`}
+                      aria-pressed={layout === l.key}
+                      onClick={() => {
+                        setLayout(l.key);
+                        if (l.key === 'onepage') setPaper('A4');
+                      }}
+                    >
+                      {l.label}
+                    </button>
+                  ))}
+                </div>
+                <span className="ex-note">
+                  {LAYOUTS.find((l) => l.key === layout)?.desc}
+                  {layout === 'onepage' ? ' · 용지는 A4 고정' : ''}
+                </span>
               </div>
 
               <div className="ex-row ex-row-top">
