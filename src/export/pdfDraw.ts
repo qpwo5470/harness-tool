@@ -38,12 +38,15 @@ import { planJackets, planWires, type JacketRun } from '../canvas/wirePlan';
 import {
   PAD as GEO_PAD, PITCH as GEO_PITCH, INSET as GEO_INSET,
   REF_BLOCK_H, MPN_CAPTION_H, DEV_ROW_H, DEV_PAD, LABEL_PAD_X,
-  PIN_NUM_FS, PIN_NUM_H,
+  PIN_NUM_FS,
   connectorLayout, connectorLabelRects, connectorRefParts, housingOrigin,
   pinNumberAlign, type PinNumAlign,
   deviceSize, deviceRefParts, deviceCaption, deviceLabelRects,
-  estimateTextWidth,
+  estimateTextWidth, labelsAlignRight,
 } from '../canvas/geometry';
+import { DEFAULT_STUB } from '../canvas/route';
+import { isStandaloneLug, seriesOf } from '../library/taxonomy';
+import type { Connector, Orientation, PartLibraryItem } from '../types';
 
 // ============================================================
 // 0. jsPDF 최소 표면 — 테스트에서 가짜 객체를 끼울 수 있게 좁혀 둔다
@@ -62,6 +65,10 @@ export interface PdfLike {
   line(x1: number, y1: number, x2: number, y2: number): unknown;
   rect(x: number, y: number, w: number, h: number, style?: string): unknown;
   addImage(data: string, fmt: string, x: number, y: number, w: number, h: number): unknown;
+  /** 원 — 링 러그 구멍. 테스트 목에는 없을 수 있어 optional (없으면 사각으로 대신한다) */
+  circle?(x: number, y: number, r: number, style?: string): unknown;
+  /** 삼각형 — 스플라이스 마름모 채우기. optional (없으면 윤곽선만) */
+  triangle?(x1: number, y1: number, x2: number, y2: number, x3: number, y3: number, style?: string): unknown;
   setLineDashPattern(pattern: number[], phase: number): unknown;
   addPage(): unknown;
   setPage(n: number): unknown;
@@ -303,7 +310,43 @@ export type PadBox = {
    */
   num?: Rect;
   numAlign?: PinNumAlign;
+  /** 이 도면에서 일부러 비우는 핀(Connector.unused) — 패드에 X 를 긋는다 */
+  unused?: boolean;
+  /** 핀 id — 배선 끝 번호(접점 번호)를 찾을 때 쓴다. 장치 단자는 없다 */
+  pinId?: string;
+  /** 핸들(배선 끝점) 절대 좌표 — geometry.handleOffset 그대로 */
+  handle?: Pt;
 };
+
+/**
+ * 끝단 심볼 종류 (레퍼런스 render.py 의 End.kind 에 대응).
+ *
+ * **데이터가 가르는 것만** 따로 그린다. 판정 근거는 taxonomy 하나다 —
+ *  · `splice`  — Connector.kind === 'splice'  → 마름모 (render.py 의 SP1)
+ *  · `faston`  — 파스톤 계열 **REC**(id `…-rec`) → 리셉터클 + 넥 + 압착 배럴
+ *  · `ferrule` — 페룰 계열 → 절연 칼라 + 금속 관
+ *  · `lug`     — 링·Y형 러그 → 압착 배럴 + 혀(링은 구멍, Y형은 홈)
+ *  · `housing` — 그 밖 전부 (하우징 격자). 납처리 전선단·DC 배럴잭은 부품 데이터에
+ *                그 사실을 적을 자리가 없어(taxonomy 에 계열이 없다) 여기서 지어내지 않는다.
+ */
+export type EndGlyph = 'housing' | 'splice' | 'faston' | 'ferrule' | 'lug';
+
+/**
+ * 커넥터 → 끝단 심볼. 러그 심볼은 **배선이 좌우로 나가고(0°/180°) 그리는 격자가
+ * 한 열**일 때만 쓴다 — 심볼은 하우징 박스(38px) 폭 안에 가로로 눕혀 그리므로,
+ * 위·아래로 나가는 방향에서는 핸들(박스 변)과 심볼이 맞지 않는다. 그럴 때는
+ * 하우징 격자로 남긴다(틀린 그림보다 일반 그림이 낫다).
+ */
+export function endGlyphOf(c: Connector, part: PartLibraryItem | undefined, drawCols = 1): EndGlyph {
+  if (c.kind === 'splice') return 'splice';
+  if (!part || !isStandaloneLug(part)) return 'housing';
+  if (!(c.orientation === 0 || c.orientation === 180) || drawCols !== 1) return 'housing';
+  const key = seriesOf(part)?.key;
+  if (key === 'lug-faston') return /-rec$/.test(part.id) ? 'faston' : 'housing';
+  if (key === 'lug-ferrule') return 'ferrule';
+  if (key === 'lug-ring' || key === 'lug-fork') return 'lug';
+  return 'housing';
+}
 
 export type NodeBox = {
   id: string;
@@ -324,12 +367,27 @@ export type NodeBox = {
    * 그래야 왼쪽/오른쪽 정렬이 화면과 갈리지 않는다. 도면 경계(boundsOf)도 이걸 쓴다.
    */
   labelRects: Rect[];
+  /**
+   * 종이 경계 전용 — labelRects 를 실제 글꼴 폭만큼 넓힌 것. 화면 상자(labelRects)는
+   * geometry 와 1px 도 다르면 안 되므로 따로 둔다. 없으면 labelRects 를 쓴다.
+   */
+  inkRects?: Rect[];
   pads: PadBox[];
   /** 래치 돌기 (장치는 없음) */
   latch?: Rect;
   color: string;
   /** 장치는 점선 테두리 */
   dashed: boolean;
+  /** 끝단 심볼 종류 — 장치는 'housing' 이지만 kind 로 따로 그린다 */
+  glyph?: EndGlyph;
+  /** 링(true) / Y형(false) — glyph 'lug' 에서만 뜻이 있다 */
+  ring?: boolean;
+  /** 커넥터 방향 (장치는 없음) */
+  orientation?: Orientation;
+  /** 이름표를 하우징 오른쪽 변에 맞추는가 (geometry.labelsAlignRight) */
+  alignRight?: boolean;
+  /** 압착부에 절연 슬리브를 씌우는가 (Connector.sleeve) */
+  sleeve?: boolean;
 };
 
 export type WirePath = {
@@ -342,6 +400,11 @@ export type WirePath = {
   signal?: string;
   /** 스텁 라벨 중심 — 도착 패드 옆 */
   labelAt: Pt;
+  /**
+   * 양 끝의 접점 번호 (render.py `contact_no`) — [출발, 도착].
+   * 커넥터 핀에 닿는 끝에만 있다. 장치 단자·스플라이스 끝은 null.
+   */
+  ends?: [string | null, string | null];
 };
 
 /**
@@ -390,6 +453,8 @@ export function buildDrawing(doc: HarnessDocument): Drawing {
     const isSplice = c.kind === 'splice';
 
     const numAlign = pinNumberAlign(o);
+    // `unused` 는 숫자로도 라벨로도 들어온다(`3` / `'+'`) — 둘 다 문자열로 맞춰 본다
+    const unusedSet = new Set((c.unused ?? []).map((v) => String(v)));
     const pads: PadBox[] = c.pins.map((pin) => {
       // cellOf 는 **그리는 격자** 칸이다 — 방향에 맞춰 세운 뒤의 좌표(geometry.drawGrid).
       // 저장된 pinLayout.offset(정의 기준)을 여기서 쓰면 화면과 그림이 갈린다.
@@ -405,8 +470,13 @@ export function buildDrawing(doc: HarnessDocument): Drawing {
         assigned: Boolean(slot?.signal),
         num: { x: box.x + nb.x, y: box.y + nb.y, w: nb.w, h: nb.h },
         numAlign,
+        unused: unusedSet.has(String(pin.index)) || unusedSet.has(label),
+        pinId: pin.id,
+        // 핸들(배선 끝점) 자리 — 화면과 같은 함수. 스플라이스 심볼이 여기서 선을 당긴다
+        handle: { x: box.x + g.handleOffset(pin.index).x, y: box.y + g.handleOffset(pin.index).y },
       };
     });
+    const glyph = endGlyphOf(c, housing, g.cols);
 
     const latch: Rect =
       o === 0 ? { x: box.x - LATCH_T - 1, y: box.y + boxH / 2 - LATCH_L / 2, w: LATCH_T, h: LATCH_L }
@@ -422,12 +492,37 @@ export function buildDrawing(doc: HarnessDocument): Drawing {
      */
     const parts = connectorRefParts(c, housing, refs.get(c.id));
     const rects = connectorLabelRects(c, housing, p0, refs.get(c.id));
+    const alignRight = labelsAlignRight(o);
+
+    /*
+     * 캡션 — 페룰·러그는 MPN 뒤에 **적용 전선**을 붙인다(레퍼런스 `노랑 · 1.0mm²`).
+     * 색은 붙이지 않는다: 절연 목깃 색은 규격마다 달라 부품 데이터가 적지 않는다
+     * (seed.ts 페룰 비고). 있는 값(spec.적용전선)만 쓴다.
+     */
+    const wireSpec = housing?.spec?.['적용전선'];
+    const caption = (glyph === 'ferrule' || glyph === 'lug') && housing?.mpn && wireSpec && /mm²/.test(wireSpec)
+      ? `${housing.mpn} · ${wireSpec}`
+      : housing?.mpn;
+    /*
+     * 경계(boundsOf)용 이름표 사각형은 **조금 넓혀** 센다. geometry 의 폭 어림은
+     * ASCII 를 0.52em 으로 잡는데 PDF 의 실제 글자(Helvetica 대문자 ≈0.65em)는
+     * 더 넓어, 도면 끝의 이름표가 영역 밖으로 삐져나왔다. 넓히는 쪽은 overhang
+     * 방향(핸들 반대쪽)뿐이다. 이 값은 종이 경계에만 쓰이고 화면 상자는 그대로다.
+     */
+    const widen = (r: Rect, w: number): Rect => {
+      const nw = Math.max(r.w, w);
+      return { x: alignRight ? r.x + r.w - nw : r.x, y: r.y, w: nw, h: r.h };
+    };
+    const refRect = widen(rects.ref, rects.ref.w * 1.15);
+    const mpnRect = rects.mpn
+      ? widen(rects.mpn, estimateTextWidth(caption ?? '', 10) * 1.15 + LABEL_PAD_X * 2)
+      : undefined;
 
     nodes.push({
       id: c.id,
       ref: parts.ref,
       name: parts.name,
-      mpn: housing?.mpn,
+      mpn: caption,
       kind: isSplice ? 'splice' : 'connector',
       box,
       dir: parts.dir,
@@ -439,10 +534,16 @@ export function buildDrawing(doc: HarnessDocument): Drawing {
       },
       mpnAt: { x: (rects.mpn?.x ?? box.x) + LABEL_PAD_X, y: box.y + boxH + 11 },
       labelRects: [rects.ref, ...(rects.mpn ? [rects.mpn] : [])],
+      inkRects: [refRect, ...(mpnRect ? [mpnRect] : [])],
       pads,
       latch,
       color: isSplice ? C.splice : C.lineStrong,
       dashed: false,
+      glyph,
+      ring: glyph === 'lug' ? /^lib-lug-ring-/.test(housing?.id ?? '') : undefined,
+      orientation: o,
+      alignRight,
+      sleeve: Boolean(c.sleeve),
     });
   }
 
@@ -489,6 +590,14 @@ export function buildDrawing(doc: HarnessDocument): Drawing {
   const wires: WirePath[] = [];
   const edges = docToEdges(doc, new Set(), null, 'logical');
   const routes = new Map(planWires(doc, 'logical').map((r) => [r.id, r]));
+  // 접점 번호 — 핀 id → 패드 번호. 스플라이스 끝은 번호가 뜻이 없어 넣지 않는다.
+  const pinNo = new Map<string, string>();
+  for (const n of nodes) {
+    if (n.kind !== 'connector') continue;
+    for (const p of n.pads) if (p.pinId) pinNo.set(`${n.id}/${p.pinId}`, p.label);
+  }
+  const endNo = (ep: HarnessDocument['wires'][number]['from']): string | null =>
+    ep.type === 'pin' ? pinNo.get(`${ep.connectorId}/${ep.pinId}`) ?? null : null;
   for (const e of edges) {
     const wire = doc.wires.find((w) => w.id === e.id);
     const route = routes.get(e.id);
@@ -506,6 +615,8 @@ export function buildDrawing(doc: HarnessDocument): Drawing {
       signal: data.signal,
       // 스텁 라벨도 같은 출처 — 화면 .hz-stub 과 같은 자리(도착 패드 직전 구간)
       labelAt: { x: route.labelX, y: route.labelY },
+      // planWires 의 points 는 출발(from) 핸들에서 시작해 도착(to) 핸들에서 끝난다
+      ends: [endNo(wire.from), endNo(wire.to)],
     });
   }
 
@@ -547,7 +658,7 @@ function boundsOf(nodes: NodeBox[], wires: WirePath[], jackets: JacketShape[] = 
     hit(n.box.x + n.box.w + LATCH_T + 2, n.box.y + n.box.h + LATCH_T + 2);
     // 라벨은 박스 밖으로 삐져나온다 — 잘리지 않게 그 사각형을 그대로 센다.
     // (o=180 은 **왼쪽으로** 넘치므로 폭만 더하던 예전 식으로는 잘렸다)
-    for (const r of n.labelRects) {
+    for (const r of [...n.labelRects, ...(n.inkRects ?? [])]) {
       hit(r.x, r.y);
       hit(r.x + r.w, r.y + r.h);
     }
@@ -629,9 +740,27 @@ export function dimensionLabel(doc: HarnessDocument, perSet?: number): string {
   return perSet != null && Number.isFinite(perSet) ? `${len}  (${perSet}EA)` : len;
 }
 
+/**
+ * 제목블록 3행의 글자를 **통째로** 지정한다 — 하네스 문서가 아닌 면(세트 표지,
+ * 구매품 면, 제조사 도면 캡처 면 …)도 같은 프레임·제목블록을 쓰게 하려는 것이다.
+ * 레퍼런스 build.py `frame(title, no, sub, extra)` 와 같은 칸 배치:
+ *   1행 `title`(굵게) | `no`  ·  2행 `line2` | `rev`  ·  3행 `line3` | `date`
+ * 빈 문자열은 그대로 빈칸이다(대시로 바꾸지 않는다 — 호출부가 정한 글자를 그린다).
+ */
+export type TitleRows = {
+  title: string;
+  no: string;
+  line2: string;
+  rev: string;
+  line3: string;
+  date: string;
+};
+
 export type SheetInfo = {
   /** 세트당 수량 — 제목블록 3행과 치수 표기에 쓴다. 없으면 '미상' */
   perSet?: number;
+  /** 주면 제목블록 글자를 문서에서 만들지 않고 이것을 그대로 그린다 */
+  rows?: TitleRows;
 };
 
 /** 프레임 + 제목블록(3행)을 그리고, 도면이 들어갈 안쪽 영역을 돌려준다. */
@@ -675,7 +804,12 @@ export function drawFrameAndTitleBlock(
   const sideW = side - 12;
   const dash = '—';
   /** [왼쪽 글자, 크기, 굵게, 색, 오른쪽 글자] */
-  const lines: [string, number, boolean, string, string][] = [
+  const r = info.rows;
+  const lines: [string, number, boolean, string, string][] = r ? [
+    [r.title, 10, true, C.text, r.no],
+    [r.line2, 9, false, C.muted, r.rev],
+    [r.line3, 9, false, C.muted, r.date],
+  ] : [
     [doc.name || '이름 없는 하네스', 10, true, C.text, doc.drawingNo?.trim() || dash],
     [`SCALE 1:1 · 논리 · 배선 ${doc.wires.length}`, 9, false, C.muted,
       doc.rev?.trim() ? `Rev.${doc.rev.trim()}` : dash],
@@ -744,95 +878,26 @@ export function drawDrawing(
     }
   }
 
-  // ── 하우징 심볼 ─────────────────────────────────────────────────────────
+  // ── 끝단 심볼 (하우징 · 러그 · 스플라이스) ───────────────────────────────
+  const pen: Pen = { pdf, X, Y, S, fs, text };
   for (const n of dr.nodes) {
-    // 래치 돌기 (방향을 그림으로 읽게 하는 장치)
-    if (n.latch) {
-      pdf.setLineDashPattern([], 0);
-      pdf.setFillColor(n.color);
-      pdf.rect(X(n.latch.x), Y(n.latch.y), S(n.latch.w), S(n.latch.h), 'F');
-    }
+    if (n.kind === 'device') drawDeviceNode(pen, n);
+    else if (n.glyph === 'splice') drawSpliceGlyph(pen, n);
+    else if (n.glyph === 'faston') drawFastonGlyph(pen, n);
+    else if (n.glyph === 'ferrule') drawFerruleGlyph(pen, n);
+    else if (n.glyph === 'lug') drawLugGlyph(pen, n);
+    else drawHousingGrid(pen, n);
+    drawNodeLabels(pen, n);
+  }
 
-    // 하우징 박스 — 장치는 점선
-    pdf.setFillColor(C.white);
-    pdf.setDrawColor(n.color);
-    pdf.setLineWidth(Math.max(0.4, S(1.5)));
-    pdf.setLineDashPattern(n.dashed ? [S(3), S(2)] : [], 0);
-    pdf.rect(X(n.box.x), Y(n.box.y), S(n.box.w), S(n.box.h), 'FD');
-    pdf.setLineDashPattern([], 0);
-
-    // 좌상단 등록 마크 = 1번 핀 기준점
-    pdf.setDrawColor(n.color);
-    pdf.setLineWidth(Math.max(0.5, S(2)));
-    pdf.line(X(n.box.x), Y(n.box.y), X(n.box.x + REG), Y(n.box.y));
-    pdf.line(X(n.box.x), Y(n.box.y), X(n.box.x), Y(n.box.y + REG));
-
-    // 핀 패드 격자
-    for (const p of n.pads) {
-      if (n.kind === 'device') {
-        // 단자 이름 베이스라인 — 줄(DEV_ROW_H) 안에서 세로 가운데.
-        // 핸들(deviceAnchor)이 줄 중앙(p.y + DEV_ROW_H/2)에 있으므로 글자도 거기 맞춘다.
-        text(p.label, X(p.x), Y(p.y + DEV_ROW_H / 2 + 4), { size: fs(11), color: C.text2 });
-        continue;
-      }
-      pdf.setFillColor(p.assigned ? C.subtle : C.white);
-      pdf.setDrawColor(C.lineStrong);
-      pdf.setLineWidth(Math.max(0.25, S(1)));
-      pdf.rect(X(p.x), Y(p.y), S(PAD), S(PAD), 'FD');
-      /**
-       * 번호는 패드 가운데가 아니라 **핸들 자리**에 찍는다(geometry.pinNumberBox).
-       * 화면만 고치고 종이를 빠뜨리면 같은 도면이 두 그림으로 갈린다 —
-       * 이 저장소가 직전 커밋에서 스텁 라벨로 낸 사고와 같은 종류다.
-       * `num` 이 없는 옛 데이터는 예전대로 칸 가운데로 떨어진다.
-       *
-       * ── 개선안 §2-4 (접점 핀번호)를 왜 **따르지 않았나**
-       * 개선안은 "배선이 커넥터에 닿는 지점 양쪽 끝 모두에 작은 핀번호를
-       * 얹으라" 고 한다(스텁 바깥 `p.x + STUB + 2` / `q.x - STUB - 2`).
-       * 그 요구가 풀려는 문제는 하나다 — *2열 커넥터에서 바깥 열로 가는 배선이
-       * 안쪽 열 패드 위를 지나가 어느 핀에 붙는 선인지 헷갈린다.*
-       *
-       * **그 문제는 이미 여기서 풀려 있다.** 레퍼런스 구현(`render.py`)이
-       * `contact_no` 를 따로 둔 이유는 그쪽 `_draw_grid` 가 번호를 **패드
-       * 한가운데**에 찍기 때문이다. 이 툴은 번호를 핸들과 같은 along 좌표에
-       * 놓고 배선이 나가는 변 쪽 모서리에 붙인다 — 배선 끝점에서 변에 수직으로
-       * 눈을 옮기면 그 줄에 번호가 하나뿐이다(geometry.pinNumberBox 의 겹치지
-       * 않는 근거, `pinNumber.test.ts` 가 네 방향 모두 상자를 재서 못박는다).
-       * MDB 6P·Micro-Fit 10P 를 실제로 뽑아 확인했다.
-       *
-       * 둘을 다 하면 **같은 번호가 두 번 나온다.** 게다가 스텁 바깥에 글자를
-       * 두는 것은 이 저장소가 의도적으로 버린 선택이다:
-       *  (1) 스텁 14pt 는 배선이 곧게 나가는 자리라 글자가 선에 뚫린다.
-       *  (2) 밖에 글자를 두면 그 폭을 경계 상자에 넣어야 하는데, 넓히는 쪽이
-       *      곧 핸들이 있는 쪽이라 핸들이 상자 속으로 들어가고 스텁부터 회피
-       *      대상이 돼 경로가 망가진다(geometry.labelsAlignRight 머리말).
-       * 그래서 §2-4 는 **지금 것으로 충족된 것으로 보고 얹지 않는다.**
-       */
-      const nb = p.num ?? { x: p.x, y: p.y + (PAD - PIN_NUM_H) / 2, w: PAD, h: PIN_NUM_H };
-      const al = p.numAlign ?? 'center';
-      // 정렬 기준점: 왼쪽=상자 왼끝 · 오른쪽=오른끝 · 가운데=한가운데
-      const nx = al === 'right' ? nb.x + nb.w : al === 'center' ? nb.x + nb.w / 2 : nb.x;
-      // +4 는 글자 가운데에서 베이스라인까지 (11px 기준 ≈ 0.36em) — 논리 px 이라
-      // Y() 가 함께 줄인다. 패드 가운데를 쓰던 예전 식과 같은 값이다.
-      text(p.label, X(nx), Y(nb.y + nb.h / 2 + 4), {
-        size: fs(PIN_NUM_FS), bold: true, align: al,
-        // 미배정도 **번호는 읽혀야 한다** — muted2(#b7b7ba)는 흰 종이 대비 2.1:1 이라
-        // A3 출력에서 글자가 사라졌다. 화면(.hz-pad)과 같은 값으로 맞춘다.
-        color: p.assigned ? C.text : C.muted,
-        maxWidth: S(nb.w),
-      });
-    }
-
-    // 레퍼런스 라벨 (J1 + 부품명 + 방향)
-    let lx = X(n.refAt.x);
-    const ly = Y(n.refAt.y);
-    // 그린 폭을 그대로 받아 이어 붙인다 — 추정치를 쓰면 어긋난다
-    lx += text(n.ref, lx, ly, { size: fs(11), bold: true, color: C.text }) + fs(11) * 0.35;
-    const nameW = text(n.name, lx, ly, { size: fs(11.5), color: C.text });
-    if (n.dir) {
-      lx += nameW + fs(11) * 0.35;
-      text(n.dir, lx, ly, { size: fs(10), color: C.muted });
-    }
-    if (n.mpn) text(n.mpn, X(n.mpnAt.x), Y(n.mpnAt.y), { size: fs(10), color: C.text3 });
+  // ── 접점 번호 (render.py `contact_no`) ──────────────────────────────────
+  // 배선이 커넥터에 닿는 지점, 스텁 바로 바깥에 작은 굵은 번호를 흰 바탕으로 얹는다.
+  // 2열 커넥터(Micro-Fit 10P)에서 안쪽 열로 가는 선이 어느 핀인지 이걸로 읽는다.
+  for (const w of dr.wires) {
+    if (!w.ends || w.points.length < 2) continue;
+    const [a, b] = w.ends;
+    if (a != null) drawContactNo(pen, w.points[0], w.points[1], a);
+    if (b != null) drawContactNo(pen, w.points[w.points.length - 1], w.points[w.points.length - 2], b);
   }
 
   /*
@@ -881,6 +946,369 @@ export function drawDrawing(
     pdf.line(cx - w / 2 - 30, base - 3, cx - w / 2 - 4, base - 3);
     pdf.line(cx + w / 2 + 4, base - 3, cx + w / 2 + 30, base - 3);
   }
+}
+
+// ============================================================
+// 5-1. 끝단 심볼 — 레퍼런스(이스턴웰스 render.py)와 같은 그림 언어
+//
+// 모든 치수는 **논리 px** 이고 pen.X/Y/S 가 용지 pt 로 옮긴다. 심볼은 언제나
+// geometry 가 정한 하우징 박스(`n.box`) **안**에 그린다 — 배선 끝점(핸들)이
+// 그 박스 변 위에 있으므로, 심볼이 박스를 벗어나면 선이 심볼에 닿지 않는다.
+// ============================================================
+
+/** 그리기 도구 묶음 — 논리 px → pt 변환과 글자 함수 */
+export type Pen = {
+  pdf: PdfLike;
+  X: (v: number) => number;
+  Y: (v: number) => number;
+  S: (v: number) => number;
+  /** 논리 px 글꼴 크기 → pt (읽히는 하한·상한으로 자른다) */
+  fs: (px: number) => number;
+  text: DrawText;
+};
+
+/**
+ * 글자 폭(pt) — **그리기 전에** 잰다. 이름표를 오른쪽 정렬하려면 전체 폭을 먼저
+ * 알아야 하기 때문이다. Latin-1 조각은 jsPDF 가 정확히 재고(Helvetica 대문자는
+ * 어림 0.52em 보다 넓다), 래스터로 나가는 한글 조각은 전각 어림(1em)을 쓴다 —
+ * pdf.ts 의 fitToWidth 와 같은 규칙이다.
+ */
+export function measureText(pdf: PdfLike, t: string, size: number, bold = false): number {
+  if (!t) return 0;
+  if (typeof pdf.getTextWidth !== 'function') return estimateTextWidth(t, size);
+  pdf.setFontSize(size);
+  pdf.setFont('helvetica', bold ? 'bold' : 'normal');
+  let w = 0;
+  for (const run of t.match(/[ -ÿ]+|[^ -ÿ]+/g) ?? []) {
+    w += needsRaster(run) ? estimateTextWidth(run, size) : pdf.getTextWidth(run);
+  }
+  return Math.max(w, 0);
+}
+
+/**
+ * 이름표 `J1  JST-XH 10P  → 180° 오른쪽` + MPN 캡션.
+ *
+ * 조각마다 **먼저 재고** 자리를 정한 뒤, 실제로 그린 폭과 잰 폭 중 큰 쪽만큼
+ * 다음 조각을 민다 — 어느 쪽 값이 틀려도 글자가 겹치지 않는다(예전에는 방향
+ * 글자가 이름 위에 겹쳐 찍혔다). 오른쪽 정렬(o=180)은 하우징 오른쪽 변에
+ * 끝을 맞춘다 — geometry.labelsAlignRight 와 같은 규칙.
+ */
+function drawNodeLabels(pen: Pen, n: NodeBox): void {
+  const { pdf, X, Y, S, fs, text } = pen;
+  const sRef = fs(11);
+  const sName = fs(11.5);
+  const sDir = fs(10);
+  const gap1 = Math.max(S(6), 2);
+  const gap2 = Math.max(S(8), 3);
+  const wRef = measureText(pdf, n.ref, sRef, true);
+  const wName = measureText(pdf, n.name, sName);
+  const wDir = measureText(pdf, n.dir, sDir);
+  const total = wRef + (n.name ? gap1 + wName : 0) + (n.dir ? gap2 + wDir : 0);
+  const right = X(n.box.x + n.box.w - LABEL_PAD_X);
+  let lx = n.alignRight ? right - total : X(n.refAt.x);
+  const ly = Y(n.refAt.y);
+  lx += Math.max(wRef, text(n.ref, lx, ly, { size: sRef, bold: true, color: C.text }));
+  if (n.name) {
+    lx += gap1;
+    lx += Math.max(wName, text(n.name, lx, ly, { size: sName, color: C.text }));
+  }
+  if (n.dir) {
+    lx += gap2;
+    text(n.dir, lx, ly, { size: sDir, color: C.muted });
+  }
+  if (n.mpn) {
+    const my = Y(n.mpnAt.y);
+    if (n.alignRight) text(n.mpn, right, my, { size: fs(10), color: C.text3, align: 'right' });
+    else text(n.mpn, X(n.mpnAt.x), my, { size: fs(10), color: C.text3 });
+  }
+}
+
+/** 좌상단 등록 마크 = 1번 핀 기준점 */
+function drawRegMark(pen: Pen, b: Rect, color: string): void {
+  const { pdf, X, Y, S } = pen;
+  pdf.setLineDashPattern([], 0);
+  pdf.setDrawColor(color);
+  pdf.setLineWidth(Math.max(0.5, S(2)));
+  pdf.line(X(b.x), Y(b.y), X(b.x + REG), Y(b.y));
+  pdf.line(X(b.x), Y(b.y), X(b.x), Y(b.y + REG));
+}
+
+/** 장치 블록 — 점선 상자 + 단자 이름 (예전 그림 그대로) */
+function drawDeviceNode(pen: Pen, n: NodeBox): void {
+  const { pdf, X, Y, S, fs, text } = pen;
+  pdf.setFillColor(C.white);
+  pdf.setDrawColor(n.color);
+  pdf.setLineWidth(Math.max(0.4, S(1.5)));
+  pdf.setLineDashPattern([S(3), S(2)], 0);
+  pdf.rect(X(n.box.x), Y(n.box.y), S(n.box.w), S(n.box.h), 'FD');
+  pdf.setLineDashPattern([], 0);
+  drawRegMark(pen, n.box, n.color);
+  for (const p of n.pads) {
+    // 단자 이름 베이스라인 — 줄(DEV_ROW_H) 안에서 세로 가운데.
+    // 핸들(deviceAnchor)이 줄 중앙(p.y + DEV_ROW_H/2)에 있으므로 글자도 거기 맞춘다.
+    text(p.label, X(p.x), Y(p.y + DEV_ROW_H / 2 + 4), { size: fs(11), color: C.text2 });
+  }
+}
+
+/** 패드 번호 — 굵게, 패드 **한가운데**(render.py `_draw_grid`). 넘치면 글꼴을 줄인다 */
+function padNumber(pen: Pen, label: string, cx: number, cy: number, box: number, color: string, px = PIN_NUM_FS): void {
+  const { X, Y, S, fs, text } = pen;
+  const est = estimateTextWidth(label, px) * 1.2;   // 굵은 글꼴 여유
+  const size = est > box - 4 ? Math.max(6, (px * (box - 4)) / est) : px;
+  text(label, X(cx), Y(cy + size * 0.36), {
+    size: fs(size), bold: true, color, align: 'center', maxWidth: S(box - 2),
+  });
+}
+
+/**
+ * 하우징 격자 — render.py `_draw_grid` 와 같은 그림.
+ *  · 래치 돌기(배선 나가는 변) · 하우징 박스 · **결합면 띠**(배선 반대쪽 변) · 등록 마크
+ *  · 패드: 쓰는 핀은 회색 바탕, `Connector.unused` 는 흰 바탕 + X
+ *  · 번호: 굵게, 패드 한가운데
+ *
+ * ── 번호를 핸들 자리(geometry.pinNumberBox)에서 패드 가운데로 옮긴 이유
+ * 2열 커넥터(Micro-Fit 10P)에서 번호가 패드마다 위·아래로 엇갈려 찍혀, 격자가
+ * 반 칸씩 어긋난 계단처럼 보였다(_비교/web/w-11). 격자 자체는 처음부터 반듯했다.
+ * 어느 선이 몇 번 핀인지는 이제 **배선 끝의 접점 번호**(drawContactNo)가 말한다 —
+ * 레퍼런스가 같은 문제를 같은 방법으로 푼다. `pads[].num` 은 화면과의 계약이라
+ * 그대로 계산해 둔다(화면은 지금도 그 자리에 번호를 찍는다).
+ */
+function drawHousingGrid(pen: Pen, n: NodeBox): void {
+  const { pdf, X, Y, S } = pen;
+  const b = n.box;
+  const o = n.orientation ?? 0;
+
+  // 래치 돌기 (방향을 그림으로 읽게 하는 장치)
+  if (n.latch) {
+    pdf.setLineDashPattern([], 0);
+    pdf.setFillColor(n.color);
+    pdf.rect(X(n.latch.x), Y(n.latch.y), S(n.latch.w), S(n.latch.h), 'F');
+  }
+
+  // 결합면 띠 — 배선 반대쪽 변. 위·아래 방향은 그 자리에 캡션·이름표가 붙어 있어 얇게(2.5)
+  const t = o === 0 || o === 180 ? 6 : 2.5;
+  const mf: Rect =
+    o === 180 ? { x: b.x - t, y: b.y + 3, w: t, h: b.h - 6 }
+    : o === 0 ? { x: b.x + b.w, y: b.y + 3, w: t, h: b.h - 6 }
+    : o === 90 ? { x: b.x + 3, y: b.y + b.h, w: b.w - 6, h: t }
+    : { x: b.x + 3, y: b.y - t, w: b.w - 6, h: t };
+  pdf.setFillColor(C.subtle);
+  pdf.setDrawColor(C.lineStrong);
+  pdf.setLineWidth(Math.max(0.3, S(1.2)));
+  pdf.rect(X(mf.x), Y(mf.y), S(mf.w), S(mf.h), 'FD');
+
+  // 하우징 박스
+  pdf.setFillColor(C.white);
+  pdf.setDrawColor(n.color);
+  pdf.setLineWidth(Math.max(0.4, S(1.5)));
+  pdf.rect(X(b.x), Y(b.y), S(b.w), S(b.h), 'FD');
+  drawRegMark(pen, b, n.color);
+
+  for (const p of n.pads) {
+    pdf.setLineDashPattern([], 0);
+    pdf.setFillColor(p.unused ? C.white : C.subtle);
+    pdf.setDrawColor(C.lineStrong);
+    pdf.setLineWidth(Math.max(0.25, S(1)));
+    pdf.rect(X(p.x), Y(p.y), S(PAD), S(PAD), 'FD');
+    if (p.unused) {
+      // 의도적 미사용 핀 — X (render.py: 원본 도면 표기 승계)
+      pdf.setDrawColor(C.muted2);
+      pdf.setLineWidth(Math.max(0.25, S(1)));
+      pdf.line(X(p.x + 5), Y(p.y + 5), X(p.x + PAD - 5), Y(p.y + PAD - 5));
+      pdf.line(X(p.x + PAD - 5), Y(p.y + 5), X(p.x + 5), Y(p.y + PAD - 5));
+    }
+    // 미사용 번호도 **읽혀야 한다** — muted2 는 흰 종이 대비 2.1:1 이라 muted 를 쓴다
+    padNumber(pen, p.label, p.x + PAD / 2, p.y + PAD / 2, PAD, p.unused ? C.muted : C.text);
+  }
+}
+
+/** 압착 배럴 — 회색 바탕 + 크림프 날개 2쌍 (파스톤·러그 공용) */
+function crimpBarrel(pen: Pen, x: number, cy: number, w: number, h: number): void {
+  const { pdf, X, Y, S } = pen;
+  pdf.setFillColor(C.subtle);
+  pdf.setDrawColor(C.lineStrong);
+  pdf.setLineWidth(Math.max(0.35, S(1.5)));
+  pdf.rect(X(x), Y(cy - h / 2), S(w), S(h), 'FD');
+  pdf.setLineWidth(Math.max(0.25, S(1)));
+  for (const f of [0.34, 0.66]) {
+    pdf.line(X(x + w * f), Y(cy - h / 2), X(x + w * f), Y(cy + h / 2));
+  }
+}
+
+/** 배선이 오른쪽(180°)으로 나가는가 — 러그 심볼은 0°/180° 만 받는다(endGlyphOf) */
+const wireRight = (n: NodeBox): boolean => (n.orientation ?? 0) === 180;
+
+/**
+ * 파스톤 REC (render.py `_draw_faston`) — 리셉터클 박스 + 넥 + 압착 배럴.
+ * 전선은 배럴에 붙으므로 배럴이 핸들 쪽, 리셉터클(탭이 꽂히는 입)이 반대쪽이다.
+ * 폭은 하우징 박스(38)에 맞춰 레퍼런스(22·10·20)를 16·6·16 으로 줄였다.
+ */
+function drawFastonGlyph(pen: Pen, n: NodeBox): void {
+  const { pdf, X, Y, S } = pen;
+  const b = n.box;
+  const rw = 16, nw = 6, bw = 16;
+  const rh = 20, nh = 8, bh = 14;
+  const right = wireRight(n);
+  for (const p of n.pads) {
+    const cy = p.y + PAD / 2;
+    const rx = right ? b.x : b.x + bw + nw;
+    const nx = right ? rx + rw : b.x + bw;
+    const bx = right ? nx + nw : b.x;
+    const mx = right ? rx : rx + rw - 3;
+    pdf.setLineDashPattern([], 0);
+    // 넥
+    pdf.setFillColor(C.white);
+    pdf.setDrawColor(C.lineStrong);
+    pdf.setLineWidth(Math.max(0.3, S(1.2)));
+    pdf.rect(X(nx), Y(cy - nh / 2), S(nw), S(nh), 'FD');
+    crimpBarrel(pen, bx, cy, bw, bh);
+    // 리셉터클 + 탭이 꽂히는 입
+    pdf.setFillColor(C.white);
+    pdf.setLineWidth(Math.max(0.35, S(1.5)));
+    pdf.rect(X(rx), Y(cy - rh / 2), S(rw), S(rh), 'FD');
+    pdf.setFillColor(C.subtle);
+    pdf.setLineWidth(Math.max(0.3, S(1.2)));
+    pdf.rect(X(mx), Y(cy - 7), S(3), S(14), 'FD');
+    padNumber(pen, p.label, rx + rw / 2 + (right ? 1.5 : -1.5), cy, rw - 3, C.text, 10);
+    if (n.sleeve) {
+      // 절연 슬리브(수축튜브) — 배럴 + 넥을 덮는 점선 (render.py 와 같은 자리)
+      pdf.setDrawColor(C.muted);
+      pdf.setLineWidth(Math.max(0.3, S(1.2)));
+      pdf.setLineDashPattern([S(4), S(3)], 0);
+      pdf.rect(X(Math.min(nx, bx)), Y(cy - bh / 2 - 4), S(nw + bw), S(bh + 8), 'S');
+      pdf.setLineDashPattern([], 0);
+    }
+  }
+}
+
+/**
+ * 절연 페룰 (render.py `_draw_ferrule`) — 절연 칼라 + 가는 금속 관.
+ * 전선은 칼라 쪽으로 들어가므로 칼라가 핸들 쪽이다. 칼라는 **칠하지 않는다** —
+ * 목깃 색은 규격마다 달라 데이터에 없고, 도면의 색은 전선 색 하나뿐이어야 한다.
+ */
+function drawFerruleGlyph(pen: Pen, n: NodeBox): void {
+  const { pdf, X, Y, S } = pen;
+  const b = n.box;
+  const cw = 14, ch = 18, tw = 24, th = 8;
+  const right = wireRight(n);
+  for (const p of n.pads) {
+    const cy = p.y + PAD / 2;
+    const cx = right ? b.x + tw : b.x;
+    const tx = right ? b.x : b.x + cw;
+    pdf.setLineDashPattern([], 0);
+    pdf.setFillColor(C.subtle);
+    pdf.setDrawColor(C.lineStrong);
+    pdf.setLineWidth(Math.max(0.25, S(1)));
+    pdf.rect(X(tx), Y(cy - th / 2), S(tw), S(th), 'FD');
+    pdf.setFillColor(C.white);
+    pdf.setLineWidth(Math.max(0.35, S(1.5)));
+    pdf.rect(X(cx), Y(cy - ch / 2), S(cw), S(ch), 'FD');
+    padNumber(pen, p.label, cx + cw / 2, cy, cw, C.text, 10);
+  }
+}
+
+/**
+ * 링·Y형 러그 — 압착 배럴(핸들 쪽) + 혀(반대쪽). 링은 구멍, Y형은 끝이 트인 홈.
+ * 레퍼런스에는 없는 계열이라(그 세트에 러그가 없다) 같은 그림 언어로 만들었다:
+ * 배럴은 파스톤과 같은 크림프 표기, 혀는 하우징과 같은 1.5 윤곽.
+ */
+function drawLugGlyph(pen: Pen, n: NodeBox): void {
+  const { pdf, X, Y, S } = pen;
+  const b = n.box;
+  const bw = 14, bh = 12, tw = 24, th = 20;
+  const right = wireRight(n);
+  for (const p of n.pads) {
+    const cy = p.y + PAD / 2;
+    const tx = right ? b.x : b.x + bw;
+    const bx = right ? b.x + tw : b.x;
+    pdf.setLineDashPattern([], 0);
+    pdf.setFillColor(C.white);
+    pdf.setDrawColor(C.lineStrong);
+    pdf.setLineWidth(Math.max(0.35, S(1.5)));
+    pdf.rect(X(tx), Y(cy - th / 2), S(tw), S(th), 'FD');
+    const hx = tx + tw / 2;
+    if (n.ring) {
+      if (pdf.circle) pdf.circle(X(hx), Y(cy), S(5), 'S');
+      else pdf.rect(X(hx - 5), Y(cy - 5), S(10), S(10), 'S');
+    } else {
+      // Y형 — 혀 끝(배선 반대쪽)에서 가운데까지 트인 홈
+      const edge = right ? tx : tx + tw;
+      pdf.setFillColor(C.white);
+      pdf.rect(X(Math.min(edge, hx)), Y(cy - 3.5), S(Math.abs(hx - edge)), S(7), 'F');
+      pdf.line(X(edge), Y(cy - 3.5), X(hx), Y(cy - 3.5));
+      pdf.line(X(edge), Y(cy + 3.5), X(hx), Y(cy + 3.5));
+      pdf.line(X(hx), Y(cy - 3.5), X(hx), Y(cy + 3.5));
+    }
+    crimpBarrel(pen, bx, cy, bw, bh);
+    // 번호는 배럴 위에 흰 바탕 없이 — 배럴이 좁아 글꼴을 줄인다
+    padNumber(pen, p.label, bx + bw / 2, cy, bw, C.text, 9);
+  }
+}
+
+/**
+ * 스플라이스 (render.py 의 SP1) — 채운 마름모 + 각 핸들에서 마름모로 모이는 선.
+ * 하우징 박스·패드는 그리지 않는다. 스플라이스에는 "핀" 이 없고 한 점에서 합선될
+ * 뿐이라, 번호 칸을 그리면 존재하지 않는 핀 배열을 지어내는 셈이다.
+ */
+function drawSpliceGlyph(pen: Pen, n: NodeBox): void {
+  const { pdf, X, Y, S } = pen;
+  const b = n.box;
+  const cx = b.x + b.w / 2;
+  const cy = b.y + b.h / 2;
+  pdf.setLineDashPattern([], 0);
+  pdf.setDrawColor(C.text);
+  pdf.setLineWidth(Math.max(0.4, S(1.6)));
+  for (const p of n.pads) {
+    const h = p.handle;
+    if (!h) continue;
+    pdf.line(X(h.x), Y(h.y), X(cx), Y(cy));
+  }
+  const r = 9;   // 13px 정사각형을 45° 돌린 마름모의 반 대각선
+  pdf.setFillColor(C.text);
+  if (pdf.triangle) {
+    pdf.triangle(X(cx - r), Y(cy), X(cx), Y(cy - r), X(cx + r), Y(cy), 'F');
+    pdf.triangle(X(cx - r), Y(cy), X(cx), Y(cy + r), X(cx + r), Y(cy), 'F');
+  } else {
+    pdf.line(X(cx - r), Y(cy), X(cx), Y(cy - r));
+    pdf.line(X(cx), Y(cy - r), X(cx + r), Y(cy));
+    pdf.line(X(cx + r), Y(cy), X(cx), Y(cy + r));
+    pdf.line(X(cx), Y(cy + r), X(cx - r), Y(cy));
+  }
+}
+
+/** 접점 번호 글꼴 (render.py contact_no 8.5px 굵게) */
+const CONTACT_FS = 8.5;
+
+/**
+ * 접점 번호 (render.py `contact_no`) — 배선이 커넥터에 닿는 끝에서 스텁(14)만큼
+ * 나간 자리에 흰 바탕 작은 굵은 번호. `end` 는 핸들, `next` 는 그다음 꺾임점이다.
+ * 첫 구간이 짧으면 번호를 그 구간 안으로 당긴다(꺾임 너머로 넘어가지 않게).
+ */
+function drawContactNo(pen: Pen, end: Pt, next: Pt, label: string): void {
+  const { pdf, X, Y, S, fs, text } = pen;
+  const dx = next.x - end.x;
+  const dy = next.y - end.y;
+  const len = Math.hypot(dx, dy);
+  if (len < 1e-6) return;
+  const w = estimateTextWidth(label, CONTACT_FS) * 1.15 + 6;
+  const h = 13;
+  const horiz = Math.abs(dx) >= Math.abs(dy);
+  const ext = horiz ? w : h;
+  const off = Math.max(2, Math.min(DEFAULT_STUB + 2, len - ext));
+  let r: Rect;
+  if (horiz) {
+    const sx = end.x + Math.sign(dx) * off;
+    r = { x: dx > 0 ? sx : sx - w, y: end.y - h / 2, w, h };
+  } else {
+    const sy = end.y + Math.sign(dy) * off;
+    r = { x: end.x - w / 2, y: dy > 0 ? sy : sy - h, w, h };
+  }
+  pdf.setLineDashPattern([], 0);
+  pdf.setFillColor(C.white);
+  pdf.rect(X(r.x), Y(r.y), S(r.w), S(r.h), 'F');
+  text(label, X(r.x + r.w / 2), Y(r.y + r.h / 2 + 3), {
+    size: fs(CONTACT_FS), bold: true, color: C.text2, align: 'center',
+  });
 }
 
 /** 치수 표기가 도면 위쪽에서 차지하는 높이(pt) — 이만큼 도면 영역을 비운다 */
@@ -1051,9 +1479,39 @@ const PV_CELL_W = 17;
 const PV_CELL_H = 15;
 const PV_GAP = 2;
 
-/** 커넥터 하나의 미니 뷰가 차지할 높이(pt) — 제목 2줄 + 격자 + 아래 여백 */
-function pinViewHeight(rows: number, scale: number): number {
-  return 18 + rows * (PV_CELL_H + PV_GAP) * scale + 10;
+
+/**
+ * 낱말 덩어리(segments)를 폭에 맞춰 줄로 묶는다 — 덩어리 안에서는 줄을 바꾸지
+ * 않는다. 한 덩어리가 혼자서도 폭을 넘으면 그때만 글자 단위로 쪼갠다(말줄임 없음).
+ * 폭은 geometry.estimateTextWidth 어림에 10% 여유를 둔다 — 한글은 전각 어림이
+ * 실제와 거의 맞고, ASCII 대문자는 어림보다 넓다(pdf.ts fitToWidth 머리말).
+ */
+export function wrapSegments(segments: string[], size: number, maxW: number): string[] {
+  const W = (t: string) => estimateTextWidth(t, size) * 1.1;
+  const lines: string[] = [];
+  let line = '';
+  const pushChars = (seg: string) => {
+    // 덩어리 하나가 폭을 넘는다 — 글자 단위로 쪼갠다
+    for (const ch of seg) {
+      if (line && W(line + ch) > maxW) { lines.push(line); line = ''; }
+      line += ch;
+    }
+  };
+  for (const seg of segments) {
+    if (!seg) continue;
+    const cand = line ? `${line} ${seg}` : seg;
+    if (W(cand) <= maxW) { line = cand; continue; }
+    if (line) { lines.push(line); line = ''; }
+    if (W(seg) <= maxW) line = seg;
+    else pushChars(seg);
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
+/** 공백 단위로 줄을 접는다 (wrapSegments 의 낱말판) */
+export function wrapText(text: string, size: number, maxW: number): string[] {
+  return wrapSegments(text.split(/\s+/), size, maxW);
 }
 
 /**
@@ -1078,22 +1536,40 @@ export function drawPinView(
   const lay = block.layout;
   if (!lay?.length) return 0;                       // 금기 (3)
 
-  text(`${block.ref} ${block.name}`, x, y, { size: 9, bold: true, color: C.text, maxWidth: w });
+  /*
+   * 제목·출처 줄은 **자르지 않고 줄을 접는다.** 말줄임(…)으로 끊으면 하필 뒤쪽의
+   * "실물 대조 필요" 같은 지시가 사라진다 — 이 칸에서 가장 중요한 글자다.
+   * 레퍼런스(render.py pin_layout): 제목 9 굵게 · 출처(view) 8 회색 · 11pt 간격.
+   */
+  const LINE = 11;
+  let cy = y;
+  for (const ln of wrapText(`${block.ref} ${block.name}`, 9, w)) {
+    text(ln, x, cy, { size: 9, bold: true, color: C.text });
+    cy += LINE;
+  }
   const viewText = block.view?.trim() ?? '';
-  const caption = [block.mpn, viewText].filter(Boolean).join(' · ');
 
   if (!viewText) {
     // 금기 (2) — 배열은 그리지 않고, 왜 안 그렸는지를 --danger 로 말한다.
-    text(`${block.mpn ? `${block.mpn} · ` : ''}뷰 기준 없음 — 배열 생략, 실물 대조 필요`,
-      x, y + 11, { size: 8, color: C.danger, maxWidth: w });
-    return 26;
+    // "뷰 기준 없음" 은 한 덩어리로 둔다 — 그 낱말이 둘로 갈리면 경고로 안 읽힌다.
+    const segs = [block.mpn ? `${block.mpn} ·` : '', '뷰 기준 없음 —', '배열 생략,', '실물 대조 필요'];
+    for (const ln of wrapSegments(segs.filter(Boolean), 8, w)) {
+      text(ln, x, cy, { size: 8, color: C.danger });
+      cy += LINE;
+    }
+    return cy - y + 4;
   }
-  text(caption, x, y + 11, { size: 8, color: C.muted, maxWidth: w });
+  // 출처 줄 — view 그대로 (MPN 은 바로 옆 부품표에 있다. 레퍼런스도 view 만 적는다)
+  for (const ln of wrapText(viewText, 8, w)) {
+    text(ln, x, cy, { size: 8, color: C.muted });
+    cy += LINE;
+  }
 
   const cols = Math.max(...lay.map((r) => r.length));
   // 폭이 모자라면 **등비 축소**. 칸을 줄이거나 줄을 접으면 배열이 달라 보인다.
   const sc = Math.min(1, (w - 2) / (cols * (PV_CELL_W + PV_GAP)));
-  const top = y + 18;
+  // 격자 윗변 — 레퍼런스는 제목 베이스라인 + 18 (= 두 줄일 때). 줄이 늘면 그만큼 내린다.
+  const top = cy - LINE + 7;
   // `unused` 는 숫자로도 문자로도 들어온다(`3` / `'+'`). String() 으로 맞춘다 —
   // 규격상 N/C 인 핀이 X 없이 빈 패드로 보이면 "아직 안 그린 핀" 과 구별되지 않는다.
   const unused = new Set((block.unused ?? []).map((v) => String(v)));
@@ -1124,7 +1600,7 @@ export function drawPinView(
     });
   });
 
-  let h = pinViewHeight(lay.length, sc);
+  let h = top - y + lay.length * (PV_CELL_H + PV_GAP) * sc + 10;
   if (block.sleeve) {
     // 절연 슬리브 (개선안 §2-11) — 점선 사각 + 라벨. 부품표에는 이미 별도
     // 품목으로 한 줄 서 있다(exporters.ts). 도면에도 보여야 현장이 씌운다.
@@ -1172,7 +1648,10 @@ export function drawPinViews(
   if (cur === box.y + 6) {
     // 한 개도 못 그렸다 — **왜** 비었는지 적는다. 빈 칸은 "이 커넥터는 배열이
     // 없다" 가 아니라 "라이브러리에 아직 안 적었다" 는 뜻이다.
-    text('등록된 실물 배열이 없다 — 부품 라이브러리에 layout · view 를 적어야 한다.',
-      box.x, cur + 4, { size: 8.5, color: C.muted, maxWidth: box.w });
+    // 자르지 않고 접는다 — 뒤쪽의 "무엇을 적어야 하는가" 가 이 문장의 본론이다
+    const segs = ['등록된 실물 배열이 없다 —', '부품 라이브러리에', 'layout · view 를', '적어야 한다.'];
+    wrapSegments(segs, 8.5, box.w).forEach((ln, i) => {
+      text(ln, box.x, cur + 4 + i * 11, { size: 8.5, color: C.muted });
+    });
   }
 }
