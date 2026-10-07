@@ -117,6 +117,33 @@ const XH_VIEW =
   '도면이 인쇄한 번호는 `No. 1 circuit` 지시선(오른쪽 끝) 하나뿐이고, ' +
   '**나머지 번호는 1열이라는 사실(치수 A=(회로수−1)×피치로 검산)에서 연장한 값이다 — ' +
   '실물 대조 필요.**';
+/* ── 제조사 원본 도면 캡처 (PDF 부록) ─────────────────────────────
+ * 위 layout/view 의 근거가 된 그 도면을 캡처한 것이다(public/datasheets/).
+ * **layout 을 준 부품에만** 붙인다 — 캡처가 근거인 부품이 그것뿐이다.
+ * 문구는 이스턴웰스 하네스 세트 도면집(build.py DS_ITEMS)에서 옮겼다.
+ * D-SUB 9F(db9f.png) 캡처도 public/ 에 있으나 라이브러리에 해당 부품이 없어
+ * 붙일 곳이 없다 — 부품을 지어내지 않는다. */
+type Datasheet = NonNullable<PartLibraryItem['datasheet']>;
+const DS_XH: Datasheet = {
+  src: 'datasheets/xh.png',
+  source: 'JST eXH.pdf p.4 하우징 · 도면에 뷰 기준 표기 없음',
+  note: '도면에 찍힌 것은 "No. 1 circuit" 지시선(오른쪽 끝) 하나뿐\n나머지 회로 번호는 도면 미표기',
+};
+const DS_MICROFIT_10P: Datasheet = {
+  src: 'datasheets/mf10.png',
+  source: 'Molex 430250000-SD rev A · 도면에 뷰 기준 표기 없음',
+  note:
+    '도면 표기는 CIRCUIT 1(아랫행 왼쪽 끝) · CIRCUIT 2(아랫행 둘째) · LAST CIRCUIT(윗행 오른쪽 끝) 뿐\n' +
+    '3~10 은 이 규칙을 연장한 값 — 실물 대조 필요',
+};
+const DS_MINIFIT_6P: Datasheet = {
+  src: 'datasheets/mfj6.png',
+  source: 'Molex SD-5557-003 rev K1 · 도면에 뷰 기준 표기 없음',
+  note:
+    '번호 뷰는 10ckt 예시만 있음. 각인 탭 위 기준 아랫행 5·4·3·2·1 / 윗행 10·9·(8)·7·6\n' +
+    '8은 각인 탭에 가려 도면에 미인쇄. 6ckt 배열은 도면에 없어 같은 규칙을 연장함 — 실물 대조 필요',
+};
+
 /** 오른쪽 끝이 1번이므로 왼→오 = n … 1 (1열) */
 function xhLayout(n: number): (number | string | null)[][] {
   return [Array.from({ length: n }, (_, i) => n - i)];
@@ -452,7 +479,7 @@ function microFit30Housings(s: MicroFit30Series): PartLibraryItem[] {
       // 그것뿐이다. 43020(플러그)은 결합하면 좌우가 뒤집히는데 그 뷰를 확인하지
       // 못했고, 다른 회로 수도 도면에 번호가 없다. 규칙으로 늘리지 않는다.
       ...(s.series === '43025' && n === 10
-        ? { layout: MICROFIT_10P_LAYOUT, view: MICROFIT_10P_VIEW }
+        ? { layout: MICROFIT_10P_LAYOUT, view: MICROFIT_10P_VIEW, datasheet: DS_MICROFIT_10P }
         : {}),
     };
   });
@@ -605,6 +632,8 @@ type JstSeries = {
    */
   layout?: (n: number) => (number | string | null)[][];
   view?: string;
+  /** layout 의 근거가 된 원본 도면 캡처 — layout 과 같은 시리즈에만 */
+  datasheet?: Datasheet;
 };
 
 function jstItems(s: JstSeries): PartLibraryItem[] {
@@ -630,6 +659,7 @@ function jstItems(s: JstSeries): PartLibraryItem[] {
     pinLayout: grid(n, 1),
     ...(s.layout ? { layout: s.layout(n) } : {}),
     ...(s.view ? { view: s.view } : {}),
+    ...(s.datasheet ? { datasheet: s.datasheet } : {}),
   }));
 }
 
@@ -650,6 +680,7 @@ const JST_XH: PartLibraryItem[] = [
     // 실물 배열은 하우징(XHP-n)에만 준다 — 근거(§6-2)가 하우징 도면 하나뿐이다.
     layout: xhLayout,
     view: XH_VIEW,
+    datasheet: DS_XH,
     비고:
       `${JST_COLOR_NOTE} 데이터시트 표의 1~16 · 20회로만 등록했다. ` +
       '특수 피치품 XHP-2(10.0)-U · XHP-6(5.0)-U 는 피치가 달라 뺐다. ' +
@@ -882,7 +913,7 @@ const MINIFIT_5557: PartLibraryItem[] = MINIFIT_5557_CIRCUITS.map((n) => {
     // (도면이 번호를 인쇄한 것은 10회로 예시이고, 6회로는 그 규칙을 연장한 값이다.
     //  10회로 자체를 채우지 않는 이유는 8번이 각인 탭에 가려 미인쇄이기 때문 —
     //  인쇄되지 않은 자리를 확정값처럼 적을 수 없다.)
-    ...(n === 6 ? { layout: MINIFIT_6P_LAYOUT, view: MINIFIT_6P_VIEW } : {}),
+    ...(n === 6 ? { layout: MINIFIT_6P_LAYOUT, view: MINIFIT_6P_VIEW, datasheet: DS_MINIFIT_6P } : {}),
   };
 });
 
@@ -1272,6 +1303,7 @@ export const SEED_PARTS: PartLibraryItem[] = [
     // 같은 상수를 쓴다 — 손으로 두 번 적으면 언젠가 두 부품이 다른 배열을 말한다.
     layout: MINIFIT_6P_LAYOUT,
     view: MINIFIT_6P_VIEW,
+    datasheet: DS_MINIFIT_6P,
   },
   {
     id: 'lib-mdb-periph', category: 'housing', name: 'MDB 주변기기 6P',

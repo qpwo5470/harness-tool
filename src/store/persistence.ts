@@ -454,6 +454,8 @@ function normHarness(v: unknown, i: number, warn: string[]): HarnessDocument | n
     ...(str(v.drawingNo) != null ? { drawingNo: str(v.drawingNo)! } : {}),
     ...(str(v.rev) != null ? { rev: str(v.rev)! } : {}),
     ...(str(v.letter) != null ? { letter: str(v.letter)! } : {}),
+    ...(str(v.note) != null ? { note: str(v.note)! } : {}),
+    ...(v.purchased === true ? { purchased: true } : {}),
     connectors,
     devices,
     wires,
