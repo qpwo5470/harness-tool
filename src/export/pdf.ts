@@ -683,6 +683,25 @@ export async function downloadKitPdf(
   kit: KitDocument,
   opts?: { paper?: Paper; unit?: LengthUnit; layout?: SheetLayout },
 ): Promise<void> {
+  const ctx = buildKitCtx(kit, opts);
+  ctx.pdf.save(`${safeName(kit.set.pn || kit.name || 'harness-kit')}.pdf`);
+}
+
+/** 세트 PDF 를 바이트로 (시험·미리보기용) */
+export function kitPdfBytes(
+  kit: KitDocument,
+  opts?: { paper?: Paper; unit?: LengthUnit; layout?: SheetLayout },
+): Uint8Array<ArrayBuffer> {
+  const ctx = buildKitCtx(kit, opts);
+  const buf = ctx.pdf.output?.('arraybuffer');
+  if (!buf) throw new Error('이 환경에서는 PDF 바이트를 만들 수 없습니다');
+  return new Uint8Array(buf);
+}
+
+function buildKitCtx(
+  kit: KitDocument,
+  opts?: { paper?: Paper; unit?: LengthUnit; layout?: SheetLayout },
+): Ctx {
   const layout: SheetLayout = opts?.layout ?? 'onepage';
   const ctx = makeCtx(paperFor(layout, opts?.paper), opts?.unit ?? 'mm', layout);
   // 세트당 수량은 하네스마다 다르다 — 면을 그리기 직전에 그 하네스 것으로 바꾼다.
@@ -701,5 +720,5 @@ export async function downloadKitPdf(
     });
   }
   stampFooters(ctx);
-  ctx.pdf.save(`${safeName(kit.set.pn || kit.name || 'harness-kit')}.pdf`);
+  return ctx;
 }
