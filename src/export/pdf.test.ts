@@ -84,6 +84,7 @@ vi.mock('jspdf', () => {
 
 // 목이 걸린 뒤에 불러와야 한다
 const { downloadPdf, downloadKitPdf, partLines } = await import('./pdf');
+const { paperPartRows } = await import('./pdfPages');
 const {
   buildDrawing, chunk, estimateTextWidth, fitTransform, needsRaster,
   truncateToWidth, wireWidthPx, C,
@@ -304,8 +305,10 @@ describe('접속표', () => {
     // 커넥터를 J1·J2 로 부르는데 표만 부품명으로 적으면 되짚어야 한다.
     expect(p2).toContain('J1-1');
     expect(p2).toContain('SP1-1');
-    // 색은 약호 + 이름을 함께 — 흑백 인쇄 대비
-    expect(p2.some((s) => s.startsWith('R/W red/white'))).toBe(true);
+    // 색은 약호 + 한글 이름을 함께 — 흑백 인쇄 대비 (도면집 형식 `R/W 빨강/흰`)
+    expect(p2).toContain('R/W 빨강/흰');
+    // NET 코드는 종이에서 두 자리로
+    expect(p2.some((s) => /^N0\d\b/.test(s))).toBe(true);
   });
 
   /**
@@ -322,10 +325,13 @@ describe('접속표', () => {
     await downloadPdf(sampleDoc);
     const p1 = textsOnPage(1);
     expect(p1).toContain('신호');
-    // 좁은 표(320pt)에서는 게이지를 접는다 — 같은 면의 부품표가 `AWG22 · red`
+    // 좁은 표(320pt)에서는 게이지를 접는다 — 같은 면의 부품표가 `전선 AWG22`
     // 로 이미 적으므로 종이에서 정보가 사라지지 않는다.
     expect(p1).not.toContain('게이지');
-    expect(p1.some((s) => s.startsWith('AWG22'))).toBe(true);
+    expect(p1.some((s) => s.includes('AWG22'))).toBe(true);
+    // 좁은 표의 머리는 `길이` — 단위는 제목줄 오른쪽에 남는다
+    expect(p1).toContain('길이');
+    expect(p1.some((s) => /본 · mm$/.test(s))).toBe(true);
   });
 
   /**
@@ -397,15 +403,49 @@ describe('파트리스트', () => {
     expect(p1).toContain('부품');
     expect(p1.some((s) => s.startsWith('소계 '))).toBe(false);
     expect(p1.some((s) => s.startsWith('['))).toBe(false);
-    for (const r of buildPartList(doc)) expect(p1).toContain(r.part);
+    for (const r of paperPartRows(doc, 'mm')) expect(p1).toContain(r[0]);
+    // 도면집 형식 — 커넥터는 도면 레퍼런스 + 부품명, 전선은 본당 길이
+    expect(p1.some((s) => s.startsWith('J1 '))).toBe(true);
+    expect(p1).toContain('전선 AWG22');
+    expect(p1).toContain('800mm / 본');
+  });
+
+  /** 비고 블록 — 문서 비고 + 색상 문구(언제나) */
+  it('부품표 아래 비고에 문서 비고와 색상 문구를 적는다', async () => {
+    await downloadPdf({ ...smallDoc(), note: '2본 1조.' });
+    const p1 = textsOnPage(1);
+    expect(p1).toContain('비고');
+    expect(p1.some((s) => s.includes('2본 1조.'))).toBe(true);
+    expect(p1.join(' ')).toContain('사내 배정.');
   });
 
   /** 넘치면 이어지는 면으로 — 부품표도 행을 버리지 않는다 */
   it('1페이지에 안 들어가는 부품표는 이어지는 면으로 넘긴다', async () => {
-    await downloadPdf(sampleDoc);   // 8품목 · 칸은 7줄
+    await downloadPdf(sampleDoc);
     expect(rec.pages).toBeGreaterThan(1);
     expect(allText()).toContain('부품 — 이어짐');
-    for (const r of buildPartList(sampleDoc)) expect(allText()).toContain(r.part);
+    for (const r of paperPartRows(sampleDoc, 'mm', true)) expect(allText()).toContain(r[0]);
+  });
+
+  /**
+   * 이어지는 면도 **프레임과 제목블록**을 갖는다 — 떨어져 나간 한 장이 어느
+   * 도면의 몇 번째 장인지 말해야 한다(예전에는 맨종이에 표 두 줄뿐이었다).
+   */
+  it('이어지는 면에도 제목블록이 있다', async () => {
+    await downloadPdf({ ...sampleDoc, drawingNo: 'HW-009' });
+    const last = rec.pages;
+    expect(last).toBeGreaterThan(1);
+    expect(textsOnPage(last)).toContain('HW-009');
+    expect(textsOnPage(last)).toContain('샘플 하네스');
+  });
+
+  it('구매품은 결선도 대신 구매 품목 면 하나다', async () => {
+    await downloadPdf({ ...sampleDoc, purchased: true });
+    expect(rec.pages).toBe(1);
+    const p1 = textsOnPage(1);
+    expect(p1).toContain('구매 품목');
+    expect(p1).toContain('※ 완제품 구매 품목이므로 결선도 생략.');
+    expect(p1).not.toContain('접속표 (FROM → TO)');
   });
 
   it('partLines 는 분류마다 머리줄 + 행 + 소계를 만든다', () => {
@@ -421,27 +461,64 @@ describe('파트리스트', () => {
 
 // ============================================================
 describe('downloadKitPdf — 세트 묶음', () => {
-  it('하네스 수 × 3면을 한 PDF 에 이어 붙인다', async () => {
+  it('도면 목록 1면 + 하네스 수 × 3면을 한 PDF 에 이어 붙인다', async () => {
     const b: HarnessDocument = { ...sampleDoc, id: 'doc-2', name: 'B 하네스', drawingNo: 'HW-002' };
     await downloadKitPdf(kitOf(sampleDoc, b), { layout: 'sheets' });
-    expect(rec.pages).toBe(6);
+    expect(rec.pages).toBe(7);
     expect(rec.saved[0]).toBe('KIT-2408.pdf');
   });
 
-  it('기본 배치에서는 하네스당 한 장이다', async () => {
+  it('기본 배치에서는 도면 목록 + 하네스당 한 장이다', async () => {
     const a = smallDoc();
     const b: HarnessDocument = { ...a, id: 'doc-2', name: 'B 하네스', drawingNo: 'HW-002' };
     await downloadKitPdf(kitOf(a, b));
-    expect(rec.pages).toBe(2);
+    expect(rec.pages).toBe(3);
   });
 
-  it('푸터는 그 면이 속한 하네스를 가리킨다', async () => {
+  /** 도면 목록 — 도번은 지어내지 않는다(없으면 '—'), 수량은 세트당 */
+  it('첫 면은 도면 목록이다', async () => {
+    const a = smallDoc();
+    const b: HarnessDocument = { ...a, id: 'doc-2', name: 'B 하네스', drawingNo: 'HW-002', purchased: true };
+    await downloadKitPdf(kitOf(a, b));
+    const p1 = textsOnPage(1);
+    expect(p1).toContain('자판기 1대분');
+    expect(p1).toContain('수량은 모두 세트당 기준');
+    expect(p1).toContain('도면 목록');
+    expect(p1).toContain('HW-002');
+    expect(p1).toContain('2종');
+    // 도번이 없는 하네스는 '—'
+    expect(p1.filter((s) => s === '—').length).toBeGreaterThan(0);
+    // 구매품은 결선도 대신 구매 품목 면
+    expect(textsOnPage(3)).toContain('구매 품목');
+  });
+
+  it('푸터는 세트 · 그 면이 속한 하네스를 가리킨다', async () => {
     const b: HarnessDocument = { ...sampleDoc, id: 'doc-2', name: 'B 하네스', drawingNo: 'HW-002' };
     await downloadKitPdf(kitOf(sampleDoc, b), { layout: 'sheets' });
     const feet = allText().filter((s) => /\d+\/\d+$/.test(s));
-    expect(feet).toHaveLength(6);
-    expect(feet[0]).toBe('샘플 하네스 · — · — · 1/6');
-    expect(feet[3]).toBe('B 하네스 · HW-002 · — · 4/6');
+    expect(feet).toHaveLength(7);
+    expect(feet[0]).toBe('자판기 1대분 · 도면 목록 · KIT-2408 · — · 1/7');
+    expect(feet[1]).toBe('자판기 1대분 · 샘플 하네스 · — · — · 2/7');
+    expect(feet[4]).toBe('자판기 1대분 · B 하네스 · HW-002 · — · 5/7');
+  });
+
+  it('미리 읽은 데이터시트가 있으면 부록을 붙이고, 없으면 건너뛴다', async () => {
+    const { kitPdfBytes } = await import('./pdf');
+    const ds = { src: 'datasheets/x.png', source: 'X.pdf p.1 · 도면에 뷰 기준 표기 없음', note: '1번만 표기' };
+    const a = smallDoc();
+    const withDs: HarnessDocument = {
+      ...a,
+      usedParts: a.usedParts.map((p) => (p.id === a.connectors[0].housingId ? { ...p, datasheet: ds } : p)),
+    };
+    // 목 jsPDF 에는 output 이 없어 바이트 생성은 throw — 그리기는 끝난 뒤다
+    expect(() => kitPdfBytes(kitOf(withDs))).toThrow();
+    expect(rec.pages).toBe(2);
+    rec.reset();
+    expect(() => kitPdfBytes(kitOf(withDs), { images: { [ds.src]: 'data:image/png;base64,AAAA' } })).toThrow();
+    expect(rec.pages).toBe(3);
+    expect(textsOnPage(3)).toContain('X.pdf p.1 · 도면에 뷰 기준 표기 없음');
+    expect(textsOnPage(3).some((s) => s.startsWith('※ 아래 원본 도면 모두 뷰 기준'))).toBe(true);
+    expect(opCount('addImage')).toBe(1);
   });
 
   it('하네스가 없으면 빈 면 하나로 끝난다', async () => {
@@ -658,9 +735,8 @@ describe('한글 처리', () => {
     expect(drawn.filter((s) => s === '샘플 하네스')).toHaveLength(1);
     // ASCII(품번 · 게이지)는 벡터 텍스트 그대로 — 인쇄물에서 검색된다
     expect(allText()).toContain('HW-001');
-    // 게이지는 부품표에 `AWG22 · red/white` 로 나온다 — `·` 는 Latin-1 이라
-    // 통째로 벡터 텍스트다(래스터로 넘어가지 않는다).
-    expect(allText().some((s) => s.startsWith('AWG22'))).toBe(true);
+    // 접속표의 끝점(`J1-1`)은 ASCII 라 통째로 벡터 텍스트다(래스터로 넘어가지 않는다).
+    expect(allText()).toContain('J1-1');
     expect(allText().some((s) => s.includes('하네스'))).toBe(false);
   });
 });

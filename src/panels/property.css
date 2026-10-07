@@ -784,6 +784,8 @@
   flex-direction: column;
   gap: 6px;
 }
+.pp-docmeta { display: flex; flex-direction: column; gap: 6px; padding-bottom: 6px; }
+.pp-note { width: 100%; box-sizing: border-box; resize: vertical; min-height: 44px; font: inherit; line-height: 1.4; }
 .pp-stats {
   display: grid;
   grid-template-columns: repeat(4, 1fr);

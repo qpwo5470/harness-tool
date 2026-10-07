@@ -1639,6 +1639,47 @@ const EMPTY_HINTS: { tag: string; text: string }[] = [
   { tag: 'CABLE', text: '케이블 — 자켓을 클릭하면 길이·코어·자켓색' },
 ];
 
+/**
+ * 도면 정보 — 비고 · 구매품 (아무것도 안 골랐을 때 = 문서 수준).
+ *
+ * 비고는 PDF 부품표 아래 `비고` 칸에 그대로 찍힌다(색상 문구가 뒤에 붙는다).
+ * 타이핑마다 쓰면 실행취소가 글자 수만큼 쌓이므로 초안을 들고 있다가
+ * blur 에서 한 번만 반영한다.
+ */
+function DocMetaEditor({ doc }: { doc: HarnessDocument }) {
+  const setDocMeta = useHarnessStore((s) => s.setDocMeta);
+  const [draft, setDraft] = useState<string | null>(null);
+  const commit = () => {
+    if (draft == null) return;
+    const v = draft.trim();
+    setDraft(null);
+    if (v === (doc.note ?? '')) return;
+    setDocMeta({ note: v || undefined });
+  };
+  return (
+    <div className="pp-docmeta">
+      <div className="pp-sec-label">도면 정보</div>
+      <textarea
+        className="pp-input pp-note"
+        aria-label="도면 비고"
+        placeholder="비고 — PDF 부품표 아래에 찍힙니다"
+        rows={3}
+        value={draft ?? doc.note ?? ''}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+      />
+      <label className="pp-check">
+        <input
+          type="checkbox"
+          checked={!!doc.purchased}
+          onChange={(e) => setDocMeta({ purchased: e.target.checked || undefined })}
+        />
+        완제품 구매 품목 (PDF 에 결선도 대신 구매 품목 면)
+      </label>
+    </div>
+  );
+}
+
 function EmptyState({ doc }: { doc: HarnessDocument }) {
   const netCount = useMemo(() => computeNets(doc).length, [doc]);
 
@@ -1707,6 +1748,7 @@ function EmptyState({ doc }: { doc: HarnessDocument }) {
       </div>
 
       <div className="pp-empty-foot">
+        <DocMetaEditor key={doc.id} doc={doc} />
         <div className="pp-sec-label">이 문서</div>
         <div className="pp-stats">
           {stats.map((s) => (

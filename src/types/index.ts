@@ -139,6 +139,14 @@ export type PartLibraryItem = {
    * "이 도면에서 실제로 씌울 것인가" 는 도면의 선택이라 `Connector.sleeve` 에 있다.
    */
   sleevePartId?: Id;
+
+  /**
+   * **제조사 원본 도면 캡처** — PDF 부록(커넥터 핀 번호)에 그대로 싣는다.
+   * `src` 는 앱 기준 URL 경로(`datasheets/xh.png` — Vite base 앞에 붙는다),
+   * `source` 는 어느 문서 몇 쪽인지, `note` 는 그 도면에서 읽은 것/연장한 것의 구분.
+   * 근거 문서가 확인된 부품에만 붙인다. optional — schemaVersion 은 그대로.
+   */
+  datasheet?: { src: string; source: string; note?: string };
 };
 
 // ================================================================
@@ -355,6 +363,20 @@ export type HarnessDocument = {
    */
   letter?: string;
 
+  /**
+   * 도면 **비고** — PDF 부품표 아래 `비고` 칸에 그대로 찍힌다.
+   * 비고 칸에는 이 글 뒤에 "전선 색상은 규격 지정 사항이 아님 — 사내 배정." 이
+   * 언제나 붙는다(export/pdfPages.ts). optional — schemaVersion 은 그대로.
+   */
+  note?: string;
+
+  /**
+   * **완제품 구매 품목**인가. 켜면 PDF 가 결선도 대신 `구매 품목` 면을 그린다
+   * (제작 대상이 아니므로 결선도를 그리면 제작 지시로 오독된다).
+   * optional — 없으면 제작 하네스. schemaVersion 은 그대로.
+   */
+  purchased?: boolean;
+
   connectors: Connector[];
   devices: Device[];
   wires: Wire[];
@@ -542,7 +564,7 @@ export interface HarnessStore {
   remove(id: Id): void;
   replaceDoc(doc: HarnessDocument): void; // 불러오기
   /** 도번·Rev 등 문서 메타 변경 (제목블록·PDF 에 반영) */
-  setDocMeta(patch: Pick<Partial<HarnessDocument>, 'drawingNo' | 'rev'>): void;
+  setDocMeta(patch: Pick<Partial<HarnessDocument>, 'drawingNo' | 'rev' | 'note' | 'purchased'>): void;
 
   /** 문서 이름 변경 */
   rename(name: string): void;
