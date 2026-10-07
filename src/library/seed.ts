@@ -479,7 +479,7 @@ function microFit30Housings(s: MicroFit30Series): PartLibraryItem[] {
       // 그것뿐이다. 43020(플러그)은 결합하면 좌우가 뒤집히는데 그 뷰를 확인하지
       // 못했고, 다른 회로 수도 도면에 번호가 없다. 규칙으로 늘리지 않는다.
       ...(s.series === '43025' && n === 10
-        ? { layout: MICROFIT_10P_LAYOUT, view: MICROFIT_10P_VIEW, datasheet: DS_MICROFIT_10P }
+        ? { layout: MICROFIT_10P_LAYOUT, view: MICROFIT_10P_VIEW, viewBrief: '430250000-SD · 래치 위 · 뷰 표기 없음', datasheet: DS_MICROFIT_10P }
         : {}),
     };
   });
@@ -632,6 +632,7 @@ type JstSeries = {
    */
   layout?: (n: number) => (number | string | null)[][];
   view?: string;
+  viewBrief?: string;
   /** layout 의 근거가 된 원본 도면 캡처 — layout 과 같은 시리즈에만 */
   datasheet?: Datasheet;
 };
@@ -659,6 +660,7 @@ function jstItems(s: JstSeries): PartLibraryItem[] {
     pinLayout: grid(n, 1),
     ...(s.layout ? { layout: s.layout(n) } : {}),
     ...(s.view ? { view: s.view } : {}),
+    ...(s.viewBrief ? { viewBrief: s.viewBrief } : {}),
     ...(s.datasheet ? { datasheet: s.datasheet } : {}),
   }));
 }
@@ -680,6 +682,7 @@ const JST_XH: PartLibraryItem[] = [
     // 실물 배열은 하우징(XHP-n)에만 준다 — 근거(§6-2)가 하우징 도면 하나뿐이다.
     layout: xhLayout,
     view: XH_VIEW,
+    viewBrief: 'eXH.pdf p.4 · 1번만 도면 표기 · 뷰 표기 없음',
     datasheet: DS_XH,
     비고:
       `${JST_COLOR_NOTE} 데이터시트 표의 1~16 · 20회로만 등록했다. ` +
@@ -913,7 +916,7 @@ const MINIFIT_5557: PartLibraryItem[] = MINIFIT_5557_CIRCUITS.map((n) => {
     // (도면이 번호를 인쇄한 것은 10회로 예시이고, 6회로는 그 규칙을 연장한 값이다.
     //  10회로 자체를 채우지 않는 이유는 8번이 각인 탭에 가려 미인쇄이기 때문 —
     //  인쇄되지 않은 자리를 확정값처럼 적을 수 없다.)
-    ...(n === 6 ? { layout: MINIFIT_6P_LAYOUT, view: MINIFIT_6P_VIEW, datasheet: DS_MINIFIT_6P } : {}),
+    ...(n === 6 ? { layout: MINIFIT_6P_LAYOUT, view: MINIFIT_6P_VIEW, viewBrief: 'SD-5557-003 · 각인 탭 위 · 뷰 표기 없음', datasheet: DS_MINIFIT_6P } : {}),
   };
 });
 
@@ -1303,6 +1306,7 @@ export const SEED_PARTS: PartLibraryItem[] = [
     // 같은 상수를 쓴다 — 손으로 두 번 적으면 언젠가 두 부품이 다른 배열을 말한다.
     layout: MINIFIT_6P_LAYOUT,
     view: MINIFIT_6P_VIEW,
+    viewBrief: 'SD-5557-003 · 각인 탭 위 · 뷰 표기 없음',
     datasheet: DS_MINIFIT_6P,
   },
   {

@@ -55,10 +55,7 @@ export type TitleRows = {
 /**
  * 하네스가 아닌 면(도면 목록 · 부록 · 구매 품목)의 프레임 + 제목블록.
  *
- * TODO(pdfref-pages ↔ pdfDraw `info.rows` 병합): pdfDraw 담당 쪽이
- * `drawFrameAndTitleBlock(…, info)` 에 `info.rows?: TitleRows` 를 더하는 중이다.
- * 병합되면 아래 대역(stand-in) 문서와 캐스트를 지우고 `{ rows }` 만 넘기면 된다.
- * 병합 전에도 제목 · 도번 · Rev · 날짜는 대역 문서로 같은 자리에 찍힌다.
+ * 글자는 `info.rows` 가 그대로 찍는다. 대역 문서는 함수 서명을 채우는 용도일 뿐이다.
  */
 export function drawFrameWithRows(pdf: PdfLike, text: DrawText, page: Page, rows: TitleRows): void {
   const standIn: HarnessDocument = {
@@ -71,8 +68,7 @@ export function drawFrameWithRows(pdf: PdfLike, text: DrawText, page: Page, rows
     ...(rows.rev !== DASH ? { rev: rows.rev.replace(/^Rev\./, '') } : {}),
     connectors: [], devices: [], wires: [], usedParts: [],
   };
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  drawFrameAndTitleBlock(pdf, standIn, text, page, { rows } as any as SheetInfo);
+  drawFrameAndTitleBlock(pdf, standIn, text, page, { rows } satisfies SheetInfo);
 }
 
 // ============================================================
@@ -424,6 +420,9 @@ export function withLibraryFacts(doc: HarnessDocument): HarnessDocument {
       add.layout = s.layout;
       add.view = s.view;
     }
+    // 요약은 원문과 같은 뷰일 때만 — 다른 원문에 엉뚱한 요약이 붙지 않게
+    const view = add.view ?? p.view;
+    if (!p.viewBrief && s.viewBrief && view === s.view) add.viewBrief = s.viewBrief;
     if (!p.datasheet && s.datasheet) add.datasheet = s.datasheet;
     if (!Object.keys(add).length) return p;
     changed = true;

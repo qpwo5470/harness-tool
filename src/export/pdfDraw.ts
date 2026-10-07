@@ -1630,16 +1630,25 @@ export function drawPinViews(
   const refs = refLabels(doc);
   text('핀 배열 (실물 기준)', box.x, box.y - 8, { size: 12, bold: true, color: C.text });
   let cur = box.y + 6;
-  for (const c of doc.connectors) {
-    if (cur > box.bottom - 20) break;              // 넘치면 조용히 멈춘다
-    const part = doc.usedParts.find((p) => p.id === c.housingId);
-    if (!part) continue;
+  const list = doc.connectors.filter((c) => doc.usedParts.some((p) => p.id === c.housingId));
+  for (let i = 0; i < list.length; i++) {
+    const c = list[i];
+    if (cur > box.bottom - 20) {
+      // 조용히 멈추지 않는다 — 빠진 커넥터가 있다는 사실을 종이에 남긴다.
+      const rest = list.slice(i).map((x) => refs.get(x.id) ?? '?').join('·');
+      text(`자리 부족 — ${rest} 생략`, box.x, Math.min(cur, box.bottom) - 4, { size: 8, color: C.danger, maxWidth: box.w });
+      break;
+    }
+    const part = doc.usedParts.find((p) => p.id === c.housingId)!;
+    // 도면 칸은 좁다 — 짧은 출처 표기(viewBrief)가 있으면 그것을, 없으면 긴 설명에서
+    // 마크다운 기호만 걷어 쓴다. 긴 설명 원문은 부록·라이브러리에 남는다.
+    const view = part.view ? (part.viewBrief ?? part.view.replace(/\*\*|`/g, '')) : undefined;
     const used = drawPinView(pdf, text, { x: box.x, y: cur, w: box.w }, {
       ref: refs.get(c.id) ?? '?',
       name: part.name,
       ...(part.mpn ? { mpn: part.mpn } : {}),
       ...(part.layout ? { layout: part.layout } : {}),
-      ...(part.view ? { view: part.view } : {}),
+      ...(view ? { view } : {}),
       ...(c.unused ? { unused: c.unused } : {}),
       ...(c.sleeve ? { sleeve: c.sleeve } : {}),
     });
