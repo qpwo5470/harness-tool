@@ -1630,7 +1630,17 @@ export function drawPinViews(
   const refs = refLabels(doc);
   text('핀 배열 (실물 기준)', box.x, box.y - 8, { size: 12, bold: true, color: C.text });
   let cur = box.y + 6;
-  const list = doc.connectors.filter((c) => doc.usedParts.some((p) => p.id === c.housingId));
+  // 1극 끝단(러그·페룰·파스톤)은 "배열" 이 없다 — 핀 하나를 칸으로 그리거나
+  // "배열 미등록" 경고를 띄우면 없는 숙제를 만든다. 도면집도 이 칸을 비워 둔다.
+  const multi = (c: HarnessDocument['connectors'][number]) => {
+    const p = doc.usedParts.find((x) => x.id === c.housingId);
+    return !!p && Math.max(p.pinCount ?? 0, c.pins.length) > 1;
+  };
+  const list = doc.connectors.filter(multi);
+  if (!list.length && doc.connectors.length) {
+    text('1극 끝단만 있다 — 핀 배열 없음.', box.x, box.y + 10, { size: 8.5, color: C.muted, maxWidth: box.w });
+    return;
+  }
   for (let i = 0; i < list.length; i++) {
     const c = list[i];
     if (cur > box.bottom - 20) {
