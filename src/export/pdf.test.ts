@@ -372,7 +372,10 @@ describe('접속표', () => {
     await downloadPdf(docWithWires(40));
     expect(rec.pages).toBeGreaterThan(1);
     expect(allText()).toContain('접속표 (FROM → TO) — 이어짐');
-    expect(allText().some((s) => s.startsWith('40본 · 이어짐'))).toBe(true);
+    // '이어짐' 은 첫 면 **제목** 쪽에 — 머리 오른쪽 글자는 짧게(이웃 표 제목과 붙지 않게)
+    expect(allText()).toContain('접속표 (FROM → TO) · 이어짐');
+    expect(allText()).toContain('40본 · mm');
+    expect(allText().some((s) => s.startsWith('40본 · 이어짐'))).toBe(false);
     // 첫 면 11행 + 나머지 29행 = 40행. 한 줄도 사라지지 않는다.
     const lens = allText().filter((s) => /^1\d\d$/.test(s));
     expect(new Set(lens).size).toBe(40);
@@ -424,6 +427,8 @@ describe('파트리스트', () => {
     await downloadPdf(sampleDoc);
     expect(rec.pages).toBeGreaterThan(1);
     expect(allText()).toContain('부품 — 이어짐');
+    expect(allText()).toContain('부품 · 이어짐');
+    expect(allText().some((s) => /품목 · 이어짐$/.test(s))).toBe(false);
     for (const r of paperPartRows(sampleDoc, 'mm', true)) expect(allText()).toContain(r[0]);
   });
 

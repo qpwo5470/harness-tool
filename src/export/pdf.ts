@@ -535,11 +535,17 @@ function addOnePage(ctx: Ctx, doc: HarnessDocument): void {
   const runCap = onePageRows(ONEPAGE.run.y, frameBottom);
   const runHere = runAll.slice(0, runCap);
   const runRest = runAll.slice(runCap);
+  /*
+   * 표 머리 오른쪽 글자(note)는 **짧게** 둔다. 세 표가 18pt 간격으로 붙어 있어서
+   * (pdfDraw.ONEPAGE — 접속표 끝 354 → 부품 372, 부품 끝 608 → 핀 배열 626)
+   * `6품목 · 이어짐` 처럼 길어지면 오른쪽 이웃 표의 제목(`부품`, `핀 배열 (실물 기준)`)과
+   * 한 줄로 붙어 읽혔다. '이어짐' 은 왼쪽 제목 쪽으로 옮긴다(제목 칸은 여유가 있다).
+   */
   drawTable(ctx.pdf, ctx.text, {
     ...ONEPAGE.run,
-    title: '접속표 (FROM → TO)',
+    title: runRest.length ? '접속표 (FROM → TO) · 이어짐' : '접속표 (FROM → TO)',
     // 머리가 `길이` 뿐이라 단위를 여기 남긴다
-    note: runRest.length ? `${runAll.length}본 · 이어짐 · ${u}` : `${runAll.length}본 · ${u}`,
+    note: `${runAll.length}본 · ${u}`,
     cols: runCols(ctx.unit, true),
     rows: runHere,
     empty: '배선이 없다.',
@@ -572,8 +578,8 @@ function addOnePage(ctx: Ctx, doc: HarnessDocument): void {
   const noteRest = noteAll.slice(noteHere);
   const partEnd = drawTable(ctx.pdf, ctx.text, {
     ...ONEPAGE.part,
-    title: '부품',
-    note: partRest.length ? `${partAll.length}품목 · 이어짐` : `${partAll.length}품목`,
+    title: partRest.length ? '부품 · 이어짐' : '부품',
+    note: `${partAll.length}품목`,
     cols: PART_COLS_PAPER,
     rows: partHere,
     empty: '부품이 없다.',

@@ -15,7 +15,8 @@ import type {
   Connector, Device, Endpoint, HarnessDocument, HarnessSet, Id, KitDocument,
 } from '../types';
 import {
-  blockersOf, letterAt, perSetOf, statsOf, totalHarnesses, totalOf,
+  blockersOf, letterAt, perSetOf, planDrawingNumbers, statsOf, totalHarnesses, totalOf,
+  type DrawingNoAssignment,
 } from '../store/kit';
 import { lengthResolver } from '../store/wireLength';
 import { strokeColor } from '../canvas/docToFlow';
@@ -318,6 +319,91 @@ function Thumb({ h }: { h: HarnessDocument }): JSX.Element {
   );
 }
 
+/**
+ * 도번 일괄 부여 — 버튼 → 무엇이 들어갈지 목록으로 보여 주는 확인 → 부여.
+ *
+ * 저절로 매기지 않는다. 도번은 사내 문서 번호라 툴이 몰래 지어 넣으면 안 되고,
+ * 사용자가 눌렀을 때도 **빈 칸에만** 넣는다(이미 있는 도번은 덮지 않는다 — kit.ts).
+ * 세트 Rev 를 하네스에 옮기는 것은 따로 체크해야만 한다(기본 꺼짐).
+ */
+function DrawingNoAssign(props: {
+  kit: KitDocument;
+  onAssign: (plan: DrawingNoAssignment[]) => void;
+}): JSX.Element {
+  const { kit, onAssign } = props;
+  const [open, setOpen] = useState(false);
+  const [withRev, setWithRev] = useState(false);
+  const pn = kit.set.pn?.trim() ?? '';
+  const setRev = kit.set.rev?.trim() ?? '';
+  const noOnly = useMemo(() => planDrawingNumbers(kit), [kit]);
+  const plan = useMemo(
+    () => planDrawingNumbers(kit, { applySetRev: withRev }),
+    [kit, withRev],
+  );
+  const revCandidates = setRev ? kit.harnesses.filter((h) => !h.rev?.trim()).length : 0;
+  // Rev 는 도번에 딸린 선택 사항이다 — 도번이 다 차 있으면 버튼을 열지 않는다
+  const nothing = noOnly.length === 0;
+  const why = !pn
+    ? '세트 품번을 먼저 입력하세요 — 도번은 `품번-01` 형식으로 매깁니다'
+    : nothing
+      ? '모든 하네스에 도번이 있습니다'
+      : '도번이 빈 하네스에 세트 품번-01, -02 … 를 매깁니다 (기존 도번은 그대로)';
+
+  if (!open) {
+    return (
+      <div className="so-dno">
+        <button
+          type="button"
+          className="so-dno-btn"
+          disabled={!pn || nothing}
+          title={why}
+          onClick={() => { setWithRev(false); setOpen(true); }}
+        >
+          도번 일괄 부여
+        </button>
+        <span className="so-dno-hint">{why}</span>
+      </div>
+    );
+  }
+  return (
+    <div className="so-dno-confirm" role="dialog" aria-label="도번 일괄 부여 확인">
+      <p className="so-dno-q">
+        {plan.length
+          ? `하네스 ${plan.length}종에 아래 값을 넣습니다. 이미 있는 도번·Rev 는 바꾸지 않습니다.`
+          : '넣을 값이 없습니다.'}
+      </p>
+      <ul className="so-dno-list">
+        {plan.map((a) => (
+          <li key={a.harnessId}>
+            <span className="so-row-letter num">{a.letter}</span>
+            <span className="so-dno-name">{a.name}</span>
+            <span className="so-dno-val num">
+              {[a.drawingNo, a.rev != null ? `Rev.${a.rev}` : null].filter(Boolean).join(' · ')}
+            </span>
+          </li>
+        ))}
+      </ul>
+      {revCandidates > 0 && (
+        <label className="so-dno-rev">
+          <input type="checkbox" checked={withRev} onChange={(e) => setWithRev(e.target.checked)} />
+          Rev 가 빈 하네스 {revCandidates}종에 세트 Rev.{setRev} 도 적기
+        </label>
+      )}
+      <div className="so-dno-btns">
+        <button type="button" className="so-foot-btn" onClick={() => setOpen(false)}>취소</button>
+        <button
+          type="button"
+          className="so-foot-btn primary"
+          disabled={!plan.length}
+          onClick={() => { onAssign(plan); setOpen(false); }}
+        >
+          부여
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ================================================================
 // 본체
 // ================================================================
@@ -334,10 +420,13 @@ export function SetOverview(props: {
   onGoToBlocker: (harnessId: string, targetId?: string) => void;
   onCopyOrderText: () => void;
   onExportSetPdf: () => void;
+  /** 도번 일괄 부여 — 확인을 받은 계획을 그대로 넘긴다. 없으면 버튼을 그리지 않는다 */
+  onAssignDrawingNos?: (plan: DrawingNoAssignment[]) => void;
 }): JSX.Element {
   const {
     kit, activeHarnessId, onSelectHarness, onChangePerSet, onChangeOrderQty, onChangeSet,
     onAddHarness, onRemoveHarness, onGoToBlocker, onCopyOrderText, onExportSetPdf,
+    onAssignDrawingNos,
   } = props;
   const [menu, setMenu] = useState<Id | null>(null);
 
@@ -504,7 +593,17 @@ export function SetOverview(props: {
                 aria-label="세트 품번"
                 onChange={(e) => onChangeSet({ pn: e.target.value })}
               />
-              <span className="so-rev num">{set.rev ? `Rev.${set.rev}` : 'Rev.—'}</span>
+              {/* 세트 Rev — 표지(도면 목록) 제목블록에 나간다. 예전에는 보기만 했다 */}
+              <label className="so-rev num">
+                Rev.
+                <input
+                  className="so-rev-input num"
+                  value={set.rev ?? ''}
+                  placeholder="—"
+                  aria-label="세트 Rev"
+                  onChange={(e) => onChangeSet({ rev: e.target.value || undefined })}
+                />
+              </label>
             </div>
             <div className="so-set-row">
               <span className="so-set-k">주문</span>
@@ -534,6 +633,9 @@ export function SetOverview(props: {
               <span className="so-rule" />
             </div>
             <div className="so-rows">
+              {onAssignDrawingNos && (
+                <DrawingNoAssign kit={kit} onAssign={onAssignDrawingNos} />
+              )}
               {kit.harnesses.map((h, i) => {
                 const L = h.letter ?? letterAt(i);
                 return (

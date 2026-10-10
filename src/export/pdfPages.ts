@@ -30,6 +30,15 @@ export const COLOR_NOTE = '전선 색상은 규격 지정 사항이 아님 — �
 
 const DASH = '—';
 
+/**
+ * 종이에 적는 부품 이름 — `shortName`(도면용 짧은 이름, `JST-XH 10P`) 이 있으면 그것,
+ * 없으면 라이브러리 이름. 도면집은 짧은 이름을 쓴다. 짧은 이름은 사용자가 정한 값만 쓰고
+ * 이름을 잘라 지어내지 않는다.
+ */
+export function paperName(p: Pick<PartLibraryItem, 'name' | 'shortName'> | undefined, fallback: string): string {
+  return p?.shortName?.trim() || p?.name || fallback;
+}
+
 export function revText(rev?: string): string {
   return rev?.trim() ? `Rev.${rev.trim()}` : DASH;
 }
@@ -134,12 +143,12 @@ export function paperPartRows(doc: HarnessDocument, unit: LengthUnit, grouped = 
     }
     for (const [hid, list] of byPart) {
       const p = partOf(hid);
-      rows.push([`${list.join('·')} ${p?.name ?? hid}`, String(list.length), p?.mpn || DASH]);
+      rows.push([`${list.join('·')} ${paperName(p, hid)}`, String(list.length), p?.mpn || DASH]);
     }
   } else {
     for (const c of doc.connectors) {
       const p = partOf(c.housingId);
-      rows.push([`${refs.get(c.id) ?? '?'} ${p?.name ?? c.housingId}`, '1', p?.mpn || DASH]);
+      rows.push([`${refs.get(c.id) ?? '?'} ${paperName(p, c.housingId)}`, '1', p?.mpn || DASH]);
     }
   }
   for (const c of doc.connectors) {
@@ -173,8 +182,8 @@ export function paperPartRows(doc: HarnessDocument, unit: LengthUnit, grouped = 
     if (r.category !== '터미널') continue;
     const qty = r.qty - (lugNodes.get(r.part) ?? 0);
     if (qty <= 0) continue;
-    const mpn = doc.usedParts.find((p) => p.name === r.part)?.mpn;
-    rows.push([r.part, String(qty), mpn || r.detail || DASH]);
+    const part = doc.usedParts.find((p) => p.name === r.part);
+    rows.push([paperName(part, r.part), String(qty), part?.mpn || r.detail || DASH]);
   }
   const sleeves = new Map<string, string[]>();
   for (const c of doc.connectors) {
@@ -262,7 +271,7 @@ export function drawNote(text: DrawText, x: number, tableEnd: number, lines: str
 export function endsText(doc: HarnessDocument): string {
   const items: { name: string; x: number }[] = [
     ...doc.connectors.map((c, i) => ({
-      name: doc.usedParts.find((p) => p.id === c.housingId)?.name ?? c.housingId,
+      name: paperName(doc.usedParts.find((p) => p.id === c.housingId), c.housingId),
       x: c.positions.logical?.x ?? i * 160,
     })),
     ...doc.devices.map((d, i) => ({ name: d.name, x: d.positions.logical?.x ?? (doc.connectors.length + i) * 160 })),
@@ -283,14 +292,21 @@ export function endsText(doc: HarnessDocument): string {
   return `${uniq(left)} ↔ ${uniq(right)}`;
 }
 
-/** 길이 칸 — 값 하나면 그대로, 여럿이면 범위. 모르면 '미상' */
+/**
+ * 길이 칸 — 값 하나면 그대로(`1600`), 여럿이면 범위(`200~1800`). 하나도 모르면 '미상'.
+ *
+ * 일부만 아는 하네스는 아는 값 뒤에 `(일부 미상)` 을 붙인다. 예전에는 아는 값만으로
+ * 범위를 적어, 길이를 안 넣은 배선이 있는데도 표지가 완결된 길이처럼 읽혔다.
+ * (도면집 ref-01 은 하네스마다 한 길이만 적는다 — 길이를 다 넣은 하네스는 그렇게 나온다.)
+ */
 export function lengthCell(doc: HarnessDocument, unit: LengthUnit): string {
   const lengthOf = lengthResolver(doc);
-  const uniq = [...new Set(doc.wires.map((w) => lengthOf(w).mm).filter((v): v is number => v != null))]
-    .sort((a, b) => a - b);
+  const all = doc.wires.map((w) => lengthOf(w).mm);
+  const uniq = [...new Set(all.filter((v): v is number => v != null))].sort((a, b) => a - b);
   if (!uniq.length) return '미상';
   const f = (mm: number) => formatLength(mm, unit);
-  return uniq.length === 1 ? f(uniq[0]) : `${f(uniq[0])}~${f(uniq[uniq.length - 1])}`;
+  const known = uniq.length === 1 ? f(uniq[0]) : `${f(uniq[0])}~${f(uniq[uniq.length - 1])}`;
+  return all.some((v) => v == null) ? `${known} (일부 미상)` : known;
 }
 
 export const COVER_COLS = (unit: LengthUnit): Col[] => [
@@ -305,7 +321,8 @@ export function coverRows(kit: KitDocument, unit: LengthUnit): Cell[][] {
   return kit.harnesses.map((h) => [
     h.drawingNo?.trim() || DASH,
     h.purchased ? `${h.name || '이름 없는 하네스'} (구매품)` : (h.name || '이름 없는 하네스'),
-    endsText(h),
+    // 짧은 이름(shortName)은 라이브러리에만 있을 수 있다 — 하네스 면과 같은 보충을 거친다
+    endsText(withLibraryFacts(h)),
     lengthCell(h, unit),
     String(perSetOf(kit.set, h.id)),
   ]);
@@ -382,7 +399,9 @@ export function drawPurchasedPage(
     ],
     rows: [[
       doc.name || '이름 없는 하네스',
-      len === '미상' ? '길이 미상' : `${len}${unitLabel(unit)}`,
+      len === '미상'
+        ? '길이 미상'
+        : len.replace(/^(.*?)( \(일부 미상\))?$/, (_, v: string, tail?: string) => `${v}${unitLabel(unit)}${tail ?? ''}`),
       perSet != null ? String(perSet) : DASH,
       endsText(doc),
     ]],
@@ -402,7 +421,7 @@ export type DatasheetEntry = {
 const SEED_BY_ID = new Map(SEED_PARTS.map((p) => [p.id, p] as const));
 
 /**
- * 문서 스냅샷에 **비어 있는** 라이브러리 사실(layout · view · datasheet)을 채운다.
+ * 문서 스냅샷에 **비어 있는** 라이브러리 사실(layout · view · datasheet · shortName)을 채운다.
  *
  * 스냅샷(usedParts)은 그 부품을 쓴 시점의 정의라, 그 뒤에 라이브러리에 적힌
  * 실물 배열·원본 도면이 없다(EW-에보카 세트가 그렇다). **같은 id · 같은 MPN**
@@ -424,6 +443,8 @@ export function withLibraryFacts(doc: HarnessDocument): HarnessDocument {
     const view = add.view ?? p.view;
     if (!p.viewBrief && s.viewBrief && view === s.view) add.viewBrief = s.viewBrief;
     if (!p.datasheet && s.datasheet) add.datasheet = s.datasheet;
+    // 도면용 짧은 이름 — 같은 id·MPN 이므로 같은 부품이다. 스냅샷 값은 덮지 않는다
+    if (!p.shortName?.trim() && s.shortName?.trim()) add.shortName = s.shortName;
     if (!Object.keys(add).length) return p;
     changed = true;
     return { ...p, ...add };

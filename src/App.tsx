@@ -3,7 +3,7 @@
  * 라이브러리 / 캔버스 / 우측 탭(속성·접속표·파트리스트) + 문서 액션.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useHarnessStore } from './store/harnessStore';
+import { useHarnessStore, assignDrawingNumbers } from './store/harnessStore';
 import { useHoverStore } from './store/hoverStore';
 import {
   emptyDoc, clearSaved, parseDocument, setStorageProblemHandler,
@@ -517,6 +517,7 @@ export default function App() {
           onGoToBlocker={goToBlocker}
           onCopyOrderText={copyOrderText}
           onExportSetPdf={() => setExportOpen(true)}
+          onAssignDrawingNos={assignDrawingNumbers}
         />
       ) : view === 'physical' ? (
       /* 물리 뷰 = 제조 도면. 구간·치수·자재를 다루므로 우측 패널을 자체적으로 갖는다. */
