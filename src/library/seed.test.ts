@@ -797,8 +797,10 @@ describe('실물 핀 배열 · 뷰 기준', () => {
     }
   });
 
-  it('근거가 적힌 4종에만 채운다 — Mini-Fit 6P(2종) · Micro-Fit 10P · XH 하우징', () => {
+  it('근거가 적힌 것에만 채운다 — Mini-Fit 6P(2종) · Micro-Fit 10P · XH 하우징 · D-SUB 9P 암', () => {
     const ids = new Set(withLayout.map((p) => p.id));
+    expect(ids.has('lib-dsub-9p-f')).toBe(true);
+    expect(ids.has('lib-dc-barrel-f-5521')).toBe(false);   // 동심원 — 행·열이 없다
     expect(ids.has('lib-mdb-vmc')).toBe(true);
     expect(ids.has('lib-minifit-5557-06p')).toBe(true);
     expect(ids.has('lib-mf3-43025-10p')).toBe(true);
@@ -856,5 +858,138 @@ describe('절연 슬리브 품목 연결', () => {
 
   it('TAB(수)에는 슬리브를 걸지 않는다 — 씌우는 것은 REC 쪽이다', () => {
     expect(byId('lib-lug-faston-250-tab').sleevePartId).toBeUndefined();
+  });
+});
+
+/**
+ * 이스턴웰스 하네스 세트(data.py · build.py DS_ITEMS)에서 온 끝단 세 종.
+ * 지키려는 것: data.py 에 적힌 사실만 들어갔고, 없는 품번을 만들지 않았다.
+ */
+describe('D-SUB 9P 암 (Amphenol CN-DSUB9SKT00-000)', () => {
+  const p = () => byId('lib-dsub-9p-f');
+
+  it('실물 배열이 도면 판독값 그대로다 — 윗행 5·4·3·2·1 / 아랫행 9·8·7·6', () => {
+    expect(p().layout).toEqual([[5, 4, 3, 2, 1], [null, 9, 8, 7, 6]]);
+    expect(p().viewBrief).toBe('CN-DSUB9SKT00 · D쉘 넓은쪽 위 · 뷰 표기 없음');
+    expect(p().view).toMatch(/CN-DSUB9SKT00-000/);
+    expect(p().view).toMatch(/뷰 기준.*문구가 없다/);
+  });
+
+  it('끝단 종류·짧은 이름·성별', () => {
+    expect(p().endKind).toBe('dsub');
+    expect(p().shortName).toBe('D-SUB 9P 암');
+    expect(p().gender).toBe('receptacle');
+    expect(p().manufacturer).toBe('Amphenol');
+  });
+
+  it('도면 번호를 주문 품번으로 쓰지 않는다 — 품번은 미정', () => {
+    expect(p().mpn).toBe('미정');
+    expect(p().spec!.도면).toMatch(/CN-DSUB9SKT00-000/);
+  });
+
+  it('원본 도면 캡처는 build.py DS_ITEMS 의 캡션을 옮긴 것이다', () => {
+    expect(p().datasheet!.src).toBe('datasheets/db9f.png');
+    expect(p().datasheet!.source).toMatch(/^Amphenol CN-DSUB9SKT00-000 rev A1/);
+    expect(p().datasheet!.note).toMatch(/1~9 전부 도면에서 판독/);
+  });
+
+  it('도면 좌표는 2행 — 윗행 1~5, 아랫행 6~9', () => {
+    const rows = new Map<number, number[]>();
+    for (const s of p().pinLayout!) rows.set(s.offset.y, [...(rows.get(s.offset.y) ?? []), s.index]);
+    expect([...rows.keys()].sort()).toEqual([0, 1]);
+    expect(rows.get(0)).toEqual([1, 2, 3, 4, 5]);
+    expect(rows.get(1)).toEqual([6, 7, 8, 9]);
+    expect(instantiate(p(), { x: 0, y: 0 }).pins).toHaveLength(9);
+  });
+});
+
+describe('DC 배럴잭 암 5.5/2.1', () => {
+  const p = () => byId('lib-dc-barrel-f-5521');
+
+  it('두 극이 센터(+) · 슬리브(−) 다', () => {
+    expect(p().pinCount).toBe(2);
+    expect(p().pinLayout!.map((s) => s.label)).toEqual(['+', '−']);
+    const c = instantiate(p(), { x: 0, y: 0 });
+    expect(c.pins.map((x) => x.label)).toEqual(['+', '−']);
+  });
+
+  it('규격은 외경 5.5 / 내경 2.1 뿐 — 품번은 미정', () => {
+    expect(p().spec!.외경).toBe('5.5mm');
+    expect(p().spec!.내경).toBe('2.1mm');
+    expect(p().mpn).toBe('미정');
+    expect(p().manufacturer).toBeUndefined();
+  });
+
+  it('끝단 종류 barrel · 실물 배열 없음', () => {
+    expect(p().endKind).toBe('barrel');
+    expect(p().gender).toBe('receptacle');
+    expect(p().layout).toBeUndefined();
+  });
+});
+
+describe('납처리 전선단', () => {
+  const all = () => SEED_PARTS.filter((p) => p.id.startsWith('lib-free-end-'));
+
+  it('1~8 가닥이 있고 가닥 수가 곧 핀 수다', () => {
+    expect(all().map((p) => p.pinCount)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    for (const p of all()) {
+      expect(instantiate(p, { x: 0, y: 0 }).pins, p.id).toHaveLength(p.pinCount!);
+    }
+  });
+
+  it('사는 물건이 아니다 — 품번·제조사가 없다', () => {
+    for (const p of all()) {
+      expect(p.mpn, p.id).toBeUndefined();
+      expect(p.manufacturer, p.id).toBeUndefined();
+      expect(p.endKind, p.id).toBe('free');
+      expect(p.gender, p.id).toBe('neutral');
+    }
+  });
+});
+
+describe('끝단 종류 (endKind)', () => {
+  it('단독 러그는 생김새대로 표시된다', () => {
+    const kindOf = (re: RegExp) => SEED_PARTS.filter((p) => re.test(p.id)).map((p) => p.endKind);
+    expect(new Set(kindOf(/^lib-lug-ring-/))).toEqual(new Set(['ring']));
+    expect(new Set(kindOf(/^lib-lug-fork-/))).toEqual(new Set(['fork']));
+    expect(new Set(kindOf(/^lib-lug-ferrule-/))).toEqual(new Set(['ferrule']));
+    expect(new Set(kindOf(/^lib-lug-faston-.*-(rec|tab)$/))).toEqual(new Set(['faston']));
+  });
+
+  it('절연슬리브는 끝단이 아니다 — 표시하지 않는다', () => {
+    for (const p of SEED_PARTS.filter((x) => x.id.endsWith('-sleeve'))) {
+      expect(p.endKind, p.id).toBeUndefined();
+    }
+  });
+
+  it('명시한 부품 말고는 비어 있다 — 이름으로 추측해 채우지 않는다', () => {
+    const kinds = new Set(['dsub', 'barrel', 'free', 'ring', 'fork', 'ferrule', 'faston']);
+    for (const p of SEED_PARTS) {
+      if (p.endKind == null) continue;
+      expect(kinds.has(p.endKind), p.id).toBe(true);
+      expect(/^lib-(lug-|dsub-|dc-barrel-|free-end-)/.test(p.id), p.id).toBe(true);
+    }
+  });
+});
+
+describe('짧은 이름 (shortName)', () => {
+  it('시리즈 · 핀 수로만 만든다', () => {
+    expect(byId('lib-jst-xhp-10p').shortName).toBe('JST-XH 10P');
+    expect(byId('lib-jst-phr-4p').shortName).toBe('JST-PH 4P');
+    expect(byId('lib-mf3-43025-10p').shortName).toBe('Micro-Fit 3.0 10P');
+    expect(byId('lib-minifit-5557-06p').shortName).toBe('Mini-Fit Jr. 6P');
+    expect(byId('lib-lug-faston-110-rec').shortName).toBe('파스톤 110 REC');
+    expect(byId('lib-lug-ferrule-0508').shortName).toBe('페룰 E0508');
+  });
+
+  it('같은 물건은 같은 짧은 이름 — MDB VMC = 5557 6P, 구 XH 2P = XHP-2', () => {
+    expect(byId('lib-mdb-vmc').shortName).toBe(byId('lib-minifit-5557-06p').shortName);
+    expect(byId('lib-xh-2p').shortName).toBe(byId('lib-jst-xhp-2p').shortName);
+  });
+
+  it('하우징과 짝(헤더 · 플러그)이 같은 짧은 이름을 갖지 않는다', () => {
+    expect(byId('lib-jst-b-xh-a-4p').shortName).toBeUndefined();
+    expect(byId('lib-jst-s-ph-k-s-4p').shortName).toBeUndefined();
+    expect(byId('lib-mf3-43020-10p').shortName).toBeUndefined();
   });
 });

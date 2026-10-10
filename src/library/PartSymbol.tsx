@@ -52,6 +52,12 @@ export function PartSymbol({ part }: Props) {
   const role = roleOf(part).key;
   const g = part.gender;
 
+  // 끝단 종류가 명시된 부품은 상자 대신 그 생김새로 그린다(`PartLibraryItem.endKind`).
+  // 이름으로 추측하지 않는다 — 표시가 없으면 아래 일반 규칙으로 간다.
+  if (part.endKind === 'dsub') return <DsubGlyph gender={g} />;
+  if (part.endKind === 'barrel') return <BarrelGlyph />;
+  if (part.endKind === 'free') return <FreeEndGlyph count={part.pinCount ?? part.pinLayout?.length ?? 1} />;
+
   // 단자·스플라이스는 핀 격자가 뜻이 없다 — 전용 그림을 따로 그린다.
   if (role === 'terminal') return <TerminalGlyph id={part.id} />;
   if (role === 'splice') return <SpliceGlyph />;
@@ -248,6 +254,61 @@ function TerminalGlyph({ id }: { id: string }) {
       <path d="M 12 7.5 l 5 -3 M 12 14.5 l 5 3" className="ps-line" />
       <path d="M 17 6 h 6 v 10 h -6" className="ps-line" />
       <path d="M 23 9 h 8" className="ps-wire" />
+    </svg>
+  );
+}
+
+/**
+ * D-SUB — 사다리꼴 D 쉘(넓은 쪽 위) 안에 윗행 5 · 아랫행 4.
+ * 접점 모양은 다른 하우징과 같은 규칙이다(○ 암 · ● 수).
+ */
+function DsubGlyph({ gender }: { gender?: PartLibraryItem['gender'] }) {
+  const top = [7, 12, 17, 22, 27];
+  const bottom = [9.5, 14.5, 19.5, 24.5];
+  const dot = (cx: number, cy: number) =>
+    gender === 'plug'
+      ? <circle key={`${cx}-${cy}`} cx={cx} cy={cy} r={1.5} className="ps-pin" />
+      : <circle key={`${cx}-${cy}`} cx={cx} cy={cy} r={1.6} className="ps-hole" />;
+  return (
+    <svg className="part-symbol" viewBox={`0 0 ${W} ${H}`} width={W} height={H} aria-hidden focusable="false">
+      <path d="M 2 4 h 30 l -3.5 14 h -23 z" className="ps-body" />
+      {top.map((x) => dot(x, 8.5))}
+      {bottom.map((x) => dot(x, 13.5))}
+    </svg>
+  );
+}
+
+/**
+ * DC 배럴잭 — 정면에서 본 동심원: 몸통 · 플러그가 들어가는 구멍 · 센터 핀.
+ * 오른쪽 두 가닥이 센터(+) · 슬리브(−) 두 극이다.
+ */
+function BarrelGlyph() {
+  return (
+    <svg className="part-symbol" viewBox={`0 0 ${W} ${H}`} width={W} height={H} aria-hidden focusable="false">
+      <circle cx={10} cy={11} r={7.5} className="ps-body" />
+      <circle cx={10} cy={11} r={3.6} className="ps-hole" />
+      <circle cx={10} cy={11} r={1.2} className="ps-pin" />
+      <path d="M 17.5 8.5 h 14 M 17.5 13.5 h 14" className="ps-wire" />
+    </svg>
+  );
+}
+
+/**
+ * 납처리 전선단 — 커넥터가 없다. 피복 낀 전선(굵은 선) 끝에 벗긴 심선(가는 선)과
+ * 납 방울(찬 점). 가닥 수는 최대 4 까지만 그린다 — 실제 수는 옆의 `NP` 배지가 말한다.
+ */
+function FreeEndGlyph({ count }: { count: number }) {
+  const n = Math.max(1, Math.min(4, count));
+  const ys = Array.from({ length: n }, (_, i) => (n === 1 ? 11 : 4.5 + (i * 13) / (n - 1)));
+  return (
+    <svg className="part-symbol" viewBox={`0 0 ${W} ${H}`} width={W} height={H} aria-hidden focusable="false">
+      {ys.map((y) => (
+        <g key={y}>
+          <path d={`M 32 ${y} H 14`} className="ps-wire" />
+          <path d={`M 14 ${y} H 6`} className="ps-line" />
+          <circle cx={5} cy={y} r={1.6} className="ps-pin" />
+        </g>
+      ))}
     </svg>
   );
 }

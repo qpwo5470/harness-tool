@@ -792,6 +792,9 @@ export function validateHarness(doc: HarnessDocument): Issue[] {
       if (!part) continue;                       // 규칙 11 이 이미 잡았다
       // 핀이 하나뿐인 부품(페룰·배럴 등)은 배열이 뜻을 갖지 않는다.
       if ((part.pinCount ?? part.pinLayout?.length ?? 0) <= 1) continue;
+      // 하우징이 없는 끝(납처리 전선단)과 동심원 극(DC 배럴잭)은 "행·열" 배열이 없다 —
+      // 적을 것이 없는 자리를 "아직 안 적었다" 고 알리면 목록이 소음으로 찬다.
+      if (part.endKind === 'free' || part.endKind === 'barrel') continue;
 
       if (!part.layout || part.layout.length === 0) {
         out.push({

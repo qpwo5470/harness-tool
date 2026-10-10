@@ -121,8 +121,7 @@ const XH_VIEW =
  * 위 layout/view 의 근거가 된 그 도면을 캡처한 것이다(public/datasheets/).
  * **layout 을 준 부품에만** 붙인다 — 캡처가 근거인 부품이 그것뿐이다.
  * 문구는 이스턴웰스 하네스 세트 도면집(build.py DS_ITEMS)에서 옮겼다.
- * D-SUB 9F(db9f.png) 캡처도 public/ 에 있으나 라이브러리에 해당 부품이 없어
- * 붙일 곳이 없다 — 부품을 지어내지 않는다. */
+ * D-SUB 9F(db9f.png)는 아래 `DSUB9_F` 부품에 붙는다. */
 type Datasheet = NonNullable<PartLibraryItem['datasheet']>;
 const DS_XH: Datasheet = {
   src: 'datasheets/xh.png',
@@ -143,6 +142,32 @@ const DS_MINIFIT_6P: Datasheet = {
     '번호 뷰는 10ckt 예시만 있음. 각인 탭 위 기준 아랫행 5·4·3·2·1 / 윗행 10·9·(8)·7·6\n' +
     '8은 각인 탭에 가려 도면에 미인쇄. 6ckt 배열은 도면에 없어 같은 규칙을 연장함 — 실물 대조 필요',
 };
+
+const DS_DSUB9_F: Datasheet = {
+  src: 'datasheets/db9f.png',
+  source: 'Amphenol CN-DSUB9SKT00-000 rev A1 · 도면에 뷰 기준 표기 없음',
+  note:
+    '원본 페이지가 눕혀 작도돼 있어 반시계 90° 회전함\n' +
+    'D쉘 넓은쪽 위 기준 윗행 5·4·3·2·1 / 아랫행 9·8·7·6 — 1~9 전부 도면에서 판독',
+};
+
+/**
+ * D-SUB 9P 암(소켓) — Amphenol 도면 **CN-DSUB9SKT00-000** rev A1.
+ * 인쇄값: 1~9 **전부**. 연장한 값이 없다 — 다른 셋과 다른 점이다.
+ * 남는 불확실성은 뷰 기준 문구가 없다는 것 하나다(넓은 쪽 위로 잡았을 때의 배열).
+ * 빈 자리(null)는 아랫행이 4개라 넓은 윗행보다 반 칸 들어가 있음을 나타낸다.
+ */
+const DSUB9_F_LAYOUT: (number | string | null)[][] = [
+  [5, 4, 3, 2, 1],
+  [null, 9, 8, 7, 6],
+];
+const DSUB9_F_VIEW =
+  'D쉘의 넓은 쪽이 위로 오게 잡고 본 배열. ' +
+  'Amphenol 도면 CN-DSUB9SKT00-000 rev A1 기준(원본 페이지가 눕혀 작도돼 있어 반시계 90° 회전해 읽음). ' +
+  '**도면에 뷰 기준(viewed from …) 문구가 없다.** ' +
+  '번호는 1~9 전부 도면에 인쇄돼 있어 그대로 읽었다 — 연장한 값은 없다. ' +
+  '윗행 왼→오 5·4·3·2·1 / 아랫행 왼→오 9·8·7·6. ' +
+  '**결합면에서 본 것인지 반대면(전선측)에서 본 것인지는 도면이 말하지 않으므로 실물 대조 필요.**';
 
 /** 오른쪽 끝이 1번이므로 왼→오 = n … 1 (1열) */
 function xhLayout(n: number): (number | string | null)[][] {
@@ -455,6 +480,8 @@ function microFit30Housings(s: MicroFit30Series): PartLibraryItem[] {
       id: `lib-mf3-${s.series}-${xx}p`,
       category: 'housing' as const,
       name: `Molex ${s.series}-${xx}00 Micro-Fit 3.0 ${s.표시} (${n}회로)`,
+      // 짧은 이름은 리셉터클(43025)에만 — 플러그(43020)에 같은 글자를 주면 도면에서 둘이 같아 보인다
+      ...(s.series === '43025' ? { shortName: `Micro-Fit 3.0 ${n}P` } : {}),
       manufacturer: 'Molex',
       mpn: `${s.series}-${xx}00`,
       spec: {
@@ -635,6 +662,11 @@ type JstSeries = {
   viewBrief?: string;
   /** layout 의 근거가 된 원본 도면 캡처 — layout 과 같은 시리즈에만 */
   datasheet?: Datasheet;
+  /**
+   * 도면용 짧은 이름. **하우징에만** 준다 — 헤더에 같은 글자를 주면 도면에서
+   * 하우징과 헤더가 같은 이름으로 보인다.
+   */
+  shortName?: (n: number) => string;
 };
 
 function jstItems(s: JstSeries): PartLibraryItem[] {
@@ -642,6 +674,7 @@ function jstItems(s: JstSeries): PartLibraryItem[] {
     id: `lib-jst-${s.slug}-${n}p`,
     category: s.category,
     name: `JST ${s.mpn(n)} ${s.표시} (${n}P)`,
+    ...(s.shortName ? { shortName: s.shortName(n) } : {}),
     manufacturer: 'JST',
     mpn: s.mpn(n),
     spec: {
@@ -684,6 +717,7 @@ const JST_XH: PartLibraryItem[] = [
     view: XH_VIEW,
     viewBrief: 'eXH.pdf p.4 · 1번만 도면 표기 · 뷰 표기 없음',
     datasheet: DS_XH,
+    shortName: (n) => `JST-XH ${n}P`,
     비고:
       `${JST_COLOR_NOTE} 데이터시트 표의 1~16 · 20회로만 등록했다. ` +
       '특수 피치품 XHP-2(10.0)-U · XHP-6(5.0)-U 는 피치가 달라 뺐다. ' +
@@ -741,6 +775,7 @@ const JST_PH: PartLibraryItem[] = [
     결합: 'BnB-PH-K-S (수직 헤더) / SnB-PH-K-S (앵글 헤더)',
     터미널: 'SPH-002T-P0.5S (AWG#30~24) · SPH-004T-P0.5S (AWG#32~28)',
     출처: 'JST ePH.pdf — Housing 품번표',
+    shortName: (n) => `JST-PH ${n}P`,
     비고: `${JST_COLOR_NOTE} 데이터시트 표의 2~16회로를 그대로 등록했다.`,
   }),
   ...jstItems({
@@ -885,6 +920,7 @@ const MINIFIT_5557: PartLibraryItem[] = MINIFIT_5557_CIRCUITS.map((n) => {
     id: `lib-minifit-5557-${nn}p`,
     category: 'housing' as const,
     name: `Molex 39-01-2${nn}0 Mini-Fit Jr 5557 리셉터클 (${n}회로)`,
+    shortName: `Mini-Fit Jr. ${n}P`,
     manufacturer: 'Molex',
     mpn: `39-01-2${nn}0`,
     spec: {
@@ -960,6 +996,114 @@ const MINIFIT_TERMINALS: PartLibraryItem[] = [
 ];
 
 /* ═══════════════════════════════════════════════════════════════════
+   D-SUB · DC 배럴잭 · 납처리 전선단 — 이스턴웰스 하네스 세트(data.py)에서 온 끝단
+   ═══════════════════════════════════════════════════════════════════
+
+   출처: 이스턴웰스-하네스세트/data.py (EW-06 시리얼 A · EW-09 LED) 와
+   build.py DS_ITEMS(원본 도면 캡처 캡션). 거기 적힌 것만 옮겼다.
+
+   ## 품번을 비워 둔 이유
+   - D-SUB: data.py 의 품번 칸은 `DB-9F` — 규격 호칭이지 제조사 품번이 아니다.
+     `CN-DSUB9SKT00-000` 은 핀 번호를 읽은 **Amphenol 도면 번호**다. 주문 품번이라고
+     적힌 곳이 없어 `mpn` 에 넣지 않고 `spec.도면` 에 적었다.
+   - 배럴잭: data.py 는 `5.5mm / 2.1mm` (외경/내경) 만 준다. 제조사·품번이 없다.
+   둘 다 `mpn: '미정'` — 지어내면 그대로 발주서에 실린다.
+*/
+
+/**
+ * D-SUB 9P 암. 도면 좌표(`pinLayout`)는 윗행 1~5 · 아랫행 6~9 의 2행 격자다
+ * (Micro-Fit 10P 처럼 행마다 y 를 한 칸씩). 실물 배열은 `layout` 이 따로 말한다.
+ */
+const DSUB9_F: PartLibraryItem = {
+  id: 'lib-dsub-9p-f',
+  category: 'housing',
+  name: 'D-SUB 9P 암 (DB-9F)',
+  shortName: 'D-SUB 9P 암',
+  endKind: 'dsub',
+  manufacturer: 'Amphenol',
+  mpn: '미정',
+  spec: {
+    호칭: 'DB-9F (D-SUB 9P 암)',
+    열: '2열 (윗행 5 · 아랫행 4)',
+    도면: 'Amphenol CN-DSUB9SKT00-000 rev A1 — 핀 번호를 읽은 도면 번호. 주문 품번으로 확인되지 않았다',
+    제조사품번: '미정',
+    비고:
+      '결선 방식(솔더컵/크림프)·백쉘·고정 나사는 품번을 정할 때 함께 확인할 것. ' +
+      '핀 1~9 는 도면에 전부 인쇄돼 있어 그대로 읽었다(실물 배열 참조).',
+  },
+  gender: 'receptacle',
+  pinCount: 9,
+  pinLayout: [
+    ...[1, 2, 3, 4, 5].map((n, i) => ({ index: n, label: String(n), offset: { x: i, y: 0 } })),
+    ...[6, 7, 8, 9].map((n, i) => ({ index: n, label: String(n), offset: { x: i, y: 1 } })),
+  ],
+  layout: DSUB9_F_LAYOUT,
+  view: DSUB9_F_VIEW,
+  viewBrief: 'CN-DSUB9SKT00 · D쉘 넓은쪽 위 · 뷰 표기 없음',
+  datasheet: DS_DSUB9_F,
+};
+
+/**
+ * DC 배럴잭 암 5.5/2.1 — 전선측 2극(센터 · 슬리브).
+ *
+ * 극 이름 `+`(센터) · `−`(슬리브)는 EW-09 LED 하네스가 그렇게 결선했기 때문이다
+ * (data.py: "빨강 1가닥은 센터(+) … 슬리브(−)"). 센터 극성은 상대 기기가 정하는
+ * 것이라 규격이 아니다 — 비고에 남긴다.
+ *
+ * 실물 배열(`layout`)은 두지 않는다. 센터와 슬리브는 동심원이라 "행·열" 이 없다.
+ */
+const DC_BARREL_F: PartLibraryItem = {
+  id: 'lib-dc-barrel-f-5521',
+  category: 'housing',
+  name: 'DC 배럴잭 암 5.5/2.1',
+  shortName: 'DC 배럴잭 암',
+  endKind: 'barrel',
+  mpn: '미정',
+  spec: {
+    외경: '5.5mm',
+    내경: '2.1mm',
+    극: '센터(+) · 슬리브(−)',
+    제조사품번: '미정',
+    비고:
+      '이스턴웰스 하네스 세트 EW-09(LED) 의 표기 "5.5mm / 2.1mm" 만 근거다 — 제조사·품번은 구매처에서 정할 것. ' +
+      '센터(+) 극성은 그 하네스의 결선이지 규격이 아니다 — 상대 기기의 극성 표시를 확인할 것.',
+  },
+  gender: 'receptacle',
+  pinCount: 2,
+  pinLayout: [
+    { index: 1, label: '+', offset: { x: 0, y: 0 }, signal: '+ (센터)' },
+    { index: 2, label: '−', offset: { x: 1, y: 0 }, signal: '− (슬리브)' },
+  ],
+};
+
+/**
+ * 납처리 전선단 — **커넥터 없는 끝**(피복탈거 후 예비 납땜).
+ *
+ * 사는 물건이 아니라 **가공 지시**다. 그래도 라이브러리에 두는 이유: 하네스의 한쪽
+ * 끝이 이것뿐인 경우(EW-09 LED 좌측)에 배선의 끝점을 그릴 자리가 없으면 도면이
+ * 안 선다. 가닥 수만큼 핀이 있는 노드로 놓는다.
+ *
+ * `mpn` 은 두지 않는다 — 발주할 품번이 없다. 가닥 수(1~8)는 data.py EW-09 의 4가닥을
+ * 포함하도록 고른 범위이고, 다른 수가 필요하면 핀맵 에디터에서 복제해 쓴다.
+ */
+const FREE_END_COUNTS = [1, 2, 3, 4, 5, 6, 7, 8];
+const FREE_ENDS: PartLibraryItem[] = FREE_END_COUNTS.map((n) => ({
+  id: `lib-free-end-${n}p`,
+  category: 'housing' as const,
+  name: `납처리 전선단 ${n}가닥`,
+  shortName: '납처리 전선단',
+  endKind: 'free' as const,
+  spec: {
+    처리: '피복탈거 · 납처리(예비 납땜)',
+    구매: '구매품 아님 — 전선 끝 가공 지시',
+    비고: '피복 탈거 길이·납 처리 길이는 도면 비고에 적을 것.',
+  },
+  gender: 'neutral' as const,
+  pinCount: n,
+  pinLayout: grid(n, 1),
+}));
+
+/* ═══════════════════════════════════════════════════════════════════
    압착 러그 (나사 단자 · 파스톤)
    ═══════════════════════════════════════════════════════════════════
 
@@ -1028,7 +1172,7 @@ const RING_LUGS: PartLibraryItem[] = [
   ['1.25', 3], ['1.25', 4], ['1.25', 5],
   ['2', 4], ['2', 5], ['2', 6],
   ['5.5', 5], ['5.5', 6], ['5.5', 8],
-].map(([sq, stud]) => lug(
+].map(([sq, stud]) => ({ endKind: 'ring' as const, shortName: `링 압착단자 ${sq}-${stud}`, ...lug(
   `lib-lug-ring-${String(sq).replace('.', '')}-${stud}`,
   `링(O형) 압착단자 ${sq}-${stud}`,
   `${sq}-${stud}`,
@@ -1038,7 +1182,7 @@ const RING_LUGS: PartLibraryItem[] = [
     스터드: `M${stud}`,
     비고: '볼트를 빼야 끼울 수 있다. 빠질 염려가 없어 진동·전원선에 쓴다. 절연캡은 별도.',
   },
-));
+) }));
 
 /**
  * Y형(포크·스페이드) — 볼트를 풀기만 하면 옆으로 끼운다.
@@ -1048,7 +1192,7 @@ const FORK_LUGS: PartLibraryItem[] = [
   ['1.25', 3], ['1.25', 4], ['1.25', 5],
   ['2', 4], ['2', 5], ['2', 6],
   ['5.5', 5], ['5.5', 6],
-].map(([sq, stud]) => lug(
+].map(([sq, stud]) => ({ endKind: 'fork' as const, shortName: `Y형 압착단자 ${sq}-${stud}`, ...lug(
   `lib-lug-fork-${String(sq).replace('.', '')}-${stud}`,
   `Y형(포크) 압착단자 ${sq}-${stud}`,
   `${sq}-${stud}`,
@@ -1058,7 +1202,7 @@ const FORK_LUGS: PartLibraryItem[] = [
     스터드: `M${stud}`,
     비고: '볼트를 풀기만 하면 옆에서 끼운다 — 정비가 잦은 단자대용. 진동이 큰 곳은 링(O형)을 쓴다.',
   },
-));
+) }));
 
 /**
  * 페룰(봉형 압착단자) — **속 빈 원통**이다.
@@ -1084,7 +1228,10 @@ const FERRULE_SIZES: [string, string, number[]][] = [
   ['6.0', '60', [12, 18]],
 ];
 const FERRULE_LUGS: PartLibraryItem[] = FERRULE_SIZES.flatMap(([sq, code, lens]) =>
-  lens.map((len) => lug(
+  lens.map((len) => ({
+    endKind: 'ferrule' as const,
+    shortName: `페룰 E${code}${String(len).padStart(2, '0')}`,
+    ...lug(
     // 길이는 **두 자리로 채운다**. 안 채우면 0.5mm²·8mm 가 E0508 이 아니라 E058 이
     // 되어 발주가 안 되는 품번이 나온다 — 시험이 잡아 준 자리다.
     `lib-lug-ferrule-${code}${String(len).padStart(2, '0')}`,
@@ -1102,7 +1249,7 @@ const FERRULE_LUGS: PartLibraryItem[] = FERRULE_SIZES.flatMap(([sq, code, lens])
         '**절연 목깃 색은 규격(DIN 46228-4 / 프랑스식)마다 달라 구매처에서 확인할 것** — ' +
         '색으로 굵기를 판단하지 마라. 비절연 페룰도 같은 호칭으로 나온다.',
     },
-  )));
+  ) })));
 
 /**
  * 파스톤(평형) — 나사가 아니라 **탭에 끼우는** 단자.
@@ -1122,6 +1269,8 @@ const FASTON_LUGS: PartLibraryItem[] = [
      * 실제로 씌울지 말지는 도면이 정한다 — `Connector.sleeve`.
      */
     sleevePartId: `lib-lug-faston-${size}-sleeve`,
+    endKind: 'faston' as const,
+    shortName: `파스톤 ${size} REC`,
     ...lug(
     `lib-lug-faston-${size}-rec`,
     `파스톤 ${size} REC (암) ${w}mm`,
@@ -1138,7 +1287,10 @@ const FASTON_LUGS: PartLibraryItem[] = [
     },
     ),
   },
-  lug(
+  {
+  endKind: 'faston' as const,
+  shortName: `파스톤 ${size} TAB`,
+  ...lug(
     `lib-lug-faston-${size}-tab`,
     `파스톤 ${size} TAB (수) ${w}mm`,
     `${size} TAB`,
@@ -1150,6 +1302,7 @@ const FASTON_LUGS: PartLibraryItem[] = [
       비고: '전선에 압착하는 탭. 부품에 이미 달린 탭이면 발주 대상이 아니다.',
     },
   ),
+  },
   /*
    * 절연슬리브(절연캡) — REC 한 개에 하나씩 **따로 사는 물건**이다.
    *
@@ -1290,6 +1443,8 @@ export const SEED_PARTS: PartLibraryItem[] = [
   // ===== MDB =====
   {
     id: 'lib-mdb-vmc', category: 'housing', name: 'MDB VMC(마스터) 6P',
+    // lib-minifit-5557-06p 와 같은 물건 — 짧은 이름도 같다
+    shortName: 'Mini-Fit Jr. 6P',
     manufacturer: 'Molex', mpn: '39-01-2060',
     spec: {
       시리즈: 'Mini-Fit Jr 5557', 피치: '4.2mm', 정격: '9A/600V', 통신: '9600bps 9bit TTL',
@@ -1434,19 +1589,19 @@ export const SEED_PARTS: PartLibraryItem[] = [
   // 시리즈(lib-jst-*)가 이것들을 대체하지만 지우지 않았다 — 지우면 이미 이 id 로
   // 저장된 도면을 다시 배치할 수 없고, 새 id 로 옮겨 그린 커넥터와 옛 id 커넥터가
   // BOM 에서 별개 품목으로 이중 계상된다. 비고로만 갈아탈 곳을 가리킨다.
-  { id: 'lib-xh-2p', category: 'housing', name: 'JST XH 2.5 2P (구 항목)', manufacturer: 'JST',
+  { id: 'lib-xh-2p', category: 'housing', name: 'JST XH 2.5 2P (구 항목)', shortName: 'JST-XH 2P', manufacturer: 'JST',
     spec: { 피치: '2.5mm', 정격: '3A', 대체: 'lib-jst-xhp-2p (XHP-2)',
       비고: '품번 없는 옛 항목 — 신규 설계는 품번이 있는 XHP-2 항목을 쓰세요. 기존 도면 호환을 위해 남겨 둡니다.' },
     gender: 'receptacle', pinCount: 2, pinLayout: grid(2, 1) },
-  { id: 'lib-xh-4p', category: 'housing', name: 'JST XH 2.5 4P (구 항목)', manufacturer: 'JST',
+  { id: 'lib-xh-4p', category: 'housing', name: 'JST XH 2.5 4P (구 항목)', shortName: 'JST-XH 4P', manufacturer: 'JST',
     spec: { 피치: '2.5mm', 정격: '3A', 대체: 'lib-jst-xhp-4p (XHP-4)',
       비고: '품번 없는 옛 항목 — 신규 설계는 품번이 있는 XHP-4 항목을 쓰세요. 기존 도면 호환을 위해 남겨 둡니다.' },
     gender: 'receptacle', pinCount: 4, pinLayout: grid(4, 1) },
-  { id: 'lib-xh-6p', category: 'housing', name: 'JST XH 2.5 6P (구 항목)', manufacturer: 'JST',
+  { id: 'lib-xh-6p', category: 'housing', name: 'JST XH 2.5 6P (구 항목)', shortName: 'JST-XH 6P', manufacturer: 'JST',
     spec: { 피치: '2.5mm', 정격: '3A', 대체: 'lib-jst-xhp-6p (XHP-6)',
       비고: '품번 없는 옛 항목 — 신규 설계는 품번이 있는 XHP-6 항목을 쓰세요. 기존 도면 호환을 위해 남겨 둡니다.' },
     gender: 'receptacle', pinCount: 6, pinLayout: grid(6, 1) },
-  { id: 'lib-ph-4p', category: 'housing', name: 'JST PH 2.0 4P (구 항목)', manufacturer: 'JST',
+  { id: 'lib-ph-4p', category: 'housing', name: 'JST PH 2.0 4P (구 항목)', shortName: 'JST-PH 4P', manufacturer: 'JST',
     spec: { 피치: '2.0mm', 정격: '2A', 대체: 'lib-jst-phr-4p (PHR-4)',
       비고: '품번 없는 옛 항목 — 신규 설계는 품번이 있는 PHR-4 항목을 쓰세요. 기존 도면 호환을 위해 남겨 둡니다.' },
     gender: 'receptacle', pinCount: 4, pinLayout: grid(4, 1) },
@@ -1460,6 +1615,11 @@ export const SEED_PARTS: PartLibraryItem[] = [
   { id: 'lib-molex-2x5', category: 'housing', name: 'Molex 2x5 (10P)', manufacturer: 'Molex',
     spec: { 피치: '2.54mm', 비고: '시리즈 미상 · 2.54mm — 3.00mm Micro-Fit 3.0(43025-1000)과 다른 부품' },
     pinCount: 10, pinLayout: grid(5, 2) },
+
+  // ===== D-SUB · DC 배럴잭 · 납처리 전선단 (이스턴웰스 하네스 세트) =====
+  DSUB9_F,
+  DC_BARREL_F,
+  ...FREE_ENDS,
 
   // ===== Molex SPOX 2.50mm (35155 / 35312) =====
   ...MOLEX_SPOX,

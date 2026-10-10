@@ -221,6 +221,21 @@ export const SERIES: SeriesDef[] = [
     tags: ['USB'],
     match: re(/^lib-usb/),
   },
+  {
+    // 핀 번호 근거는 Amphenol 도면 CN-DSUB9SKT00-000 (1~9 전부 인쇄 — seed.ts DSUB9_F)
+    key: 'dsub',
+    family: 'interface',
+    series: 'D-SUB',
+    tags: ['DB-9', 'DB9', 'D-SUB', '디서브', 'RS-232', '시리얼'],
+    match: re(/^lib-dsub-/),
+  },
+  {
+    key: 'dc-barrel',
+    family: 'interface',
+    series: 'DC 배럴잭',
+    tags: ['DC잭', '배럴', '전원잭', '5.5', '2.1'],
+    match: re(/^lib-dc-barrel-/),
+  },
 
   /* --- 범용 --- */
   {
@@ -259,6 +274,17 @@ export const SERIES: SeriesDef[] = [
     series: 'DIN레일 단자대 (조립식)',
     tags: ['터미널블럭', '단자대', 'DIN', '레일', '스프링', '푸시인'],
     match: re(/^lib-tb-din-/),
+  },
+  {
+    /*
+     * 커넥터 없는 끝(피복탈거·납처리). 사는 물건이 아니라 가공 지시지만, 하네스의
+     * 한쪽 끝이 이것뿐이면 배선 끝점을 그릴 자리가 있어야 해서 노드로 놓는다.
+     */
+    key: 'free-end',
+    family: 'generic',
+    series: '납처리 전선단 (커넥터 없음)',
+    tags: ['납처리', '피복탈거', '전선단', '프리', '커넥터 없음'],
+    match: re(/^lib-free-end-/),
   },
   {
     key: 'splice',
