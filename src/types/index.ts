@@ -74,6 +74,23 @@ export type PartLibraryItem = {
    */
   gender?: PartGender;
 
+  /**
+   * 도면에 쓰는 짧은 이름 ("JST-XH 10P", "Micro-Fit 3.0 10P").
+   * 표시명(`name`)은 발주용이라 길다. 짧은 이름은 시리즈·핀 수처럼 **이미 아는
+   * 사실에서만** 만든다 — 없으면 도면도 `name` 을 쓴다.
+   */
+  shortName?: string;
+
+  /**
+   * 끝단 종류 (개선안 §2-9). 도면 기호를 고르는 **명시적 표시**다.
+   * 이름·품번으로 추측하지 않는다 — 없으면 일반 하우징 상자로 그린다.
+   *  · `free`    커넥터 없는 전선단(피복탈거·납처리)
+   *  · `barrel`  DC 배럴잭
+   *  · `dsub`    D-SUB
+   *  · `faston` / `ferrule` / `ring` / `fork` 단독 압착 단자
+   */
+  endKind?: 'free' | 'barrel' | 'dsub' | 'faston' | 'ferrule' | 'ring' | 'fork';
+
   // --- housing / splice / board-to-wire 전용 ---
   /** 핀 개수 */
   pinCount?: number;
