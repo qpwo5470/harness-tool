@@ -865,7 +865,22 @@ describe('절연 슬리브 품목 연결', () => {
  * 이스턴웰스 하네스 세트(data.py · build.py DS_ITEMS)에서 온 끝단 세 종.
  * 지키려는 것: data.py 에 적힌 사실만 들어갔고, 없는 품번을 만들지 않았다.
  */
-describe('D-SUB 9P 암 (Amphenol CN-DSUB9SKT00-000)', () => {
+describe('D-SUB 9P 암 — 솔더컵 · 압착 두 종', () => {
+  it('둘 다 있고 배열·뷰·원본 도면은 같다', () => {
+    const a = byId('lib-dsub-9p-f');
+    const b = byId('lib-dsub-9p-f-crimp');
+    expect(a.spec!.결선방식).toMatch(/솔더컵/);
+    expect(b.spec!.결선방식).toMatch(/압착/);
+    expect(b.layout).toEqual(a.layout);
+    expect(b.datasheet).toEqual(a.datasheet);
+    expect(a.spec!.터미널).toBeUndefined();
+    expect(b.spec!.터미널).toBe('D-SUB 암 압착 컨택트');
+    expect(b.manufacturer).toBe('미상');
+    expect(b.mpn).toBe('미상');
+  });
+});
+
+describe('D-SUB 9P 암 (배열 출처 Amphenol CN-DSUB9SKT00-000)', () => {
   const p = () => byId('lib-dsub-9p-f');
 
   it('실물 배열이 도면 판독값 그대로다 — 윗행 5·4·3·2·1 / 아랫행 9·8·7·6', () => {
@@ -879,11 +894,11 @@ describe('D-SUB 9P 암 (Amphenol CN-DSUB9SKT00-000)', () => {
     expect(p().endKind).toBe('dsub');
     expect(p().shortName).toBe('D-SUB 9P 암');
     expect(p().gender).toBe('receptacle');
-    expect(p().manufacturer).toBe('Amphenol');
+    expect(p().manufacturer).toBe('미상');
   });
 
-  it('도면 번호를 주문 품번으로 쓰지 않는다 — 품번은 미정', () => {
-    expect(p().mpn).toBe('미정');
+  it('제조사·품번은 미상 — 도면 번호는 출처로만', () => {
+    expect(p().mpn).toBe('미상');
     expect(p().spec!.도면).toMatch(/CN-DSUB9SKT00-000/);
   });
 
@@ -913,11 +928,11 @@ describe('DC 배럴잭 암 5.5/2.1', () => {
     expect(c.pins.map((x) => x.label)).toEqual(['+', '−']);
   });
 
-  it('규격은 외경 5.5 / 내경 2.1 뿐 — 품번은 미정', () => {
+  it('규격은 외경 5.5 / 내경 2.1 뿐 — 제조사·품번은 미상', () => {
     expect(p().spec!.외경).toBe('5.5mm');
     expect(p().spec!.내경).toBe('2.1mm');
-    expect(p().mpn).toBe('미정');
-    expect(p().manufacturer).toBeUndefined();
+    expect(p().mpn).toBe('미상');
+    expect(p().manufacturer).toBe('미상');
   });
 
   it('끝단 종류 barrel · 실물 배열 없음', () => {

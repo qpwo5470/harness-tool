@@ -19,6 +19,24 @@ const doc: HarnessDocument = {
   usedParts: [free, barrel],
 };
 
+describe('D-SUB 솔더컵 / 압착 — 터미널 줄', () => {
+  const mk = (spec: Record<string, string>): HarnessDocument => ({
+    ...doc,
+    connectors: [{ id: 'd', kind: 'connector', housingId: 'ds', orientation: 0, positions: {}, pins: [{ id: 'd1', index: 1 }] },
+      doc.connectors[1]],
+    wires: [{ ...doc.wires[0], from: { type: 'pin', connectorId: 'd', pinId: 'd1' } }],
+    usedParts: [{ id: 'ds', category: 'housing', name: 'D-SUB 9P 암', endKind: 'dsub', pinCount: 9, spec }, barrel],
+  });
+  it('솔더컵은 압착단자가 없다', () => {
+    expect(buildPartList(mk({ 결선방식: '솔더컵 (납땜)' })).some((r) => r.category === '터미널')).toBe(false);
+  });
+  it('압착형은 컨택트를 배선 끝마다 센다', () => {
+    const t = buildPartList(mk({ 결선방식: '압착 (컨택트 별매)', 터미널: 'D-SUB 암 압착 컨택트' })).find((r) => r.category === '터미널');
+    expect(t?.part).toBe('D-SUB 암 압착 컨택트');
+    expect(t?.qty).toBe(1);
+  });
+});
+
 describe('납땜 끝단 — 발주 집계', () => {
   it('납처리 전선단은 커넥터로 세지 않는다', () => {
     const rows = buildPartList(doc);

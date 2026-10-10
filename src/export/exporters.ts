@@ -105,6 +105,8 @@ function terminalNameAt(doc: HarnessDocument, ep: Endpoint): string | null {
   // 납처리 전선단·배럴잭은 납땜 끝단이라 압착단자가 없다. 일반 표기
   // ("… 용 터미널")로 떨어지면 있지도 않은 품목이 발주된다.
   if (housing?.endKind === 'free' || housing?.endKind === 'barrel') return null;
+  // 솔더컵 D-SUB 처럼 '결선방식' 이 납땜인 하우징도 압착단자가 없다.
+  if (/납땜/.test(housing?.spec?.['결선방식'] ?? '')) return null;
   return (
     housing?.spec?.['터미널'] ??
     (housing ? `${housing.name} 용 터미널` : null)

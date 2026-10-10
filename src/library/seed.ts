@@ -1002,46 +1002,55 @@ const MINIFIT_TERMINALS: PartLibraryItem[] = [
    출처: 이스턴웰스-하네스세트/data.py (EW-06 시리얼 A · EW-09 LED) 와
    build.py DS_ITEMS(원본 도면 캡처 캡션). 거기 적힌 것만 옮겼다.
 
-   ## 품번을 비워 둔 이유
-   - D-SUB: data.py 의 품번 칸은 `DB-9F` — 규격 호칭이지 제조사 품번이 아니다.
-     `CN-DSUB9SKT00-000` 은 핀 번호를 읽은 **Amphenol 도면 번호**다. 주문 품번이라고
-     적힌 곳이 없어 `mpn` 에 넣지 않고 `spec.도면` 에 적었다.
-   - 배럴잭: data.py 는 `5.5mm / 2.1mm` (외경/내경) 만 준다. 제조사·품번이 없다.
-   둘 다 `mpn: '미정'` — 지어내면 그대로 발주서에 실린다.
+   ## 제조사·품번은 '미상'
+   D-SUB·DC 배럴잭은 만드는 곳이 너무 많고 브랜드 없이 유통되는 것이 대부분이라
+   특정 제조사를 정하지 않는다(사용자 결정). 규격 호칭으로 사고, 제조사·품번은 '미상'.
+   - D-SUB: `CN-DSUB9SKT00-000` 은 핀 번호를 **읽어 온** Amphenol 도면일 뿐 —
+     핀 번호는 D-SUB 규격 공통이라 출처로만 남긴다(`spec.도면`).
+   - D-SUB 는 결선 방식이 둘(솔더컵 · 압착)이라 **두 부품**으로 둔다. 솔더컵은 납땜이라
+     압착단자가 없고, 압착형은 컨택트를 따로 산다(부품표 '터미널' 줄).
 */
 
 /**
  * D-SUB 9P 암. 도면 좌표(`pinLayout`)는 윗행 1~5 · 아랫행 6~9 의 2행 격자다
  * (Micro-Fit 10P 처럼 행마다 y 를 한 칸씩). 실물 배열은 `layout` 이 따로 말한다.
+ * 결선 방식만 다른 두 부품을 같은 틀에서 찍는다 — 배열·뷰·원본 도면은 같다.
  */
-const DSUB9_F: PartLibraryItem = {
-  id: 'lib-dsub-9p-f',
-  category: 'housing',
-  name: 'D-SUB 9P 암 (DB-9F)',
-  shortName: 'D-SUB 9P 암',
-  endKind: 'dsub',
-  manufacturer: 'Amphenol',
-  mpn: '미정',
-  spec: {
-    호칭: 'DB-9F (D-SUB 9P 암)',
-    열: '2열 (윗행 5 · 아랫행 4)',
-    도면: 'Amphenol CN-DSUB9SKT00-000 rev A1 — 핀 번호를 읽은 도면 번호. 주문 품번으로 확인되지 않았다',
-    제조사품번: '미정',
-    비고:
-      '결선 방식(솔더컵/크림프)·백쉘·고정 나사는 품번을 정할 때 함께 확인할 것. ' +
-      '핀 1~9 는 도면에 전부 인쇄돼 있어 그대로 읽었다(실물 배열 참조).',
-  },
-  gender: 'receptacle',
-  pinCount: 9,
-  pinLayout: [
-    ...[1, 2, 3, 4, 5].map((n, i) => ({ index: n, label: String(n), offset: { x: i, y: 0 } })),
-    ...[6, 7, 8, 9].map((n, i) => ({ index: n, label: String(n), offset: { x: i, y: 1 } })),
-  ],
-  layout: DSUB9_F_LAYOUT,
-  view: DSUB9_F_VIEW,
-  viewBrief: 'CN-DSUB9SKT00 · D쉘 넓은쪽 위 · 뷰 표기 없음',
-  datasheet: DS_DSUB9_F,
-};
+function dsub9f(kind: 'solder' | 'crimp'): PartLibraryItem {
+  const solder = kind === 'solder';
+  return {
+    id: solder ? 'lib-dsub-9p-f' : 'lib-dsub-9p-f-crimp',
+    category: 'housing',
+    name: solder ? 'D-SUB 9P 암 솔더컵 (DB-9F)' : 'D-SUB 9P 암 압착형 (DB-9F)',
+    shortName: 'D-SUB 9P 암',
+    endKind: 'dsub',
+    manufacturer: '미상',
+    mpn: '미상',
+    spec: {
+      호칭: 'DB-9F (D-SUB 9P 암)',
+      결선방식: solder ? '솔더컵 (납땜)' : '압착 (컨택트 별매)',
+      ...(solder ? {} : { 터미널: 'D-SUB 암 압착 컨택트' }),
+      열: '2열 (윗행 5 · 아랫행 4)',
+      도면: 'Amphenol CN-DSUB9SKT00-000 rev A1 — 핀 번호를 읽어 온 도면(출처). 이 제조사를 지정하는 것이 아니다',
+      제조사품번: '미상',
+      비고:
+        '제조사가 많고 무브랜드 유통이 많아 제조사·품번을 정하지 않는다. 백쉘·고정 나사는 구매 시 확인. ' +
+        '핀 1~9 는 도면에 전부 인쇄돼 있어 그대로 읽었다(실물 배열 참조).',
+    },
+    gender: 'receptacle',
+    pinCount: 9,
+    pinLayout: [
+      ...[1, 2, 3, 4, 5].map((n, i) => ({ index: n, label: String(n), offset: { x: i, y: 0 } })),
+      ...[6, 7, 8, 9].map((n, i) => ({ index: n, label: String(n), offset: { x: i, y: 1 } })),
+    ],
+    layout: DSUB9_F_LAYOUT,
+    view: DSUB9_F_VIEW,
+    viewBrief: 'CN-DSUB9SKT00 · D쉘 넓은쪽 위 · 뷰 표기 없음',
+    datasheet: DS_DSUB9_F,
+  };
+}
+const DSUB9_F = dsub9f('solder');
+const DSUB9_F_CRIMP = dsub9f('crimp');
 
 /**
  * DC 배럴잭 암 5.5/2.1 — 전선측 2극(센터 · 슬리브).
@@ -1058,14 +1067,16 @@ const DC_BARREL_F: PartLibraryItem = {
   name: 'DC 배럴잭 암 5.5/2.1',
   shortName: 'DC 배럴잭 암',
   endKind: 'barrel',
-  mpn: '미정',
+  manufacturer: '미상',
+  mpn: '미상',
   spec: {
     외경: '5.5mm',
     내경: '2.1mm',
     극: '센터(+) · 슬리브(−)',
-    제조사품번: '미정',
+    결선방식: '납땜',
+    제조사품번: '미상',
     비고:
-      '이스턴웰스 하네스 세트 EW-09(LED) 의 표기 "5.5mm / 2.1mm" 만 근거다 — 제조사·품번은 구매처에서 정할 것. ' +
+      '제조사가 많고 무브랜드 유통이 많아 제조사·품번을 정하지 않는다(규격 5.5/2.1 로 구매). ' +
       '센터(+) 극성은 그 하네스의 결선이지 규격이 아니다 — 상대 기기의 극성 표시를 확인할 것.',
   },
   gender: 'receptacle',
@@ -1618,6 +1629,7 @@ export const SEED_PARTS: PartLibraryItem[] = [
 
   // ===== D-SUB · DC 배럴잭 · 납처리 전선단 (이스턴웰스 하네스 세트) =====
   DSUB9_F,
+  DSUB9_F_CRIMP,
   DC_BARREL_F,
   ...FREE_ENDS,
 
