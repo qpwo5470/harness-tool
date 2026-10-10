@@ -100,8 +100,12 @@ function terminalNameAt(doc: HarnessDocument, ep: Endpoint): string | null {
   // 있지도 않은 부품 이름이 접속표에 뜬다("파스톤 250 REC 용 터미널").
   if (housing && isStandaloneLug(housing)) return housing.name;
   const pin = c.pins.find((p) => p.id === ep.pinId);
+  const assigned = doc.usedParts.find((p) => p.id === pin?.terminalId)?.name;
+  if (assigned) return assigned;
+  // 납처리 전선단·배럴잭은 납땜 끝단이라 압착단자가 없다. 일반 표기
+  // ("… 용 터미널")로 떨어지면 있지도 않은 품목이 발주된다.
+  if (housing?.endKind === 'free' || housing?.endKind === 'barrel') return null;
   return (
-    doc.usedParts.find((p) => p.id === pin?.terminalId)?.name ??
     housing?.spec?.['터미널'] ??
     (housing ? `${housing.name} 용 터미널` : null)
   );
@@ -168,6 +172,8 @@ export function buildPartList(doc: HarnessDocument, opts: PartListOptions = {}):
       lugNodes.set(name, (lugNodes.get(name) ?? 0) + 1);
       continue;
     }
+    // 납처리 전선단은 사는 물건이 아니다 — 피복을 벗겨 납을 먹인 전선 끝일 뿐이다.
+    if (item?.endKind === 'free') continue;
     const cur = hc.get(name) ?? { qty: 0, gender: item?.gender };
     cur.qty += 1;
     hc.set(name, cur);

@@ -84,7 +84,7 @@ vi.mock('jspdf', () => {
 
 // 목이 걸린 뒤에 불러와야 한다
 const { downloadPdf, downloadKitPdf, partLines } = await import('./pdf');
-const { paperPartRows } = await import('./pdfPages');
+const { paperPartRows, withLibraryFacts } = await import('./pdfPages');
 const {
   buildDrawing, chunk, estimateTextWidth, fitTransform, needsRaster,
   truncateToWidth, wireWidthPx, C,
@@ -406,7 +406,7 @@ describe('파트리스트', () => {
     expect(p1).toContain('부품');
     expect(p1.some((s) => s.startsWith('소계 '))).toBe(false);
     expect(p1.some((s) => s.startsWith('['))).toBe(false);
-    for (const r of paperPartRows(doc, 'mm')) expect(p1).toContain(r[0]);
+    for (const r of paperPartRows(withLibraryFacts(doc), 'mm')) expect(p1).toContain(r[0]);
     // 도면집 형식 — 커넥터는 도면 레퍼런스 + 부품명, 전선은 본당 길이
     expect(p1.some((s) => s.startsWith('J1 '))).toBe(true);
     expect(p1).toContain('전선 AWG22');
@@ -429,7 +429,7 @@ describe('파트리스트', () => {
     expect(allText()).toContain('부품 — 이어짐');
     expect(allText()).toContain('부품 · 이어짐');
     expect(allText().some((s) => /품목 · 이어짐$/.test(s))).toBe(false);
-    for (const r of paperPartRows(sampleDoc, 'mm', true)) expect(allText()).toContain(r[0]);
+    for (const r of paperPartRows(withLibraryFacts(sampleDoc), 'mm', true)) expect(allText()).toContain(r[0]);
   });
 
   /**

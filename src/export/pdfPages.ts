@@ -148,7 +148,7 @@ export function paperPartRows(doc: HarnessDocument, unit: LengthUnit, grouped = 
   } else {
     for (const c of doc.connectors) {
       const p = partOf(c.housingId);
-      rows.push([`${refs.get(c.id) ?? '?'} ${paperName(p, c.housingId)}`, '1', p?.mpn || DASH]);
+      rows.push([`${refs.get(c.id) ?? '?'} ${paperName(p, c.housingId)}`, '1', p?.mpn || p?.spec?.['처리'] || DASH]);
     }
   }
   for (const c of doc.connectors) {
