@@ -214,6 +214,84 @@ export function orderText(kit: KitDocument): string {
   return lines.join('\n');
 }
 
+// ============================================================
+// 도번 일괄 부여 — 사용자가 누를 때만, 빈 칸에만
+// ============================================================
+
+/** 하네스 하나에 새로 들어갈 값 (들어갈 것만 채운다) */
+export type DrawingNoAssignment = {
+  harnessId: Id;
+  letter: string;
+  name: string;
+  /** 새 도번 — 이미 도번이 있는 하네스는 없음 */
+  drawingNo?: string;
+  /** 세트 Rev 를 옮겨 적는 값 — `applySetRev` 이고 하네스 Rev 가 빈 때만 */
+  rev?: string;
+};
+
+/**
+ * 도번 일괄 부여 계획 — `${세트 품번}-01`, `-02` … (하네스 순서).
+ *
+ * - **이미 있는 도번은 절대 덮지 않는다.** 빈(공백뿐 포함) 하네스에만 준다.
+ * - 번호는 하네스 **자리**를 따른다(C 는 `-03`). 앞 하네스에 도번이 이미 있어도
+ *   뒤 하네스 번호가 당겨지지 않는다 — 문자와 번호가 같이 움직여야 읽기 쉽다.
+ * - 그 자리 번호를 다른 하네스가 이미 쓰고 있으면(손으로 넣은 값) 겹치게 두지 않고
+ *   하네스 수 다음의 빈 번호를 준다. 같은 도번 두 장은 도면집에서 구별할 수 없다.
+ * - 세트 품번이 비어 있으면 아무것도 계획하지 않는다(`-01` 만 있는 도번은 지어낸 값이다).
+ * - `applySetRev` 는 세트 Rev 가 있을 때, Rev 가 빈 하네스에만 그 값을 옮긴다.
+ */
+export function planDrawingNumbers(
+  kit: KitDocument, opts: { applySetRev?: boolean } = {},
+): DrawingNoAssignment[] {
+  const pn = kit.set.pn?.trim() ?? '';
+  if (!pn) return [];
+  const n = kit.harnesses.length;
+  const width = Math.max(2, String(n).length);
+  const noOf = (k: number) => `${pn}-${String(k).padStart(width, '0')}`;
+  const taken = new Set(kit.harnesses.map((h) => h.drawingNo?.trim()).filter((v): v is string => !!v));
+  const setRev = opts.applySetRev ? kit.set.rev?.trim() : undefined;
+  let spare = n + 1;
+  const out: DrawingNoAssignment[] = [];
+  kit.harnesses.forEach((h, i) => {
+    const a: DrawingNoAssignment = { harnessId: h.id, letter: h.letter ?? letterAt(i), name: h.name };
+    if (!h.drawingNo?.trim()) {
+      let no = noOf(i + 1);
+      if (taken.has(no)) {
+        while (taken.has(noOf(spare))) spare += 1;
+        no = noOf(spare);
+      }
+      taken.add(no);
+      a.drawingNo = no;
+    }
+    if (setRev && !h.rev?.trim()) a.rev = setRev;
+    if (a.drawingNo != null || a.rev != null) out.push(a);
+  });
+  return out;
+}
+
+/** 계획을 적용한 새 kit (계획에 없는 하네스·칸은 그대로) */
+export function applyDrawingNumbers(
+  kit: KitDocument, plan: DrawingNoAssignment[], now = new Date().toISOString(),
+): KitDocument {
+  if (!plan.length) return kit;
+  const by = new Map(plan.map((a) => [a.harnessId, a] as const));
+  return {
+    ...kit,
+    updatedAt: now > kit.updatedAt ? now : kit.updatedAt,
+    harnesses: kit.harnesses.map((h) => {
+      const a = by.get(h.id);
+      if (!a) return h;
+      return {
+        ...h,
+        // 계획을 세운 뒤 누가 손으로 채웠어도 덮지 않는다
+        ...(a.drawingNo != null && !h.drawingNo?.trim() ? { drawingNo: a.drawingNo } : {}),
+        ...(a.rev != null && !h.rev?.trim() ? { rev: a.rev } : {}),
+        updatedAt: now,
+      };
+    }),
+  };
+}
+
 /** 빈 하네스 하나를 세트에 추가한 새 kit 을 만든다 */
 export function withNewHarness(kit: KitDocument, h: HarnessDocument): KitDocument {
   const letter = letterAt(kit.harnesses.length);

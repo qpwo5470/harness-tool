@@ -19,7 +19,10 @@ import type {
 } from '../types';
 import { sampleDoc } from '../fixtures/sampleDoc';
 import { loadSavedKit, saveKit, emptyDoc, parseDocument } from './persistence';
-import { toKit, letterAt, withNewHarness, withoutHarness } from './kit';
+import {
+  toKit, letterAt, withNewHarness, withoutHarness, applyDrawingNumbers,
+  type DrawingNoAssignment,
+} from './kit';
 
 function touch(doc: HarnessDocument): HarnessDocument {
   return { ...doc, updatedAt: new Date().toISOString() };
@@ -515,6 +518,32 @@ if (typeof window !== 'undefined') {
       saveKit(s.kit);
     }
   });
+}
+
+/**
+ * 도번 일괄 부여 — 세트 개요의 `도번 일괄 부여` 버튼이 확인을 받은 뒤 부른다.
+ *
+ * 계획(`planDrawingNumbers`)은 화면이 먼저 세워 사용자에게 보여 준 그것을 그대로
+ * 받는다 — 확인 창에 보인 것과 실제로 들어가는 것이 달라지면 안 된다.
+ * 한 동작이므로 실행취소 한 번에 전부 돌아간다. 활성 하네스(doc)도 함께 갈아끼운다
+ * (그러지 않으면 다음 동기화가 옛 doc 으로 세트를 덮어 도번이 사라진다).
+ *
+ * `HarnessStore` 계약(types)에 넣지 않고 따로 내보낸다 — 계약 파일은 이 작업의 소유가 아니다.
+ * @returns 실제로 바뀐 하네스 수
+ */
+export function assignDrawingNumbers(plan: DrawingNoAssignment[]): number {
+  if (!plan.length) return 0;
+  let changed = 0;
+  useHarnessStore.setState((s) => {
+    const base = syncBack(s.kit, s.doc);
+    const kit = applyDrawingNumbers(base, plan);
+    changed = kit.harnesses.filter((h, i) => h !== base.harnesses[i]).length;
+    if (!changed) return s;
+    pushHistory(s);
+    const doc = kit.harnesses.find((h) => h.id === s.doc.id) ?? s.doc;
+    return { kit, doc };
+  });
+  return changed;
 }
 
 /** 세트 문자 재부여가 필요한 곳에서 쓰는 재노출 */

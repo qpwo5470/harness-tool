@@ -352,7 +352,66 @@
   border-radius: var(--radius);
 }
 .so-pn:hover, .so-pn:focus { border-color: var(--line-mid); }
-.so-rev { font-size: var(--fs-cap); color: var(--muted); flex-shrink: 0; }
+.so-rev { display: flex; align-items: center; font-size: var(--fs-cap); color: var(--muted); flex-shrink: 0; }
+.so-rev-input {
+  width: 34px;
+  height: 22px;
+  padding: 0 3px;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg-canvas);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+}
+.so-rev-input:hover, .so-rev-input:focus { border-color: var(--line-mid); }
+
+/* 도번 일괄 부여 — 버튼 + 확인 목록 */
+.so-dno { display: flex; align-items: center; gap: 8px; margin-bottom: 3px; }
+.so-dno-btn {
+  flex-shrink: 0;
+  height: 24px;
+  padding: 0 9px;
+  font: inherit;
+  font-size: var(--fs-table);
+  color: var(--text-2);
+  background: var(--bg-canvas);
+  border: 1px solid var(--line-mid);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.so-dno-btn:hover:not(:disabled) { background: var(--accent-tint); }
+.so-dno-btn:disabled { color: var(--muted); cursor: default; }
+.so-dno-hint {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-sub);
+  color: var(--muted);
+}
+.so-dno-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 3px;
+  padding: 8px;
+  background: var(--bg-canvas);
+  border: 1px solid var(--accent);
+}
+.so-dno-q { margin: 0; font-size: var(--fs-table); color: var(--text); }
+.so-dno-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 2px; }
+.so-dno-list li { display: flex; align-items: center; gap: 8px; height: 22px; }
+.so-dno-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-table);
+}
+.so-dno-val { font-size: var(--fs-table); font-weight: 700; color: var(--accent-dark); }
+.so-dno-rev { display: flex; align-items: center; gap: 6px; font-size: var(--fs-table); color: var(--text-2); }
+.so-dno-btns { display: flex; gap: 6px; }
 
 .so-set-k { width: 40px; flex-shrink: 0; font-size: var(--fs-body); color: var(--text-2); }
 .so-set-unit { font-size: var(--fs-table); color: var(--text-3); }

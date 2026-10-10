@@ -492,3 +492,72 @@ describe('세트 패널', () => {
     expect((screen.getByText('접속표') as HTMLButtonElement).disabled).toBe(true);
   });
 });
+
+describe('도번 일괄 부여', () => {
+  function kitWithBlanks(): KitDocument {
+    const k = makeKit();
+    return {
+      ...k,
+      harnesses: k.harnesses.map((x) => (x.id === 'hB' ? x : { ...x, drawingNo: undefined })),
+    };
+  }
+  const showAssign = (kit: KitDocument) => {
+    const onAssign = vi.fn();
+    const cb = spies();
+    render(<SetOverview kit={kit} activeHarnessId="hA" {...cb} onAssignDrawingNos={onAssign} />);
+    return onAssign;
+  };
+
+  it('누르기 전에는 아무것도 넣지 않고, 확인 창에 들어갈 값을 보여 준 뒤 부여한다', () => {
+    const onAssign = showAssign(kitWithBlanks());
+    expect(onAssign).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: '도번 일괄 부여' }));
+    const dlg = screen.getByRole('dialog', { name: '도번 일괄 부여 확인' });
+    // B 는 이미 HRN-2408-02 — 목록에 없다. A·C 만 자리 번호로
+    expect(within(dlg).getByText('KIT-2408-01')).toBeTruthy();
+    expect(within(dlg).getByText('KIT-2408-03')).toBeTruthy();
+    expect(within(dlg).queryByText(/KIT-2408-02/)).toBeNull();
+    fireEvent.click(within(dlg).getByRole('button', { name: '부여' }));
+    expect(onAssign).toHaveBeenCalledTimes(1);
+    const plan = onAssign.mock.calls[0][0] as { harnessId: string; drawingNo?: string; rev?: string }[];
+    expect(plan.map((a) => [a.harnessId, a.drawingNo, a.rev])).toEqual([
+      ['hA', 'KIT-2408-01', undefined],
+      ['hC', 'KIT-2408-03', undefined],
+    ]);
+  });
+
+  it('세트 Rev 는 체크해야만 함께 적는다', () => {
+    const onAssign = showAssign(kitWithBlanks());
+    fireEvent.click(screen.getByRole('button', { name: '도번 일괄 부여' }));
+    fireEvent.click(screen.getByLabelText(/세트 Rev\.B 도 적기/));
+    const dlg = screen.getByRole('dialog', { name: '도번 일괄 부여 확인' });
+    expect(within(dlg).getByText('KIT-2408-01 · Rev.B')).toBeTruthy();
+    fireEvent.click(within(dlg).getByRole('button', { name: '부여' }));
+    const plan = onAssign.mock.calls[0][0] as { rev?: string }[];
+    // Rev 가 빈 하네스 셋 모두 — B 는 도번은 그대로, Rev 만
+    expect(plan.map((a) => a.rev)).toEqual(['B', 'B', 'B']);
+  });
+
+  it('취소하면 아무것도 넣지 않는다', () => {
+    const onAssign = showAssign(kitWithBlanks());
+    fireEvent.click(screen.getByRole('button', { name: '도번 일괄 부여' }));
+    fireEvent.click(screen.getByRole('button', { name: '취소' }));
+    expect(onAssign).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('세트 품번이 없거나 모두 도번이 있으면 버튼이 꺼져 있다', () => {
+    const k = kitWithBlanks();
+    showAssign({ ...k, set: { ...k.set, pn: '' } });
+    expect((screen.getByRole('button', { name: '도번 일괄 부여' }) as HTMLButtonElement).disabled).toBe(true);
+    cleanup();
+    showAssign(makeKit());
+    expect((screen.getByRole('button', { name: '도번 일괄 부여' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('세트 Rev 를 고칠 수 있다', () => {
+    const { cb } = show();
+    fireEvent.change(screen.getByLabelText('세트 Rev'), { target: { value: 'C' } });
+    expect(cb.onChangeSet).toHaveBeenCalledWith({ rev: 'C' });
+  });
+});

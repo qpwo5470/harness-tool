@@ -2,8 +2,10 @@ import { describe, it, expect } from 'vitest';
 import type { HarnessDocument } from '../types';
 import { sampleDoc } from '../fixtures/sampleDoc';
 import {
-  COLOR_NOTE, collectDatasheets, colorLabel, endsText, noteText, padNet, withLibraryFacts, wrapText,
+  COLOR_NOTE, collectDatasheets, colorLabel, coverRows, endsText, lengthCell, noteText, padNet,
+  paperName, paperPartRows, withLibraryFacts, wrapText,
 } from './pdfPages';
+import { toKit } from '../store/kit';
 
 describe('pdfPages — 종이 표기', () => {
   it('NET 코드는 두 자리로 (N1 → N01), 두 자리 이상은 그대로', () => {
@@ -65,5 +67,57 @@ describe('pdfPages — 라이브러리 사실 채우기', () => {
   it('구매품은 부록 대상이 아니다', () => {
     const d = withLibraryFacts(docWith('lib-jst-xhp-10p', 'XHP-10'));
     expect(collectDatasheets([{ ...d, purchased: true }])).toEqual([]);
+  });
+});
+
+describe('pdfPages — 짧은 이름(shortName) · 길이 칸', () => {
+  const shortDoc = (shortName: string): HarnessDocument => ({
+    ...sampleDoc,
+    usedParts: sampleDoc.usedParts.map((p) => (p.id === 'lib-xh-4p' ? { ...p, shortName } : p)),
+  });
+
+  it('부품표 커넥터 줄은 shortName 이 있으면 그것으로 (도면집 `J1 JST-XH 10P` 형식)', () => {
+    for (const grouped of [false, true]) {
+      const names = paperPartRows(shortDoc('JST-XH 4P'), 'mm', grouped).map((r) => String(r[0]));
+      expect(names.some((n) => /^J\d.* JST-XH 4P$/.test(n))).toBe(true);
+      // 커넥터 줄만 본다 — 단자 미지정 줄(`… 용 터미널`)은 파트리스트 집계의 이름을 따른다
+      expect(names.some((n) => /^J\d+ JST XH 2\.5 4P$/.test(n))).toBe(false);
+    }
+  });
+
+  it('shortName 이 없거나 공백뿐이면 라이브러리 이름 그대로 (지어내지 않는다)', () => {
+    for (const d of [sampleDoc, shortDoc('   ')]) {
+      const names = paperPartRows(d, 'mm').map((r) => String(r[0]));
+      expect(names.some((n) => n.endsWith(' JST XH 2.5 4P'))).toBe(true);
+    }
+    expect(paperName(undefined, 'lib-x')).toBe('lib-x');
+  });
+
+  it('끝단 구성(표지)도 shortName 을 쓴다', () => {
+    expect(endsText(shortDoc('JST-XH 4P'))).toContain('JST-XH 4P');
+    const kit = toKit(shortDoc('JST-XH 4P'));
+    expect(String(coverRows(kit, 'mm')[0][2])).toContain('JST-XH 4P');
+  });
+
+  it('스냅샷에 적힌 shortName 은 라이브러리 보충이 덮지 않는다', () => {
+    const d: HarnessDocument = {
+      ...sampleDoc,
+      connectors: [{ ...sampleDoc.connectors[0], housingId: 'lib-jst-xhp-10p' }],
+      usedParts: [{ id: 'lib-jst-xhp-10p', category: 'housing', name: 'snap', mpn: 'XHP-10', shortName: '내 이름' }],
+    };
+    expect(withLibraryFacts(d).usedParts[0].shortName).toBe('내 이름');
+  });
+
+  it('길이 칸 — 하나면 그 값, 여럿이면 범위, 일부만 알면 그 사실을 밝힌다, 모르면 미상', () => {
+    const w0 = sampleDoc.wires[0];
+    const only = (lens: (number | undefined)[]): HarnessDocument => ({
+      ...sampleDoc,
+      cables: [],
+      wires: lens.map((mm, i) => ({ ...w0, id: `w${i}`, cableId: undefined, lengthMm: mm })),
+    });
+    expect(lengthCell(only([1600, 1600]), 'mm')).toBe('1600');
+    expect(lengthCell(only([200, 1800]), 'mm')).toBe('200~1800');
+    expect(lengthCell(only([200, undefined]), 'mm')).toBe('200 (일부 미상)');
+    expect(lengthCell(only([undefined]), 'mm')).toBe('미상');
   });
 });
