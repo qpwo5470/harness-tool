@@ -44,10 +44,20 @@ function haystack(p: PartLibraryItem): string {
   return norm([p.id, p.name, p.shortName ?? '', p.mpn ?? '', p.manufacturer ?? '', ...searchTagsOf(p)].join(' '));
 }
 
-/** 한 줄 요약: id · 짧은이름 · 핀수 · 성별 · 끝단종류 */
-export function partLine(p: PartLibraryItem): string {
+/**
+ * 한 줄 요약: id · 짧은이름 · 핀수 · 성별 · 끝단종류.
+ * `full` 이면 짧은이름 대신 이름 — 같은 짧은이름이 여럿일 때(솔더컵/압착 D-SUB 등) 구분용.
+ */
+export function partLine(p: PartLibraryItem, full = false): string {
   const pins = p.pinCount != null ? `${p.pinCount}P` : '-';
-  return [p.id, shortOf(p), pins, p.gender ?? '-', p.endKind ?? '-'].join(' · ');
+  return [p.id, full ? p.name : shortOf(p), pins, p.gender ?? '-', p.endKind ?? '-'].join(' · ');
+}
+
+/** 목록 안에서 짧은이름이 겹치는 것은 이름으로 적는다 */
+export function partLines(ps: PartLibraryItem[]): string[] {
+  const n = new Map<string, number>();
+  for (const p of ps) n.set(shortOf(p), (n.get(shortOf(p)) ?? 0) + 1);
+  return ps.map((p) => partLine(p, (n.get(shortOf(p)) ?? 0) > 1));
 }
 
 export class PartLookupError extends Error {

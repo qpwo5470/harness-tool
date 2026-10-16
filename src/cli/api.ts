@@ -25,7 +25,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export { DslError, parseScript, tokenize, changesLine } from './dsl';
-export { resolvePart, partLine, PartLookupError } from './parts';
+export { resolvePart, partLine, partLines, PartLookupError } from './parts';
 export { autoLayout } from './layout';
 export { ensureKoreanCanvas } from './nodeCanvas';
 export type { ApplyResult, ApplyOptions };

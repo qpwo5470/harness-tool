@@ -10,7 +10,7 @@ import { join, basename, extname, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   loadDoc, saveDoc, newDoc, applyScript, summarize, summaryText, validateDoc, checkText,
-  pdfBytes, csvFiles, bomText, bomRows, searchLib, partLine, changesLine, pickHarnesses,
+  pdfBytes, csvFiles, bomText, bomRows, searchLib, partLines, changesLine, pickHarnesses,
   docJson,
 } from './api';
 import { validateHarness } from '../store/validate';
@@ -137,7 +137,7 @@ export async function run(
             gender: p.gender ?? null, endKind: p.endKind ?? null, category: p.category,
           })), '');
         } else {
-          const lines = shown.map(partLine);
+          const lines = partLines(shown);
           if (hits.length > shown.length) lines.push(`… ${hits.length - shown.length} more (--all)`);
           io.out(lines.length ? lines.join('\n') : 'no parts match');
         }
