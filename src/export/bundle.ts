@@ -30,6 +30,11 @@ import { buildZip } from './zip';
 export type ExportEntry = { name: string; data: Uint8Array<ArrayBuffer>; mime: string };
 
 const CSV_MIME = 'text/csv;charset=utf-8;';
+/**
+ * CSV 파일 앞의 UTF-8 BOM. 엑셀은 BOM 이 없으면 CSV 를 시스템 코드페이지로 읽어
+ * 한글이 깨진다(더블클릭으로 열 때). 본문 문자열이 아니라 **파일**에만 붙인다.
+ */
+export const BOM = '\uFEFF';
 const JSON_MIME = 'application/json';
 const PDF_MIME = 'application/pdf';
 const ZIP_MIME = 'application/zip';
@@ -130,7 +135,7 @@ async function bodyOf(
   // 콜백 안에서도 좁혀진 타입이 유지되도록 지역 const 로 받는다
   const src = f.source;
   // 세트 BOM 은 종별 수량표라 길이가 없다 — 단위도 여유율도 걸리지 않는다.
-  if (src.of === 'bomCsv') return encode(kitBomToCsv(buildKitBom(kit)));
+  if (src.of === 'bomCsv') return encode(BOM + kitBomToCsv(buildKitBom(kit)));
   if (src.of === 'json') {
     // 문서 JSON 은 "다시 열기용" 스냅샷이다. 표시 옵션으로 값을 바꾸면 그 파일을
     // 다시 열었을 때 도면 치수가 달라진다 — 저장값은 언제나 mm 원본이다.
@@ -141,10 +146,10 @@ async function bodyOf(
   const h = kit.harnesses.find((x) => x.id === src.harnessId);
   if (!h) throw new Error('세트에서 하네스를 찾지 못했습니다');
   if (src.of === 'runsCsv') {
-    return encode(runListToCsv(buildRunList(h), { cols: plan.csvCols, unit }));
+    return encode(BOM + runListToCsv(buildRunList(h), { cols: plan.csvCols, unit }));
   }
   if (src.of === 'partsCsv') {
-    return encode(toCsv(buildPartList(h, { unit }), { unit, marginPct: plan.marginPct ?? 0 }));
+    return encode(BOM + toCsv(buildPartList(h, { unit }), { unit, marginPct: plan.marginPct ?? 0 }));
   }
   if (!pdfMod) throw new Error('PDF 모듈을 불러오지 못했습니다');
   // 세트당 수량은 `HarnessSet` 이 안다 — 제목블록 3행과 도면 위 치수 표기가

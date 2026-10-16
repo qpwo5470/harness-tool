@@ -107,6 +107,21 @@ export function isLugConnector(h: HarnessDocument, housingId: Id): boolean {
   return part != null && isStandaloneLug(part);
 }
 
+/**
+ * 이 커넥터의 핀에 **압착단자를 따로 지정할 일이 없는가**.
+ *
+ * 단독 러그(그 자신이 단자) · 납처리 전선단 · DC 배럴잭 · 결선방식이 납땜인 하우징
+ * (솔더컵 D-SUB 등). 파트리스트(export/exporters.terminalNameAt)가 단자 줄을 만들지
+ * 않는 것과 **같은 판정**이어야 한다 — 갈리면 발주에는 없는 단자를 검증이 요구한다.
+ */
+export function needsNoTerminal(h: HarnessDocument, housingId: Id): boolean {
+  const part = h.usedParts.find((p) => p.id === housingId);
+  if (!part) return false;
+  if (isStandaloneLug(part)) return true;
+  if (part.endKind === 'free' || part.endKind === 'barrel') return true;
+  return /납땜/.test(part.spec?.['결선방식'] ?? '');
+}
+
 export function statsOf(h: HarnessDocument): HarnessStats {
   // 배선된 핀만 센다 — 안 쓰는 핀에 단자를 요구하면 잘못된 경고가 된다.
   const usedPins = new Set<string>();
@@ -123,7 +138,7 @@ export function statsOf(h: HarnessDocument): HarnessStats {
      * 빼지 않으면 러그로 끝나는 하네스가 전부 "터미널 미지정" 으로 잡혀
      * 발주가 막힌다(blockersOf 가 이 수를 그대로 쓴다) — 고칠 방법도 없다.
      */
-    if (isLugConnector(h, c.housingId)) continue;
+    if (needsNoTerminal(h, c.housingId)) continue;
     for (const p of c.pins) {
       if (usedPins.has(`${c.id}:${p.id}`) && !p.terminalId) missingTerminal++;
     }

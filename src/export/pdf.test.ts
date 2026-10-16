@@ -419,7 +419,7 @@ describe('파트리스트', () => {
     const p1 = textsOnPage(1);
     expect(p1).toContain('비고');
     expect(p1.some((s) => s.includes('2본 1조.'))).toBe(true);
-    expect(p1.join(' ')).toContain('사내 배정.');
+    expect(p1.join(' ')).toContain('제작 측 배정.');
   });
 
   /** 넘치면 이어지는 면으로 — 부품표도 행을 버리지 않는다 */

@@ -389,7 +389,7 @@ export type HarnessDocument = {
 
   /**
    * 도면 **비고** — PDF 부품표 아래 `비고` 칸에 그대로 찍힌다.
-   * 비고 칸에는 이 글 뒤에 "전선 색상은 규격 지정 사항이 아님 — 사내 배정." 이
+   * 비고 칸에는 이 글 뒤에 "전선 색상은 규격 지정 사항이 아님 — 제작 측 배정." 이
    * 언제나 붙는다(export/pdfPages.ts). optional — schemaVersion 은 그대로.
    */
   note?: string;

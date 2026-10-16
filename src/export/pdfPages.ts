@@ -26,7 +26,7 @@ import {
 type Page = { w: number; h: number };
 
 /** 비고 칸 끝에 **언제나** 붙는 문장 — 색은 어느 규격에도 지정이 없다 */
-export const COLOR_NOTE = '전선 색상은 규격 지정 사항이 아님 — 사내 배정.';
+export const COLOR_NOTE = '전선 색상은 규격 지정 사항이 아님 — 제작 측 배정.';
 
 const DASH = '—';
 

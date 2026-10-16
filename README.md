@@ -109,8 +109,13 @@ splice SP1 3                               # 3방향 스플라이스
 device D1 "24V PSU" terminals=+24V,GND     # 장치 블록과 단자
 wire D1.+24V J1.1 red awg20
 wire J1.2 J2.2 white awg22 len=800 stripe=black label=TX signal=TX
+term J1 "SXH-001T-P0.6"                    # 단자 지정 (핀 범위 J1.1-3 도, - 는 해제)
+layout                                     # 현재 하네스 자동 배치 다시
 del wire J1.1 J2.1 | del conn J1 | del harness "이름"
 ```
+
+- 같은 스크립트를 다시 적용하면 새로 추가하지 않고 **고친다**(같은 하네스 이름 · ref · 두 핀).
+- 한 줄이라도 틀리면 아무것도 저장하지 않는다. `apply --dry-run` 으로 미리 볼 수 있다.
 
 색 이름은 웹과 같은 영문(`red`, `black`, `white` …), 굵기는 `awg22` 또는 `sq0.5`.
 CLI 로 만든 JSON 은 웹 앱에서 **JSON 불러오기** 로 그대로 열린다(반대도 같다).

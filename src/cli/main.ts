@@ -221,7 +221,7 @@ export async function run(
         const written = files.map((f) => {
           const p = join(dir, f.name);
           // 웹 내보내기와 같은 바이트 그대로 (BOM 을 붙이지 않는다)
-          writeFileSync(p, f.text);
+          writeFileSync(p, '\uFEFF' + f.text); // 엑셀에서 한글이 깨지지 않게 BOM
           return p;
         });
         emit({ files: written }, written.join('\n'));

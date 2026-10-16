@@ -48,8 +48,14 @@ device D1 "24V PSU" terminals=+24V,GND
 wire J1.1 J2.1 red awg22 len=1600 stripe=white label=TX signal=TX
 wire J1.1-10 J2.1-10 colors=red,black,white,green,yellow,blue,orange,purple,gray,brown awg24 len=1600
 wire D1.+24V J1.1 red awg20
+term J1 "SXH-001T-P0.6"                         # 단자 지정 (J1.1-3 처럼 핀 범위도, - 는 해제)
+layout                                          # 현재 하네스 자동 배치 다시
 del wire J1.1 J2.1 | del conn J1 | del harness "이름"
 ```
+
+- 같은 스크립트를 다시 apply 하면 **덮어쓴다**(같은 이름 하네스·같은 ref·같은 두 핀 배선은 수정).
+- 한 줄이라도 틀리면 **아무것도 저장하지 않고** 줄 번호와 함께 오류를 낸다. `--dry-run` 으로 미리 확인.
+- 단자는 하우징 스펙이 맞는 컨택트를 하나로 정해 줄 때만 자동 지정되고 `note:` 줄로 알린다.
 
 - 위치는 자동 배치(선언 순서대로 좌/우 열). 필요할 때만 `at=x,y`.
 - 색은 영문(red, black, white, green, yellow, blue, orange, brown, purple, gray, pink…).
@@ -89,7 +95,7 @@ pdftoppm -f 1 -l 1 -r 60 -png out.pdf /tmp/hz-p      # 1쪽만 60dpi → /tmp/hz
 ```
 
 - 글자를 읽어야 하면 해당 영역만 `-r 100` 정도로. 150dpi 이상은 거의 필요 없다.
-- 텍스트만 확인할 때는 `pdftotext -f 1 -l 1 out.pdf - | head -40` 이 더 싸다.
+- 한글 글자는 이미지로 들어가 `pdftotext` 로는 안 보인다(영문·숫자만 나온다). 내용 확인은 `show`·`check` 로.
 - 한글이 네모(□)로 나오면 `@napi-rs/canvas` 가 없는 것 — 위 1절 참고.
 
 ## 7. 사용자에게 넘길 때
