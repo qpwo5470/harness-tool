@@ -24,6 +24,11 @@ body {
   letter-spacing: .01em; color: var(--text); white-space: nowrap;
 }
 .topbar .spacer { flex: 1; }
+/* 도움말 — 버튼이 아니라 바깥 링크(README)라 밑줄만 없앤 글자로 둔다 */
+.topbar .topbar-help {
+  font-size: var(--fs-table); color: var(--text-3); text-decoration: none; white-space: nowrap;
+}
+.topbar .topbar-help:hover { color: var(--accent); text-decoration: underline; }
 .topbar button {
   height: var(--h-control); padding: 0 10px; font: inherit; font-size: var(--fs-table);
   border: 1px solid var(--line-mid); background: #fff; color: var(--text-2);
