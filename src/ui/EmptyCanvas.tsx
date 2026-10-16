@@ -11,10 +11,13 @@ export function EmptyCanvas({
   onFocusLibrary,
   onNewPart,
   onImport,
+  onSample,
 }: {
   onFocusLibrary: () => void;
   onNewPart: () => void;
   onImport: () => void;
+  /** 처음 온 사람이 '새 문서' 뒤에도 완성된 예시를 다시 볼 수 있게 */
+  onSample?: () => void;
 }) {
   return (
     <div className="ec-wrap">
@@ -60,6 +63,7 @@ export function EmptyCanvas({
           <div className="ec-sub">
             <button onClick={onNewPart}>새 부품 정의</button>
             <button onClick={onImport}>JSON 불러오기</button>
+            {onSample && <button onClick={onSample}>샘플 문서 열기</button>}
           </div>
         </div>
 

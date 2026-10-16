@@ -1,173 +1,221 @@
 # 하네스 설계 툴
 
-와이어 하네스 배선도 · 파트리스트 설계 웹 툴 (사내). React + TS + React Flow, 백엔드 없음, GitHub Pages 배포.
+와이어 하네스의 **배선도 · 접속표(From-To) · 파트리스트(BOM)** 를 브라우저에서 그리는 무료 웹 툴.
+설치도 로그인도 없다. 데이터는 내 브라우저와 내가 저장한 JSON 파일에만 있다(서버 없음).
 
-**라이브** https://qpwo5470.github.io/harness-tool/
+**▶ 바로 쓰기: https://qpwo5470.github.io/harness-tool/**
 
-## 📌 이어서 작업한다면 먼저 읽을 것
+*English summary is [below](#english).*
 
-| 문서 | 내용 |
-|---|---|
-| **[docs/인수인계.md](docs/인수인계.md)** | 구조·설계 판단·환경 함정. **여기부터 읽으세요** |
-| **[docs/검증-체크리스트.md](docs/검증-체크리스트.md)** | 브라우저에서 손으로 확인할 항목 |
+- 커넥터를 놓고 핀과 핀을 끌어 이으면 접속표·파트리스트·압착단자 수량이 함께 채워진다
+- 하네스 여러 종을 **세트**로 묶어 발주 수량까지 계산 (예: 장비 1대분 = A×1 + B×2 + C×1)
+- PDF 도면(제목블록·부품표·커넥터 핀 번호 부록), 접속표/파트리스트 CSV, ZIP 일괄 내보내기
+- JST · Molex · 연호 · RJ45 · USB · 러그 · 페룰 · 단자대 등 시드 부품 300여 종 + 핀맵 에디터로 내 부품 정의
+- 설계 검증: 끊어진 배선, 같은 핀 중복, 길이 충돌 등 발주 전에 잡을 실수를 알려 준다
+- 명령줄(CLI)·JS API 로도 같은 문서를 만들고 PDF 를 낼 수 있다 — 스크립트·AI 에이전트용
 
-> ⚠️ **시험이 통과한다고 도면이 맞는 것은 아니다.**
-> 자동화 시험 913개가 통과하지만, 지금까지 잡은 결함의 **절반은 시험이 전부
-> 통과하는 상태에서 화면·산출물만 틀린 부류**였다 — 레인이 화면에 반영되지 않음,
-> PDF 가 화면과 다른 그림, 배선이 박스·이름표 뒤로 사라짐, 27개 중 1개만 받아짐.
-> 코드를 고쳤으면 **검증 체크리스트를 실제로 눌러 보고**, 도면·PDF·CSV 를 눈으로 봐라.
-> 자세한 배경은 인수인계 §10.
+## 30초 시작 (웹)
 
-## 설치 시 주의
+1. [웹 앱](https://qpwo5470.github.io/harness-tool/)을 연다. 처음 열면 **샘플 하네스**가 들어 있다.
+   비어 있는 화면이면 가운데의 **샘플 문서 열기** 를 누른다.
+2. 상단 **새 문서** → 왼쪽 라이브러리에서 커넥터를 검색(`XH`, `Micro-Fit`, `RJ45`…)해 캔버스로 끌어 놓는다.
+3. 한 커넥터의 핀에서 다른 커넥터의 핀으로 끌어 배선한다. 배선을 누르면 오른쪽 **속성** 탭에서
+   색 · 굵기(AWG/mm²) · 길이를 정한다.
+4. 오른쪽 **접속표 · 파트 · 검증** 탭을 확인하고, 상단 **도번 · Rev** 를 채운다.
+5. **PDF 도면** 을 누르면 A4 도면이 내려받아진다.
 
-```bash
-npm ci --include=dev      # ← --include=dev 없으면 tsc 가 안 깔린다
-```
+## 저장 · 불러오기
 
-이 Mac 셸에는 `NODE_ENV=production` 이 상시 설정돼 있어 devDependencies 가
-통째로 건너뛰어진다. 자세한 내용은 인수인계 8-1 참고.
+- 작업은 브라우저(localStorage)에 **자동 저장**된다. 새로고침해도 남지만, 브라우저 데이터를 지우면 사라진다.
+- 오래 보관하거나 남에게 넘길 때는 **내보내기 ▾ → JSON 저장 (세트 전체)**. 그 파일 하나에 세트·하네스·
+  직접 만든 부품 정의까지 들어 있어 다른 컴퓨터에서 **JSON 불러오기** 로 그대로 재현된다.
+- 옛 버전 파일도 불러올 때 고칠 것만 고치고 무엇을 고쳤는지 알려 준다.
 
-## 바로 보기 (배포 없이)
+## 출력 — PDF · CSV
 
-```bash
-./미리보기.sh          # 빌드 후 http://localhost:4173 에서 열림
-```
-
-또는 개발 서버:
-
-```bash
-npm install
-npm run dev
-```
-
-> 빌드 결과물(`dist`)을 파일 더블클릭으로 여는 건 안 됩니다(ES 모듈 CORS 제한).
-> 반드시 위 스크립트나 `npm run dev`로 서버를 통해 열어주세요.
-
-## 실행 명령
-
-```bash
-npm run dev        # 개발 서버
-npm run build      # 타입체크 + 프로덕션 빌드
-npm run typecheck  # 타입만 검사
-npm test           # 유닛 + 렌더 스모크 테스트
-```
-
-## 배포 (GitHub Pages)
-
-```bash
-./deploy.sh https://github.com/내계정/harness-tool.git
-```
-
-스크립트가 검증(타입체크→테스트→빌드) 후 push까지 해줍니다.
-그다음 **GitHub 레포 → Settings → Pages → Source 를 `GitHub Actions`로 변경**하면
-Actions가 자동 배포하고 URL이 생깁니다.
-
-이후에는 `main`에 push할 때마다 자동 배포 + 배포 스모크(200 확인)가 돕니다.
-(`vite.config.ts`의 `base: './'` 라 프로젝트 사이트 `/reponame/` 경로에서도 동작)
-
-## 구조 = 폴더 소유권 (멀티에이전트)
-
-Wave 0(계약)은 동결됨. 각 에이전트는 **자기 폴더만** 수정한다.
-
-| 경로 | 소유 | 상태 |
+| 출력 | 위치 | 내용 |
 |---|---|---|
-| `src/types/` | 리드 | **동결** — 공유 타입 계약. 변경 시 `schemaVersion` ↑ |
-| `src/store/` | 리드 | 스토어 계약 구현(Zustand). 이 훅으로만 문서 접근 |
-| `src/fixtures/` | 리드 | 스키마 검증 샘플 문서 |
-| `src/canvas/` | **Agent A** | 배선 캔버스 (React Flow) |
-| `src/library/` | **Agent B** | 부품 라이브러리 |
-| `src/panels/` | **Agent C** | 속성 패널 (와이어/장치 편집) |
-| `src/export/` | **Agent D** | PDF 배선도 · 파트리스트 |
-| `src/App.tsx`, `App.css` | 리드 | 앱 셸 / 통합(Wave 2) |
+| PDF 도면 | 상단 **PDF 도면** | 현재 하네스 1장 — 배선도 · 부품표 · 제목블록, 필요하면 커넥터 핀 번호 부록 |
+| 세트 PDF / ZIP | **내보내기 ▾ → 내보내기 설정…** | 도면 목록 + 하네스별 도면 + 접속표·파트리스트 CSV + 문서 JSON, 여러 파일이면 ZIP 하나 |
+| 접속표 CSV | 내보내기 ▾ / 접속표 탭 | 네트 · From · To · 색 · 굵기 · 길이 (현장 제작용) |
+| 파트리스트 CSV | 내보내기 ▾ | 커넥터 · 압착단자 · 전선 · 케이블 집계 (발주용) |
 
-## 구현 현황
+CSV 는 UTF-8 이다. 엑셀에서 한글이 깨지면 *데이터 → 텍스트/CSV 가져오기* 로 UTF-8 을 지정해 연다.
 
-**Wave 0 — 파운데이션**
-- 공유 타입 동결(strict), `HarnessStore` 계약 Zustand 구현
-- 픽스처, 문서→React Flow 파이프라인, 논리/물리 뷰 토글
-- GitHub Pages 배포 + PR CI + 배포 스모크
+## 명령줄(CLI) · JS API
 
-**Agent A — 캔버스** (`src/canvas/`)
-- 커스텀 핀 노드: 논리 뷰(핀 세로목록) / 물리 뷰(하우징 좌표 + 방향 회전)
-- 드래그로 핀↔핀 결선 → Wire 생성, 노드 위치 뷰별 저장, 미니맵
-- **네트 하이라이트**: 선택 시 스플라이스 너머까지 이어진 경로가 굵게, 나머지는 흐리게
+GUI 없이 셸·스크립트·AI 에이전트에서 같은 문서(JSON)를 만들고, 검증하고, PDF/CSV 를 낸다.
+파일 하나(`harness.mjs`, Node 18+, 의존성 없음)라 받기만 하면 된다.
 
-**Agent B — 라이브러리** (`src/library/`)
-- **시드 부품 329종.** 분류는 `taxonomy.ts` 가 단일 출처이며 축이 **두 단계 하나씩**이다
-  (인수인계 §3-10). 계열 5칸 → 시리즈 `제조사 · 시리즈 · 피치`
+```bash
+curl -fsSLO https://qpwo5470.github.io/harness-tool/harness.mjs && node harness.mjs help
+```
 
-| 계열 | 시리즈 |
+**한글 PDF** 는 글자를 캔버스로 그려 넣어야 해서 `@napi-rs/canvas` 가 필요하다. 없으면 멈추지 않고 설치 안내를 출력한다.
+
+```bash
+npm i -g @napi-rs/canvas      # 또는 작업 폴더에서 npm i @napi-rs/canvas
+# 다른 곳에 깔려 있으면: HARNESS_CANVAS=/경로/node_modules/@napi-rs/canvas
+```
+
+### 명령
+
+```
+harness help [명령]
+harness lib [검색어] [--json]              부품 검색 — 한 줄: id · 짧은이름 · 핀수 · 성별 · 끝단종류
+harness new <doc.json> [--name 이름] [--kit] [--pn 세트품번]
+harness apply <doc.json> <script.txt | ->  DSL 적용 후 저장. 출력: 바뀐 개수 + 검증 요약 1줄
+harness show <doc.json> [-h 하네스]        요약: 하네스 목록 / 커넥터 표 / 배선 표
+harness check <doc.json> [-h 하네스]       검증. 한 줄씩 'E|W|I 코드 메시지'. 오류가 있으면 exit 1
+harness pdf <doc.json> [-o out.pdf] [-h 하네스] [--layout onepage|sheets]
+harness csv <doc.json> [-o 폴더] [-h 하네스]  접속표 · 파트리스트 CSV (웹과 같은 함수)
+harness bom <doc.json> [-h 하네스]         부품표 텍스트
+```
+
+- `-h` 는 하네스 이름 · letter · 도번 · 순번(1부터) 중 무엇이든. 세트 문서에서 생략하면 전체.
+- 출력은 기본이 짧은 텍스트, `--json` 을 붙이면 JSON.
+- 저장소를 받았다면 커밋된 `bin/harness.mjs` 를 `node bin/harness.mjs …` 로 실행해도 같다.
+
+### DSL — 10가닥 하네스 예
+
+한 줄에 한 명령, `#` 은 주석, 공백이 든 값은 따옴표.
+
+```text
+# demo.txt
+harness "센서 케이블 A" no=HW-01 rev=A qty=1     # 하네스 추가/선택 (이후 명령의 대상)
+note "10P 스트레이트 1:1. 길이 1600mm."
+conn J1 "JST-XH 10P"                             # 부품: id / 짧은이름 / 이름 (모호하면 에러 + 후보)
+conn J2 "JST-XH 10P"
+wire J1.1-10 J2.1-10 colors=red,black,white,green,yellow,blue,orange,purple,gray,brown awg24 len=1600
+```
+
+```bash
+node harness.mjs lib xh                 # 부품 이름·id 확인
+node harness.mjs new demo.json --name "센서 케이블"
+node harness.mjs apply demo.json demo.txt
+node harness.mjs check demo.json
+node harness.mjs pdf demo.json -o demo.pdf
+node harness.mjs csv demo.json -o out/
+```
+
+그 밖의 DSL 명령:
+
+```text
+set pn=KIT-01 name="장비 1대분" rev=A       # 세트 속성 (--kit 문서)
+purchased                                  # 현재 하네스를 구매품으로 표시
+conn J3 lib-mf3-43025-10p rot=0 unused=3,4,5 sleeve   # 라이브러리 id 로 지정, 안 쓰는 핀, 슬리브
+conn J4 "JST-XH 4P" at=400,120             # 위치 직접 지정 (기본은 선언 순서대로 좌/우 자동 배치)
+splice SP1 3                               # 3방향 스플라이스
+device D1 "24V PSU" terminals=+24V,GND     # 장치 블록과 단자
+wire D1.+24V J1.1 red awg20
+wire J1.2 J2.2 white awg22 len=800 stripe=black label=TX signal=TX
+del wire J1.1 J2.1 | del conn J1 | del harness "이름"
+```
+
+색 이름은 웹과 같은 영문(`red`, `black`, `white` …), 굵기는 `awg22` 또는 `sq0.5`.
+CLI 로 만든 JSON 은 웹 앱에서 **JSON 불러오기** 로 그대로 열린다(반대도 같다).
+
+### JS API
+
+번들은 ESM 으로 import 된다. CLI 는 이 함수들 위의 얇은 껍질이다.
+
+```js
+import { loadDoc, applyScript, summarize, validateDoc, pdfBytes, csvFiles, searchLib } from './harness.mjs';
+```
+
+### Claude 스킬
+
+AI 에이전트(Claude)가 이 CLI 를 적은 토큰으로 쓰도록 정리한 스킬이
+[`docs/claude-skill/harness-tool/SKILL.md`](docs/claude-skill/harness-tool/SKILL.md) 에 있다.
+
+## 데이터 원칙 — 모르면 비워 둔다
+
+도면은 그대로 발주서가 된다. 그래서 이 툴은 **그럴듯한 값을 지어내지 않는다.**
+
+- **품번을 만들지 않는다.** 시드 부품에는 데이터시트 원문 값만 넣었다. 확인하지 못한 제조사·품번은
+  `미상` 또는 `미정` 으로 비워 두고, PDF·파트리스트에도 그대로 `미상` 이 찍힌다.
+  (러그처럼 국내 유통이 규격 호칭으로 통하는 부품은 호칭만 넣고 제조사 품번은 `미정`.)
+- **핀 배열을 추측하지 않는다.** 실물·원본 도면으로 확인하지 못한 배열은 비워 두고, 커넥터 핀 번호는
+  제조사 도면 캡처(부록)로 확인하게 한다. 성별(암/수)도 자료가 갈리면 비운다 — 틀린 값보다 빈 값이 낫다.
+- **자동으로 고치지 않는다.** 끊어진 참조 · 중복 id · 길이 충돌은 검증 탭에 알리기만 한다. 어느 쪽이
+  맞는지는 사람만 안다.
+- 부품을 직접 정의할 때도 같은 원칙을 권한다: 모르는 칸은 비우고 비고에 근거를 적는다.
+
+> 이 툴의 시드 데이터와 검증은 도움일 뿐이다. 발주 전에는 반드시 제조사 데이터시트로 확인할 것.
+
+## 개발
+
+React 18 + TypeScript(strict) + React Flow(@xyflow/react) + Zustand + jsPDF. 백엔드 없음, GitHub Pages 정적 배포.
+Node 22 권장(CI 기준. Node 20 에서는 jsdom 이 로드되지 않아 DOM 테스트가 죽는다).
+
+```bash
+git clone https://github.com/qpwo5470/harness-tool.git
+cd harness-tool
+npm ci --include=dev   # 셸에 NODE_ENV=production 이 걸려 있으면 --include=dev 없이는 tsc 가 안 깔린다
+npm run dev            # 개발 서버
+```
+
+| 명령 | 내용 |
 |---|---|
-| 압착 커넥터 228 | JST PH 2.00 · JST XH 2.50 · Molex SPOX 2.50 · Micro-Fit 3.0 · Mini-Fit Jr 4.20 · 연호 SMH200/SMW200 2.00 · SMH250/SMP250 2.50 · YH396 3.96 |
-| **압착 러그 37** | 링(O형) · Y형(포크) · **페룰**(E0508…, 속 빈 원통) · 파스톤 REC·TAB (110/187/250) |
-| 규격 I/O 11 | RJ45 8P8C (T568A/B 색상표 내장) · USB (A·B·Mini·Micro·C) |
-| 범용 · 중계 47 | 와이어투와이어 · 보드투와이어 · **단자대**(유러피언 PCB · 배리어 고정식 · DIN레일) · 스플라이스 |
-| 구 항목 6 | 품번 없는 초기 항목 (예전 도면 호환용) |
+| `npm run dev` | 개발 서버 |
+| `npm run build` | 타입체크 + 프로덕션 빌드(`dist/`) |
+| `npm run preview` | 빌드 결과 미리보기 |
+| `npm run typecheck` | 타입만 검사 (`tsc -b --noEmit`) |
+| `npm test` | 유닛 + DOM 렌더 테스트 (vitest) |
+| `npm run build:standalone` | 파일 하나짜리 HTML 빌드 (`verify:standalone` 로 점검) |
+| `./미리보기.sh` | 빌드 후 http://localhost:4173 에서 열기 |
 
-- **러그는 커넥터와 축이 다르다.** 컨택트는 하우징과 짝이라 시리즈 안에 살지만,
-  러그의 짝은 **볼트(스터드)나 탭**이다. 그래서 계열을 따로 뒀다
-- **러그 품번은 규격 호칭이다** — `2-4` = 2sq 전선 · M4 볼트, `250 REC` = 6.35mm 탭 암.
-  국내 유통이 이 호칭으로 통하므로 `mpn` 에 호칭만 넣고 **제조사 품번은 `미정` 으로 비웠다**.
-  지어내면 그대로 발주서에 실린다 (`taxonomy.test.ts` 가 이 규칙을 강제한다)
-- **페룰만 호칭 체계가 다르다** — 속 빈 원통이라 스터드에 붙지 않으므로 `전선sq-스터드mm`
-  가 성립하지 않는다. DIN 46228-4 의 `E<단면적><길이>` 를 쓴다 (`E0508` = 0.5mm²·8mm).
-  길이를 두 자리로 채우지 않으면 `E058` 같은 발주 안 되는 품번이 나온다 — 시험이 잡는다
-- **단자대는 결선 방식이 핵심이다.** 극수가 아니라 그게 전선 끝에 무엇을 압착할지를
-  정한다 — 스터드(배리어)면 링/Y 러그, 조임·스프링이면 페룰. `spec.필요단자` 에 적어 뒀다
+- `dist/index.html` 을 파일 더블클릭으로 열면 안 된다(ES 모듈 CORS). 위 스크립트나 `npm run dev` 로 연다.
+- 배포: `main` 에 push 하면 GitHub Actions 가 typecheck → test → build → Pages → HTTP 200 스모크까지 한다.
+  포크해서 쓸 때는 *Settings → Pages → Source* 를 `GitHub Actions` 로 바꾼다(`./deploy.sh <repo-url>` 가 첫 push 를 돕는다).
+  `vite.config.ts` 의 `base: './'` 라 `/<repo>/` 경로에서도 동작한다.
 
-- **한 시리즈 = 하우징 + 보드 헤더 + 압착단자 한 벌.** 역할로 칸을 쪼개지 않는다 —
-  발주는 셋을 다 골라야 끝나므로. 역할·성별은 패널 위 **필터**로 가로지른다
-- **용도는 칸이 아니라 태그다.** MDB(자판기) 부품의 실물은 Mini-Fit Jr
-  (VMC 39-01-2060 = 5557-06R, 주변기기 39-30-1060 = 5569, 크림프핀 39-00-0207)
-  이므로 그 시리즈 안에 두고 `MDB`·`자판기` 로 검색된다. 6핀 신호 배치 내장
-- **행마다 형상 기호**(`PartSymbol.tsx`) — 몸통 = 역할, 접점 = 성별(빈 원 = 암,
-  찬 원/네모 = 수/보드), 배열 = 핀 격자. 이름 규칙이 제조사마다 달라
-  `XHP-10`(암) · `B10B-XH-A`(보드) 를 글자로 가려낼 수 없기 때문
-- 검색은 이름 · MPN · **시리즈/제조사/용도 태그** · 규격 신호명을 훑는다
-- **핀맵 에디터**: 코드 수정 없이 UI에서 하우징을 직접 정의
-  - 행×열 그리드에 핀 배치, 핀 클릭 → 표기·신호명·규격색 지정
-  - 핀 번호 방향 전환(행 우선 / 지그재그 / 열 우선)
-  - 시드 부품 복제(⧉) 후 수정 가능 · 내 부품 편집(✎)/삭제(✕)
-  - localStorage 저장으로 문서가 바뀌어도 유지, JSON 내보내기/가져오기로 팀 공유
-  - 만든 부품은 문서 usedParts에도 동봉 → JSON 파일 하나로 도면 재현
-- **규격 색상 자동 적용**: RJ45/USB/MDB 핀에서 결선하면 표준 색이 와이어 기본값으로
+### 구조
 
-**Agent C — 속성 패널** (`src/panels/`)
-- 와이어: 색(base/stripe)·게이지(AWG/mm²)·길이
-- 커넥터: 방향·메모 / 장치: 이름·단자 / 삭제
+| 경로 | 내용 |
+|---|---|
+| `src/types/` | 공유 타입(문서 스키마). 바꾸면 `schemaVersion` ↑ |
+| `src/store/` | Zustand 스토어 · 넷리스트(union-find) · 검증 · 불러오기 정규화 · 실행취소 |
+| `src/canvas/` | 배선 캔버스 (React Flow, 배선 경로 직접 계산 — 화면과 PDF 가 같은 함수) |
+| `src/physical/` | 물리 뷰(구간 · 전장) |
+| `src/library/` | 시드 부품 · 분류(`taxonomy.ts` 단일 출처) · 핀맵 에디터 · 내 부품 |
+| `src/panels/`, `src/set/`, `src/ui/` | 속성 · 파트 · 검증 패널, 세트 개요, 공용 UI |
+| `src/export/` | PDF(벡터) · CSV · ZIP · 내보내기 대화상자 |
+| `src/fixtures/` | 샘플 · 시험용 문서 |
+| `public/datasheets/` | PDF 부록에 싣는 커넥터 핀 번호 캡처 |
 
-**Agent D — 출력** (`src/export/`)
-- **접속표(From-To)**: 네트 라벨 + from/to + 색/게이지/길이 → 현장 제작용
-- 파트리스트(커넥터/와이어/케이블 집계), 둘 다 CSV
-- PDF 3면: 배선도 스냅샷 → 접속표 → 파트리스트 (코드 스플릿 지연 로드)
+깊은 설계 판단과 환경 함정은 **[docs/인수인계.md](docs/인수인계.md)**, 브라우저에서 손으로 확인할 항목은
+**[docs/검증-체크리스트.md](docs/검증-체크리스트.md)** 에 있다.
 
-**보완 (기획서 대조 후 추가)**
-- **실행취소/다시실행**: Ctrl+Z / Ctrl+Shift+Z, 툴바 ↶↷ 버튼 (최대 50단계)
-  - 삭제 시 함께 사라진 배선까지 복구됨
-- **터미널(크림프핀) 집계**: 배선된 핀 수만큼 파트리스트에 포함 (발주 필수 항목)
-  - 하우징 스펙의 터미널명(YST025 등) 자동 사용, 스플라이스는 제외
-- **코어 수 / 케이블**: 와이어를 멀티코어 케이블에 묶고 코어수·케이블명·자켓색 지정
-- **논리 뷰 방향 표시**: 회전된 커넥터에 ↻각도 뱃지
-- **와이어투와이어 커넥터**: 중간결선/연장용 2·4·6P
-- **핀(터미널) 지정**: 커넥터 속성에서 핀별로 크림프핀 선택 (일괄 지정도 가능)
-  - 지정한 터미널이 하우징 스펙보다 우선해 파트리스트에 반영
-  - 배선된 핀만 집계 · 스플라이스는 압착단자 제외
-  - 핀맵 에디터에서 커스텀 터미널도 등록 가능(적용 하우징 명시)
+> ⚠️ **시험이 통과한다고 도면이 맞는 것은 아니다.** 지금까지 잡은 결함의 절반은 시험이 전부 통과하는
+> 상태에서 화면·산출물만 틀린 부류였다(PDF 가 화면과 다른 그림, 세트 27개 중 1개만 내려받아짐 등).
+> 코드를 고쳤으면 체크리스트를 실제로 눌러 보고 도면·PDF·CSV 를 눈으로 확인하라.
 
-**공통 (리드)**
-- **넷리스트 엔진**(`src/store/netlist.ts`): union-find로 와이어 + 스플라이스 bridges를 합쳐
-  전기적으로 이어진 네트 계산. Y자 분기·한 핀 다중 결선을 정확히 하나로 묶음
-- **자동저장**: localStorage 스냅샷(새로고침 복원), 새 문서, 문서명 변경
-- Delete/Backspace 로 선택 요소 삭제, 우측 탭 UI(속성/접속표/파트)
+## 라이선스
 
-**검증**: 시험 913개 · strict typecheck · 프로덕션 빌드 그린.
-여기에 더해 실제 발주 문서(자판기 하네스 9종)를 넣어 화면·PDF·CSV 를 눈으로 확인했다.
-시험만으로는 안 잡히는 부류가 있어서다 — 위 경고 참고.
+[MIT](LICENSE) © 2026 진상혁 (qpwo5470)
 
-## 다음 후보
-- 물리 뷰(구간·전장)를 PDF 에도 싣기 — 지금은 화면에만 있다
-- 보호재(슬리브·테이프) 데이터 모델 — 구간표에 `미지정` 으로 비어 있다
-- 핀맵 에디터: 드래그로 핀 위치 이동(비정형 배치), 키잉/폴라리티 표기
-- 배선 400본 규모를 노린다면 `colorRuns` 의 겹침 비교를 구간 정렬로
-  (지금 실사용 20~50본에서는 문제 없음 — 인수인계 §9)
-- 커넥터 짝(암/수) 연결 관계 정의
+`public/datasheets/` 의 핀 번호 그림은 각 제조사 자료에서 옮긴 것으로, 그 권리는 각 제조사에 있다.
+
+---
+
+## English
+
+**Harness Design Tool** — a free, browser-only editor for wire-harness drawings: wiring diagram,
+from-to (connection) list and parts list / BOM. No install, no account, no server; your work stays in
+your browser (autosave) and in JSON files you export. The UI is in Korean.
+
+- **Open:** https://qpwo5470.github.io/harness-tool/ (a sample harness is loaded on first visit;
+  on an empty canvas click *샘플 문서 열기* = "open sample").
+- **Draw:** drag a connector from the left library onto the canvas, drag pin-to-pin to add wires,
+  set color / gauge / length in the right-hand *속성* (properties) tab.
+- **Save/load:** *내보내기 ▾ → JSON 저장* saves the whole set (including custom parts); *JSON 불러오기* loads it.
+- **Output:** *PDF 도면* (A4 drawing with title block and BOM), from-to and parts-list CSV (UTF-8),
+  or a ZIP bundle for a whole set via *내보내기 설정…*.
+- **CLI / JS API** (Node 18+, single file):
+  `curl -fsSLO https://qpwo5470.github.io/harness-tool/harness.mjs && node harness.mjs help`.
+  Commands: `lib`, `new`, `apply` (line-based DSL, see the example above), `show`, `check`, `pdf`, `csv`, `bom`.
+  Korean text in PDFs needs `npm i -g @napi-rs/canvas`.
+- **Data honesty:** the tool never invents part numbers or pin layouts; unknown values stay `미상`
+  ("unknown") and show up as such on the drawing. Always verify against the manufacturer's datasheet before ordering.
+- **License:** MIT.

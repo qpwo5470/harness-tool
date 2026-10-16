@@ -20,6 +20,7 @@ import { PhysicalView } from './physical/PhysicalView';
 import { ExportDialog, type ExportPlan } from './export/ExportDialog';
 import { ToastHost, showToast } from './ui/Toast';
 import { EmptyCanvas } from './ui/EmptyCanvas';
+import { sampleDoc } from './fixtures/sampleDoc';
 import { ValidationPanel } from './panels/ValidationPanel';
 import { validateHarness } from './store/validate';
 import { letterAt, orderText, perSetOf } from './store/kit';
@@ -285,6 +286,17 @@ export default function App() {
     clearSaved();
     replaceDoc(emptyDoc());
   }
+  /**
+   * 샘플 문서 — 처음 방문하면 이것이 열려 있지만 '새 문서' 를 누르면 다시 볼 길이 없었다.
+   * 세트의 다른 하네스에 그린 것이 있으면 사라지므로 그때만 묻는다.
+   * id 를 새로 매겨 세트에 같은 id 가 남아 있어도 덮어쓰지 않게 한다.
+   */
+  function openSample() {
+    const hasWork = kit.harnesses.some((h) => h.connectors.length > 0 || h.devices.length > 0);
+    if (hasWork && !confirm('샘플 문서를 열면 현재 세트가 바뀝니다. 계속할까요?')) return;
+    const copy: typeof sampleDoc = JSON.parse(JSON.stringify(sampleDoc));
+    replaceDoc({ ...copy, id: `doc-sample-${Date.now().toString(36)}` });
+  }
   async function exportPdf() {
     // 더 이상 화면 스냅샷을 찍지 않는다 — 문서에서 벡터로 직접 그린다.
     const { downloadPdf } = await import('./export/pdf'); // 코드 스플릿
@@ -439,6 +451,16 @@ export default function App() {
           <button onClick={redo} title="다시실행 (Ctrl+Shift+Z)">↷</button>
         </div>
         <div className="spacer" />
+        {/* 처음 온 사람이 사용법·CLI·저장 형식을 찾을 곳 */}
+        <a
+          className="topbar-help"
+          href="https://github.com/qpwo5470/harness-tool#readme"
+          target="_blank"
+          rel="noreferrer"
+          title="사용법 · CLI · 소스 (GitHub)"
+        >
+          도움말
+        </a>
         <button onClick={newDoc}>새 문서</button>
         <div className="menu-wrap" ref={menuRef}>
           <button aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((v) => !v)}>
@@ -547,6 +569,7 @@ export default function App() {
                 (document.querySelector('.lib-new') as HTMLButtonElement | null)?.click();
               }}
               onImport={() => pickFile('replace')}
+              onSample={openSample}
             />
           )}
         </main>
