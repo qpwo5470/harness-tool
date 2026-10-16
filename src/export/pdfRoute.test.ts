@@ -23,7 +23,7 @@ import { sampleDoc } from '../fixtures/sampleDoc';
 import { fanoutDoc, labelOverhangDoc } from '../fixtures/fanoutDoc';
 import { cableDoc, laneSplitDoc } from '../fixtures/cableDoc';
 import { rowOfConnectorsDoc } from '../fixtures/rowOfConnectors';
-import { assignLanes, docToEdges, nodePositions, refLabels } from '../canvas/docToFlow';
+import { assignLanes, docToEdges, nodePositions, refLabels, spliceSplits } from '../canvas/docToFlow';
 import { connectorLabelRects } from '../canvas/geometry';
 import { routeWire, planWires, planJackets } from '../canvas/wirePlan';
 import type { OrthoEdgeData } from '../canvas/OrthogonalEdge';
@@ -359,9 +359,11 @@ describe('PDF 라벨 자리 = 화면 라벨 자리', () => {
     const dr = buildDrawing(doc);
     const at = nodePositions(doc, 'logical');
     const refs = refLabels(doc);
+    // 양쪽 스플라이스는 이름표를 가운데에 맞춘다 — 화면과 같은 변 배정을 넘겨야 같은 상자다
+    const splits = spliceSplits(doc, 'logical', at, refs);
     for (const c of doc.connectors) {
       const housing = doc.usedParts.find((p) => p.id === c.housingId);
-      const g = connectorLabelRects(c, housing, at.get(c.id)!, refs.get(c.id));
+      const g = connectorLabelRects(c, housing, at.get(c.id)!, refs.get(c.id), splits.get(c.id));
       const n = dr.nodes.find((x) => x.id === c.id)!;
       expect(n.labelRects[0], `${c.id} 이름표`).toEqual(g.ref);
       if (g.mpn) expect(n.labelRects[1], `${c.id} 캡션`).toEqual(g.mpn);

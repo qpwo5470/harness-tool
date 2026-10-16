@@ -100,14 +100,51 @@ export function connectorRefParts(
   connector: Connector,
   housing?: PartLibraryItem,
   ref?: string,
+  split?: SpliceSplit,
 ): RefLabelParts {
   const isSplice = connector.kind === 'splice';
   const o = connector.orientation;
   return {
     ref: ref ?? (isSplice ? 'SP' : 'J'),
-    name: (isSplice ? '⑂ ' : '') + (housing?.name ?? connector.kind),
-    dir: `${ARROW[o]} ${o}° ${DIRWORD[o]}`,
+    /*
+     * 스플라이스 이름 앞에 붙이던 '⑂ ' 는 뺐다. PDF 의 한글 래스터(napi canvas)
+     * 글꼴에 그 글자가 없어 두부(☒)로 찍혔다(실측). 스플라이스라는 사실은 이미
+     * 마름모 심볼·SP 레퍼런스·노드 색이 말한다.
+     */
+    name: housing?.name ?? connector.kind,
+    // 양쪽으로 나가는 스플라이스에는 "← 0° 왼쪽" 이 거짓말이다 — 방향 칸을 비운다
+    dir: isTwoSided(connector, split) ? '' : `${ARROW[o]} ${o}° ${DIRWORD[o]}`,
   };
+}
+
+/* ── 스플라이스 양쪽 배선 ─────────────────────────────────────────────────────
+ *
+ * 왜 필요한가 (실측):
+ * 스플라이스도 커넥터처럼 핸들이 **방향 한쪽 변**에만 있었다. "납처리 전선단(왼쪽)
+ * → 검정 3가닥이 SP1 로 → SP1 출력 → DC 배럴잭(오른쪽)" 같은 하네스에서 출력선이
+ * SP1 의 왼쪽 변에서 나와 도면 아래를 한 바퀴 돌아 오른쪽 잭으로 갔다. 손으로 그린
+ * 레퍼런스(ref-09)는 스플라이스를 마름모로 그리고 입력은 왼쪽에서, 출력은 오른쪽으로
+ * 낸다. 스플라이스에는 결합 방향이 없다(꼬아 합칠 뿐이다) — 그래서 각 가닥은
+ * **상대편 노드가 있는 쪽 변**에 붙는 것이 맞다.
+ *
+ * 변은 **그릴 때 위치에서 유도**한다(docToFlow.spliceSplits). 저장 데이터는 늘지
+ * 않는다 — 노드를 옮기면 변도 따라 바뀐다.
+ *
+ * 양쪽에 다 이웃이 있을 때만 쓴다. 한쪽에만 있으면 예전과 글자 하나까지 같은
+ * 기하를 쓴다(그 경우 굳이 바꿀 이유가 없고, 기존 도면이 흔들리지 않는다).
+ * 가로 방향(0°/180°) 스플라이스만 대상이다 — 90°/270° 는 이름표가 위·아래 변에
+ * 걸려 있어 양쪽으로 가르면 핸들이 글자 속으로 들어간다.
+ */
+
+/** 양쪽 배선 스플라이스의 변 배정 — 핀 번호(index)를 변마다 **위에서 아래 순서**로 */
+export type SpliceSplit = { left: number[]; right: number[] };
+
+/** 이 커넥터가 양쪽 변으로 가른 스플라이스인가 */
+export function isTwoSided(connector: Connector, split?: SpliceSplit): split is SpliceSplit {
+  return Boolean(split)
+    && connector.kind === 'splice'
+    && (connector.orientation === 0 || connector.orientation === 180)
+    && split!.left.length > 0 && split!.right.length > 0;
 }
 
 /** 이름표 상자 폭 — padding + [ref] + gap + [name] + gap + [dir] + padding */
@@ -399,8 +436,12 @@ export type ConnectorLayout = {
   layout: PartLibraryItem['pinLayout'];
   boxW: number;
   boxH: number;
-  /** 배선이 나가는 변 */
+  /** 배선이 나가는 변 (방향 기준). 핀마다 다를 수 있으면 `sideOf` 를 써라 */
   side: Position;
+  /** 양쪽 변으로 가른 스플라이스인가 (isTwoSided) */
+  twoSided: boolean;
+  /** 핀 번호 → 그 핀의 배선이 나가는 변. 양쪽 스플라이스가 아니면 언제나 `side` */
+  sideOf(index: number): Position;
   /** 화면에 그리는 핀 순서 (180°/270° 는 뒤집힌다) */
   orderedPins: Connector['pins'];
   /** 핀 번호 → **그리는** 격자 칸 (패드를 찍는 자리) */
@@ -437,10 +478,15 @@ export type ConnectorLayout = {
  * 끌었더니 4번 핀이 잡혔다). 깊이가 1이면 식이 정확히 `PAD/2`(칸 가운데)로
  * 떨어져 예전 좌표와 같다.
  */
-export function connectorLayout(connector: Connector, housing?: PartLibraryItem): ConnectorLayout {
+export function connectorLayout(
+  connector: Connector,
+  housing?: PartLibraryItem,
+  split?: SpliceSplit,
+): ConnectorLayout {
   const { cols: defCols, rows: defRows, layout, extra } = gridOf(connector, housing);
   const o = connector.orientation;
   const side = handleSideOf(o);
+  const twoSided = isTwoSided(connector, split);
 
   const { cols, rows, transposed, edgeVertical } = drawGrid(defCols, defRows, o);
   const { w: boxW, h: boxH } = housingSize(cols, rows);
@@ -470,7 +516,30 @@ export function connectorLayout(connector: Connector, housing?: PartLibraryItem)
   // 나가는 변에서 안쪽으로 들어가는 칸 수 = 한 자리에 겹치는 핀 수
   const depth = Math.max(1, edgeVertical ? cols : rows);
 
+  /**
+   * 양쪽 스플라이스: 변마다 그 변에 붙은 가닥만 **가운데로 모아** 한 칸씩 늘어세운다.
+   * 입력 3가닥(왼쪽)·출력 1가닥(오른쪽)이면 출력이 입력 묶음의 한가운데 높이에서
+   * 나간다 — 레퍼런스의 마름모 그림이 그렇다. 순서는 split 이 정한 위→아래 순서
+   * (상대편 핸들 y 순)라 같은 변의 가닥끼리 꼬이지 않는다.
+   */
+  const splitSlot = (index: number): number | undefined => {
+    if (!twoSided) return undefined;
+    const list = split.left.includes(index) ? split.left : split.right.includes(index) ? split.right : null;
+    if (!list) return undefined;
+    const slots = Math.max(edgeVertical ? rows : cols, list.length);
+    return (slots - list.length) / 2 + list.indexOf(index);
+  };
+
+  const sideOf = (index: number): Position => {
+    if (!twoSided) return side;
+    if (split.left.includes(index)) return Position.Left;
+    if (split.right.includes(index)) return Position.Right;
+    return side;
+  };
+
   const along = (index: number): number => {
+    const slot = splitSlot(index);
+    if (slot != null) return INSET + slot * PITCH + PAD / 2;
     const cell = cellOf(index);
     const at = edgeVertical ? cell.y : cell.x;    // 변을 따라간 몇 번째 자리인가
     const rank = edgeVertical ? cell.x : cell.y;  // 변에서 몇 번째 안쪽인가
@@ -479,9 +548,10 @@ export function connectorLayout(connector: Connector, housing?: PartLibraryItem)
 
   const handleOffset = (index: number): Vec2 => {
     const a = along(index);
-    if (o === 90) return { x: a, y: 0 };
-    if (o === 270) return { x: a, y: boxH };
-    if (o === 0) return { x: 0, y: a };
+    const s = sideOf(index);
+    if (s === Position.Top) return { x: a, y: 0 };
+    if (s === Position.Bottom) return { x: a, y: boxH };
+    if (s === Position.Left) return { x: 0, y: a };
     return { x: boxW, y: a };
   };
 
@@ -501,7 +571,7 @@ export function connectorLayout(connector: Connector, housing?: PartLibraryItem)
     if (edgeVertical) {
       // 글자는 가로로 눕는다 → along(세로)은 상자를 옮겨서, 변 쪽 붙임은 정렬로.
       return {
-        x: o === 180 ? cx + PAD - m - w : cx + m,
+        x: sideOf(index) === Position.Right ? cx + PAD - m - w : cx + m,
         y: clampTo(a - h / 2, cy + m, cy + PAD - m - h),
         w, h,
       };
@@ -515,7 +585,7 @@ export function connectorLayout(connector: Connector, housing?: PartLibraryItem)
 
   return {
     cols, rows, defCols, defRows, transposed, layout, boxW, boxH,
-    side, orderedPins, cellOf, defCellOf, along, handleOffset, pinNumberBox,
+    side, twoSided, sideOf, orderedPins, cellOf, defCellOf, along, handleOffset, pinNumberBox,
   };
 }
 
@@ -547,16 +617,21 @@ export function connectorLabelRects(
   housing: PartLibraryItem | undefined,
   nodePos: Vec2,
   ref?: string,
+  split?: SpliceSplit,
 ): { ref: NodeBox; mpn?: NodeBox } {
-  const g = connectorLayout(connector, housing);
+  const g = connectorLayout(connector, housing, split);
   const o = connector.orientation;
   const org = housingOrigin(o);
   const boxX = nodePos.x + org.x;
   const boxY = nodePos.y + org.y;
   const alignRight = labelsAlignRight(o);
-  /** 하우징 폭 슬롯 안에서 한쪽 변에 맞춘다 — 넘치는 쪽이 곧 overhang 방향이다 */
+  /**
+   * 하우징 폭 슬롯 안에서 한쪽 변에 맞춘다 — 넘치는 쪽이 곧 overhang 방향이다.
+   * 양쪽 스플라이스는 **가운데**에 맞춘다: 핸들이 양쪽 변에 다 있어 "핸들 없는 쪽"
+   * 이 없다. 대신 라벨을 경계 상자에서 빼고 따로 장애물로 넘긴다(connectorBox).
+   */
   const place = (w: number, y: number, h: number): NodeBox => ({
-    x: alignRight ? boxX + g.boxW - w : boxX,
+    x: g.twoSided ? boxX + g.boxW / 2 - w / 2 : alignRight ? boxX + g.boxW - w : boxX,
     y, w, h,
   });
 
@@ -564,7 +639,7 @@ export function connectorLabelRects(
   const mpnY = boxY + g.boxH;
   return {
     ref: place(
-      refLabelWidth(connectorRefParts(connector, housing, ref)),
+      refLabelWidth(connectorRefParts(connector, housing, ref, split)),
       o === 90 ? mpnY + mpnH : nodePos.y,
       REF_BLOCK_H,
     ),
@@ -591,6 +666,7 @@ export function connectorBox(
   nodePos: Vec2,
   view: ViewMode = 'logical',
   ref?: string,
+  split?: SpliceSplit,
 ): NodeBox {
   const layout = layoutCells(housing?.pinLayout);
   if (view === 'physical' && layout) {
@@ -603,8 +679,15 @@ export function connectorBox(
     const bh = swap ? w : h;
     return { x: nodePos.x + (w - bw) / 2, y: nodePos.y + (h - bh) / 2, w: bw, h: bh };
   }
-  const g = connectorLayout(connector, housing);
+  const g = connectorLayout(connector, housing, split);
   const org = housingOrigin(connector.orientation);
+  const h = REF_BLOCK_H + g.boxH + (housing?.mpn ? MPN_CAPTION_H : 0);
+  if (g.twoSided) {
+    // 양쪽 스플라이스 — 핸들이 좌우 두 변에 다 있다. 라벨 폭을 합치면 어느 쪽이든
+    // 핸들이 상자 속으로 들어가 스텁부터 회피 대상이 된다. 그래서 상자는 하우징
+    // 폭 그대로 두고, 라벨 사각형은 connectorLabelObstacles 로 따로 넘긴다.
+    return { x: nodePos.x + org.x, y: nodePos.y, w: g.boxW, h };
+  }
   const rects = connectorLabelRects(connector, housing, nodePos, ref);
   // 하우징 + 라벨 사각형들의 합집합. 라벨은 한쪽으로만 넘치므로 반대쪽 변은 그대로다.
   const parts = [
@@ -614,12 +697,28 @@ export function connectorBox(
   ];
   const x = Math.min(...parts.map((p) => p.x));
   const right = Math.max(...parts.map((p) => p.x + p.w));
-  return {
-    x,
-    y: nodePos.y,
-    w: right - x,
-    h: REF_BLOCK_H + g.boxH + (housing?.mpn ? MPN_CAPTION_H : 0),
-  };
+  return { x, y: nodePos.y, w: right - x, h };
+}
+
+/**
+ * 경계 상자(connectorBox)에 담지 못한 **라벨 사각형** — 라우터에 장애물로 따로 넘긴다.
+ *
+ * 양쪽 스플라이스만 해당한다. 그 상자는 하우징 폭으로 좁혀 두었으므로(핸들이 좌우
+ * 두 변에 다 있다) 하우징보다 넓은 이름표가 상자 밖으로 나간다. 이름표는 흰 배경이라
+ * 그 뒤로 배선이 들어가면 사라진다 — 그래서 사각형을 따로 피하게 한다. 이름표는
+ * 하우징 **위**(캡션은 아래) 띠에만 있어 좌우 변의 스텁과는 만나지 않는다.
+ * 그 밖의 커넥터는 라벨이 이미 상자 안이라 빈 배열이다.
+ */
+export function connectorLabelObstacles(
+  connector: Connector,
+  housing: PartLibraryItem | undefined,
+  nodePos: Vec2,
+  ref?: string,
+  split?: SpliceSplit,
+): NodeBox[] {
+  if (!isTwoSided(connector, split)) return [];
+  const r = connectorLabelRects(connector, housing, nodePos, ref, split);
+  return [r.ref, ...(r.mpn ? [r.mpn] : [])];
 }
 
 /** 논리 뷰: 노드 좌표 기준 핀 핸들의 절대 좌표 */
@@ -628,11 +727,12 @@ export function pinAnchor(
   housing: PartLibraryItem | undefined,
   pinIndex: number,
   nodePos: Vec2,
+  split?: SpliceSplit,
 ): { x: number; y: number; side: Position } {
-  const g = connectorLayout(connector, housing);
+  const g = connectorLayout(connector, housing, split);
   const org = housingOrigin(connector.orientation);
   const off = g.handleOffset(pinIndex);
-  return { x: nodePos.x + org.x + off.x, y: nodePos.y + org.y + off.y, side: g.side };
+  return { x: nodePos.x + org.x + off.x, y: nodePos.y + org.y + off.y, side: g.sideOf(pinIndex) };
 }
 
 /**

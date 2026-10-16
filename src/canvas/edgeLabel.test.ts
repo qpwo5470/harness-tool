@@ -46,9 +46,27 @@ describe('배선 라벨 표시 규칙', () => {
 
   it('배선마다 레인이 달라 수평 구간이 겹치지 않는다', () => {
     const edges = docToEdges(sampleDoc);
-    // 샘플의 세 배선은 x 구간이 서로 겹치므로 주행 구간 y 가 전부 갈려야 한다
+    /*
+     * x 구간이 **겹치는** 배선끼리는 주행 구간 y 가 갈려야 한다.
+     * 예전에는 "샘플의 세 배선은 서로 겹치므로 전부 다르다" 를 쟀다. 스플라이스가
+     * 양쪽 변으로 갈린 뒤(geometry.SpliceSplit) w1(J1→SP1 왼쪽 변)과 w2·w3(SP1
+     * 오른쪽 변→…)은 x 로 겹치지 않아 같은 레인을 나눠 써도 된다 — 겹치지 않는
+     * 배선에 레인을 쓰면 도면만 벌어진다(colorLanes 머리말). 그래서 성질 그대로 잰다.
+     */
     const lanes = edges.map((e) => dataOf(e).laneY);
-    expect(new Set(lanes).size).toBe(lanes.length);
+    const plan = assignLanes(sampleDoc, 'logical');
+    const span = (i: number) => [Math.min(plan.from[i].x, plan.to[i].x), Math.max(plan.from[i].x, plan.to[i].x)];
+    let pairs = 0;
+    for (let i = 0; i < lanes.length; i++) {
+      for (let j = i + 1; j < lanes.length; j++) {
+        const [a0, a1] = span(i);
+        const [b0, b1] = span(j);
+        if (Math.min(a1, b1) - Math.max(a0, b0) <= 0) continue;
+        pairs++;
+        expect(lanes[i], `${edges[i].id}·${edges[j].id}`).not.toBe(lanes[j]);
+      }
+    }
+    expect(pairs).toBeGreaterThan(0);   // 겹치는 쌍이 실제로 있어야 시험이 뜻을 갖는다
   });
 
   /**

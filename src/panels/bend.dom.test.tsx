@@ -185,14 +185,27 @@ describe('속성 패널 — 꺾임 조정', () => {
    * 말하는지 여기서 붙잡는다.
    */
   it('값이 그림을 못 바꾸면 화면이 그렇게 말한다', () => {
-    // 실제로 만난 그 배선을 그대로 쓴다 — 샘플 문서의 w2(SP1 → J2, 도착 핸들이 위쪽)
-    S().replaceDoc(sampleDoc);
+    /*
+     * 실제로 만난 그 배선을 그대로 쓴다 — 샘플 문서의 w2(SP1 → J2, 도착 핸들이 위쪽).
+     * 그때 SP1 의 핸들은 전부 왼쪽 변이었다. 지금은 스플라이스가 **양쪽에 이웃이
+     * 있으면** 변을 가르므로(geometry.SpliceSplit) 샘플 그대로는 w2 가 오른쪽 변에서
+     * 곧장 나가 그 상태가 재현되지 않는다. 그래서 w1 의 출발을 오른쪽 장치로 옮겨
+     * SP1 의 이웃을 전부 오른쪽에 둔다 — 그러면 SP1 은 예전 그대로 왼쪽 변 하나만 쓴다.
+     */
+    const oneSided: HarnessDocument = {
+      ...sampleDoc,
+      wires: sampleDoc.wires.map((w) => (w.id === 'w1'
+        ? { ...w, from: { type: 'device' as const, deviceId: 'dev-pi', terminal: 'GND' } }
+        : w)),
+    };
+    S().replaceDoc(oneSided);
     useHarnessStore.setState({ selection: 'w2' });
     render(<PropertyPanel />);
 
-    // 브라우저에서 + 한 번(자동 12 → 24)을 눌렀을 때 꺾임점이 하나도 안 바뀌었다
+    // 브라우저에서 + 한 번을 눌렀을 때 꺾임점이 하나도 안 바뀌었다
+    const auto = assignLanes(oneSided, 'logical').autoLaneY[1];
     fireEvent.click(screen.getByLabelText('가로 간선 한 칸 더하기'));
-    expect(routeOf('w2')).toEqual({ laneY: 24 });
+    expect(routeOf('w2')).toEqual({ laneY: auto + LANE_Y_STEP });
     expect(pointsOf('w2')).toBe(autoPoints('w2'));      // 정말로 그림이 그대로다
     expect(screen.getByText(/도면을 바꾸지 못합니다/)).toBeTruthy();
     expect(screen.getAllByText('입력값 · 그림은 그대로').length).toBeGreaterThan(0);

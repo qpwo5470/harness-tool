@@ -524,3 +524,41 @@ describe('압착 러그 노드', () => {
     expect(on.style.outline).toBeTruthy();
   });
 });
+
+/**
+ * 양쪽 배선 스플라이스 — 화면 핸들이 배선 계획(geometry.sideOf)과 같은 변에 선다.
+ * React Flow 는 Handle 의 `position` 으로 엣지 방향을 정하므로 그 값까지 본다.
+ */
+describe('스플라이스 핸들 — 상대편 쪽 변', () => {
+  const sp: PartLibraryItem = { ...housing, id: 'sp4', category: 'splice', name: '스플라이스 4 (꼬임)' };
+  const spConn: Connector = { ...conn(0), id: 'sp1', kind: 'splice', housingId: 'sp4' };
+  const renderSplice = (split?: { left: number[]; right: number[] }) =>
+    render(
+      <ReactFlowProvider>
+        <ConnectorNode
+          id="sp1" type="connector" dragging={false} zIndex={1}
+          selectable selected={false} draggable deletable isConnectable
+          positionAbsoluteX={0} positionAbsoluteY={0}
+          data={{ connector: spConn, housing: sp, view: 'logical', ...(split ? { split } : {}) } as never}
+        />
+      </ReactFlowProvider>,
+    );
+  const sideOf = (c: HTMLElement, pinId: string) =>
+    (c.querySelector(`.react-flow__handle.source[data-handleid="${pinId}"]`) as HTMLElement)
+      .className.match(/react-flow__handle-(left|right|top|bottom)/)?.[1];
+
+  it('변 배정이 있으면 핀마다 그 변에 핸들이 선다 (id 는 여전히 핀 id)', () => {
+    const { container } = renderSplice({ left: [1, 2, 3], right: [4] });
+    expect(['p1', 'p2', 'p3'].map((p) => sideOf(container, p))).toEqual(['left', 'left', 'left']);
+    expect(sideOf(container, 'p4')).toBe('right');
+    // 방향 글자는 양쪽 스플라이스에서 빠진다 — 스플라이스 표시 글리프(⑂)도 없다
+    expect(container.textContent).not.toContain('0°');
+    expect(container.textContent).not.toContain('⑂');
+  });
+
+  it('변 배정이 없으면 예전처럼 방향 쪽 한 변', () => {
+    const { container } = renderSplice();
+    expect(['p1', 'p2', 'p3', 'p4'].map((p) => sideOf(container, p))).toEqual(['left', 'left', 'left', 'left']);
+    expect(container.textContent).toContain('0°');
+  });
+});

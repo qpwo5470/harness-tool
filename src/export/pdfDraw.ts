@@ -22,7 +22,7 @@
  * DrawText 에 위임한다 — 브라우저에서는 Canvas 래스터, 그 밖에서는 pdf.text.
  */
 import type { HarnessDocument } from '../types';
-import { docToEdges, jacketPaint, nodePositions, refLabels } from '../canvas/docToFlow';
+import { docToEdges, jacketPaint, nodePositions, refLabels, spliceSplits } from '../canvas/docToFlow';
 import { lengthResolver } from '../store/wireLength';
 /**
  * 스텁 라벨을 더 이상 PDF 에 그리지 않으므로(§2-5) `stubWidth`·`isPaleOnWhite`
@@ -428,6 +428,8 @@ export type NodeBox = {
   orientation?: Orientation;
   /** 이름표를 하우징 오른쪽 변에 맞추는가 (geometry.labelsAlignRight) */
   alignRight?: boolean;
+  /** 이름표를 하우징 가운데에 맞추는가 — 양쪽으로 배선이 나가는 스플라이스 */
+  centered?: boolean;
   /** 압착부에 절연 슬리브를 씌우는가 (Connector.sleeve) */
   sleeve?: boolean;
   /**
@@ -485,13 +487,16 @@ export function buildDrawing(doc: HarnessDocument): Drawing {
   const nodes: NodeBox[] = [];
   // 폴백 좌표까지 화면과 한 출처에서 받는다 — 예전에는 여기서 다시 세고 있었다
   const at = nodePositions(doc, 'logical');
+  // 스플라이스 핸들 변 — 화면 핸들·배선 계획(planWires)과 같은 함수에서 받는다
+  const splits = spliceSplits(doc, 'logical', at, refs);
 
   for (const c of doc.connectors) {
     const housing = doc.usedParts.find((p) => p.id === c.housingId);
     const p0 = at.get(c.id)!;
+    const split = splits.get(c.id);
 
     // 격자·박스·핸들 위치는 화면(nodes.tsx)과 **같은 계산**을 쓴다
-    const g = connectorLayout(c, housing);
+    const g = connectorLayout(c, housing, split);
     const { layout, boxW, boxH } = g;
     const o = c.orientation;
     // 배선이 위(90°)로 나가면 화면에서도 라벨을 아래에 둔다 — 선이 글자를 뚫지 않게.
@@ -539,9 +544,11 @@ export function buildDrawing(doc: HarnessDocument): Drawing {
      * 노드 경계 상자의 폭을 정한다(라벨이 하우징 밖으로 나간 만큼 배선을 덮으므로).
      * 두 벌을 두면 상자와 그림이 갈린다.
      */
-    const parts = connectorRefParts(c, housing, refs.get(c.id));
-    const rects = connectorLabelRects(c, housing, p0, refs.get(c.id));
-    const alignRight = labelsAlignRight(o);
+    const parts = connectorRefParts(c, housing, refs.get(c.id), split);
+    const rects = connectorLabelRects(c, housing, p0, refs.get(c.id), split);
+    // 양쪽 스플라이스는 이름표를 하우징 가운데에 맞춘다(geometry.connectorLabelRects)
+    const centered = g.twoSided;
+    const alignRight = !centered && labelsAlignRight(o);
 
     /*
      * 캡션 — 페룰·러그는 MPN 뒤에 **적용 전선**을 붙인다(레퍼런스 `노랑 · 1.0mm²`).
@@ -567,7 +574,8 @@ export function buildDrawing(doc: HarnessDocument): Drawing {
      */
     const widen = (r: Rect, w: number): Rect => {
       const nw = Math.max(r.w, w);
-      return { x: alignRight ? r.x + r.w - nw : r.x, y: r.y, w: nw, h: r.h };
+      const x = centered ? r.x + r.w / 2 - nw / 2 : alignRight ? r.x + r.w - nw : r.x;
+      return { x, y: r.y, w: nw, h: r.h };
     };
     const refRect = widen(rects.ref, rects.ref.w * 1.15);
     const mpnRect = rects.mpn
@@ -585,7 +593,8 @@ export function buildDrawing(doc: HarnessDocument): Drawing {
      * 잰 것이므로 짧은 이름은 언제나 그 안에 든다 — 경계가 줄지 않을 뿐 겹치지 않는다.
      */
     const short = housing?.shortName?.trim();
-    const name = short ? (isSplice ? '⑂ ' : '') + short : parts.name;
+    // (스플라이스 앞 '⑂ ' 는 뺐다 — 한글 래스터 글꼴에 없어 두부로 찍혔다. geometry.connectorRefParts)
+    const name = short || parts.name;
 
     // 납처리 전선단 — 핀마다 붙은 전선의 색 약호 (화면·접속표와 같은 colorAbbr)
     let wireAbbr: string[] | undefined;
@@ -643,6 +652,7 @@ export function buildDrawing(doc: HarnessDocument): Drawing {
         : undefined,
       orientation: o,
       alignRight,
+      ...(centered ? { centered } : {}),
       sleeve: Boolean(c.sleeve),
       ...(wireAbbr ? { wireAbbr } : {}),
       ...(barrelDia ? { barrelDia } : {}),
@@ -1115,7 +1125,9 @@ function drawNodeLabels(pen: Pen, n: NodeBox): void {
   const wDir = measureText(pdf, n.dir, sDir);
   const total = wRef + (n.name ? gap1 + wName : 0) + (n.dir ? gap2 + wDir : 0);
   const right = X(n.box.x + n.box.w - LABEL_PAD_X);
-  let lx = n.alignRight ? right - total : X(n.refAt.x);
+  let lx = n.centered
+    ? X(n.box.x + n.box.w / 2) - total / 2
+    : n.alignRight ? right - total : X(n.refAt.x);
   const ly = Y(n.refAt.y);
   lx += Math.max(wRef, text(n.ref, lx, ly, { size: sRef, bold: true, color: C.text }));
   if (n.name) {

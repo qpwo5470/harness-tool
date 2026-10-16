@@ -7,7 +7,8 @@ import { computeNets } from '../store/netlist';
 import { lengthResolver } from '../store/wireLength';
 import {
   pinAnchor, pinAnchorPhysical, deviceAnchor, isHorizontalSide,
-  connectorBox, deviceBox, layoutCells, type NodeBox,
+  connectorBox, connectorLabelObstacles, connectorLayout, housingOrigin,
+  deviceBox, layoutCells, type NodeBox, type SpliceSplit,
 } from './geometry';
 // 세로 간선이 어디까지 뻗는지는 **상자를 비켜 간 뒤에야** 알 수 있다.
 // 그래서 레인을 정하기 전에 라우터를 한 번 돌려 본다(assignLanes 주석 참고).
@@ -103,6 +104,88 @@ export function nodePositions(doc: HarnessDocument, view: ViewMode): Map<string,
   return m;
 }
 
+/** 스플라이스별 양쪽 변 배정 — 양쪽에 이웃이 있는 것만 들어 있다 */
+export type SpliceSplits = Map<string, SpliceSplit>;
+
+/**
+ * 스플라이스 핀마다 **상대편 노드가 있는 쪽** 변을 정한다 (geometry.SpliceSplit 머리말).
+ *
+ * 화면(docToNodes → nodes.tsx 핸들)·배선 계획(assignLanes)·PDF(buildDrawing)가 모두
+ * 이 함수 하나에서 변을 받는다. 셋이 따로 판단하면 화면의 핸들과 종이의 선이 다른
+ * 변에서 나온다 — 이 레포가 여러 번 겪은 갈라짐이다.
+ *
+ * 판정: 핀에 물린 배선들의 **상대편 끝 핸들 x 평균**이 스플라이스 하우징 가운데보다
+ * 왼쪽이면 왼쪽 변, 오른쪽이면 오른쪽 변. 상대편도 스플라이스면 그 하우징 가운데를
+ * 쓴다(서로의 판정을 기다리는 순환을 끊는다). 같은 변 안의 순서는 상대편 핸들 y
+ * 순이다 — 그래야 같은 변으로 들어오는 가닥끼리 꼬이지 않는다.
+ * 배선이 없는 핀은 방향 쪽 변의 맨 아래에 둔다.
+ *
+ * 양쪽 다 차지 않으면 넣지 않는다 → 그 스플라이스는 예전 기하를 그대로 쓴다.
+ * 논리 뷰 전용이다(물리 뷰는 실물 격자를 통째로 돌려 그린다).
+ */
+export function spliceSplits(
+  doc: HarnessDocument,
+  view: ViewMode,
+  at: Map<string, Vec2> = nodePositions(doc, view),
+  refs: Map<string, string> = refLabels(doc),
+): SpliceSplits {
+  const out: SpliceSplits = new Map();
+  if (view !== 'logical') return out;
+  const none: SpliceSplits = new Map();
+  const byId = new Map(doc.connectors.map((c) => [c.id, c]));
+  /** 스플라이스 하우징 가운데 (절대 좌표) */
+  const centerOf = (id: string): Vec2 | undefined => {
+    const c = byId.get(id);
+    const p = at.get(id);
+    if (!c || !p) return undefined;
+    const g = connectorLayout(c, doc.usedParts.find((x) => x.id === c.housingId));
+    const org = housingOrigin(c.orientation);
+    return { x: p.x + org.x + g.boxW / 2, y: p.y + org.y + g.boxH / 2 };
+  };
+  /** 상대편 끝의 기준점 — 스플라이스면 가운데, 아니면 핸들 */
+  const farPoint = (e: Endpoint): Vec2 | undefined => {
+    if (e.type === 'pin' && byId.get(e.connectorId)?.kind === 'splice') return centerOf(e.connectorId);
+    if (!at.has(endpointNodeId(e))) return undefined;
+    return endpointAnchor(doc, e, view, at, refs, none);
+  };
+
+  for (const c of doc.connectors) {
+    if (c.kind !== 'splice' || (c.orientation !== 0 && c.orientation !== 180)) continue;
+    const mid = centerOf(c.id);
+    if (!mid) continue;
+    const toward: { index: number; side: 'left' | 'right'; y: number }[] = [];
+    for (const pin of c.pins) {
+      const far: Vec2[] = [];
+      for (const w of doc.wires) {
+        const mine = (e: Endpoint) => e.type === 'pin' && e.connectorId === c.id && e.pinId === pin.id;
+        const other = mine(w.from) ? w.to : mine(w.to) ? w.from : null;
+        if (!other) continue;
+        const q = farPoint(other);
+        if (q) far.push(q);
+      }
+      const home = c.orientation === 0 ? 'left' : 'right';
+      if (!far.length) {
+        toward.push({ index: pin.index, side: home, y: Infinity });
+        continue;
+      }
+      const x = far.reduce((s, q) => s + q.x, 0) / far.length;
+      const y = far.reduce((s, q) => s + q.y, 0) / far.length;
+      const side = Math.abs(x - mid.x) < 1e-6 ? home : x < mid.x ? 'left' : 'right';
+      toward.push({ index: pin.index, side, y });
+    }
+    // 양쪽 판정은 **배선이 물린 핀만** 본다 — 빈 핀이 방향 쪽 변을 "차지" 했다고
+    // 세면 이웃이 전부 오른쪽인 스플라이스까지 갈라진다.
+    const wired = toward.filter((t) => Number.isFinite(t.y));
+    if (!wired.some((t) => t.side === 'left') || !wired.some((t) => t.side === 'right')) continue;
+    const order = (s: 'left' | 'right') => toward
+      .filter((t) => t.side === s)
+      .sort((a, b) => (a.y - b.y) || (a.index - b.index))
+      .map((t) => t.index);
+    out.set(c.id, { left: order('left'), right: order('right') });
+  }
+  return out;
+}
+
 export function docToNodes(
   doc: HarnessDocument,
   view: ViewMode,
@@ -111,6 +194,8 @@ export function docToNodes(
   const nodes: Node[] = [];
   const refs = refLabels(doc);
   const at = nodePositions(doc, view);
+  // 스플라이스 핸들 변 — 배선 계획(assignLanes)·PDF 와 같은 함수에서 받는다
+  const splits = spliceSplits(doc, view, at, refs);
   let i = 0;
   for (const c of doc.connectors) {
     nodes.push({
@@ -124,6 +209,7 @@ export function docToNodes(
         view,
         ref: refs.get(c.id),
         hotPins: hotPinsByNode.get(c.id) ?? [],
+        ...(splits.has(c.id) ? { split: splits.get(c.id) } : {}),
       },
     });
     i++;
@@ -391,6 +477,7 @@ export function endpointAnchor(
   view: ViewMode,
   at: Map<string, Vec2> = nodePositions(doc, view),
   refs: Map<string, string> = refLabels(doc),
+  splits: SpliceSplits = spliceSplits(doc, view, at, refs),
 ): Anchor {
   const p = at.get(endpointNodeId(e)) ?? { x: 0, y: 0 };
   if (e.type === 'pin') {
@@ -401,7 +488,7 @@ export function endpointAnchor(
     // 물리 뷰 판정은 layoutCells 로 — 렌더(nodes.tsx)·경계상자(connectorBox)와 같은 기준
     return view === 'physical' && layoutCells(housing?.pinLayout)
       ? pinAnchorPhysical(c, housing, index, p)
-      : pinAnchor(c, housing, index, p);
+      : pinAnchor(c, housing, index, p, splits.get(c.id));
   }
   const d = doc.devices.find((x) => x.id === e.deviceId);
   if (!d) return { x: p.x, y: p.y, side: Position.Left };
@@ -426,13 +513,16 @@ export function endpointBox(
   view: ViewMode,
   at: Map<string, Vec2> = nodePositions(doc, view),
   refs: Map<string, string> = refLabels(doc),
+  splits: SpliceSplits = spliceSplits(doc, view, at, refs),
 ): NodeBox | undefined {
   const p = at.get(endpointNodeId(e));
   if (!p) return undefined;
   if (e.type === 'pin') {
     const c = doc.connectors.find((x) => x.id === e.connectorId);
     if (!c) return undefined;
-    return connectorBox(c, doc.usedParts.find((x) => x.id === c.housingId), p, view, refs.get(c.id));
+    return connectorBox(
+      c, doc.usedParts.find((x) => x.id === c.housingId), p, view, refs.get(c.id), splits.get(c.id),
+    );
   }
   const d = doc.devices.find((x) => x.id === e.deviceId);
   return d ? deviceBox(d, p, refs.get(d.id)) : undefined;
@@ -454,15 +544,19 @@ export function nodeBoxes(
   view: ViewMode,
   at: Map<string, Vec2> = nodePositions(doc, view),
   refs: Map<string, string> = refLabels(doc),
+  splits: SpliceSplits = spliceSplits(doc, view, at, refs),
 ): { id: string; box: NodeBox }[] {
   const out: { id: string; box: NodeBox }[] = [];
   for (const c of doc.connectors) {
     const p = at.get(c.id);
     if (!p) continue;
-    out.push({
-      id: c.id,
-      box: connectorBox(c, doc.usedParts.find((x) => x.id === c.housingId), p, view, refs.get(c.id)),
-    });
+    const housing = doc.usedParts.find((x) => x.id === c.housingId);
+    const split = splits.get(c.id);
+    out.push({ id: c.id, box: connectorBox(c, housing, p, view, refs.get(c.id), split) });
+    // 양쪽 스플라이스는 이름표를 상자에서 뺐다 — 같은 id 로 따로 피하게 한다
+    for (const box of connectorLabelObstacles(c, housing, p, refs.get(c.id), split)) {
+      out.push({ id: c.id, box });
+    }
   }
   for (const d of doc.devices) {
     const p = at.get(d.id);
@@ -717,13 +811,15 @@ export function assignLanes(doc: HarnessDocument, view: ViewMode = 'logical'): W
   // **핸들 좌표보다 먼저** 구한다: 장치 블록은 이름표 폭만큼 넓어지고(deviceSize)
   // 오른쪽 변 단자 핸들의 x 가 곧 그 폭이라, 상자와 같은 ref 를 써야 어긋나지 않는다.
   const refs = refLabels(doc);
-  const from = doc.wires.map((w) => endpointAnchor(doc, w.from, view, at, refs));
-  const to = doc.wires.map((w) => endpointAnchor(doc, w.to, view, at, refs));
+  // 스플라이스 핸들 변도 문서당 한 번 — 화면 핸들(docToNodes)·PDF 와 같은 함수다
+  const splits = spliceSplits(doc, view, at, refs);
+  const from = doc.wires.map((w) => endpointAnchor(doc, w.from, view, at, refs, splits));
+  const to = doc.wires.map((w) => endpointAnchor(doc, w.to, view, at, refs, splits));
 
-  const fromBox = doc.wires.map((w) => endpointBox(doc, w.from, view, at, refs));
-  const toBox = doc.wires.map((w) => endpointBox(doc, w.to, view, at, refs));
+  const fromBox = doc.wires.map((w) => endpointBox(doc, w.from, view, at, refs, splits));
+  const toBox = doc.wires.map((w) => endpointBox(doc, w.to, view, at, refs, splits));
   // 제3의 노드 회피용. 문서당 한 번만 만들어 배선 전체가 같은 배열을 나눠 쓴다.
-  const obstacles = nodeBoxes(doc, view, at, refs).map((n) => n.box);
+  const obstacles = nodeBoxes(doc, view, at, refs, splits).map((n) => n.box);
 
   // 1) 가로 주행 구간 — x 로 겹치는 배선끼리 y 를 달리한다.
   //

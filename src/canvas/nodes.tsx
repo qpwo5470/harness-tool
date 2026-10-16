@@ -19,8 +19,8 @@
  *  (5) 노드 폭은 **하우징 폭**으로 고정한다. 라벨이 노드 폭을 늘리면 하우징이
  *      밀려 "노드 좌상단 x == 하우징 x" 전제가 깨진다 — geometry 가 그걸 쓴다.
  */
-import type { CSSProperties } from 'react';
-import { Handle, Position, type NodeProps } from '@xyflow/react';
+import { useEffect, type CSSProperties } from 'react';
+import { Handle, Position, useUpdateNodeInternals, type NodeProps } from '@xyflow/react';
 import type { Connector, Device, PartLibraryItem, ViewMode, Orientation } from '../types';
 /**
  * 기하 상수·계산은 전부 geometry.ts 한 곳에만 둔다.
@@ -30,7 +30,7 @@ import {
   PITCH, INSET, PIN_PHYS, PIN_PHYS_PITCH, REF_BLOCK_H, MPN_CAPTION_H,
   DEV_PAD, DEV_ROW_H, PIN_NUM_FS,
   connectorLayout, connectorRefParts, labelsAlignRight, layoutCells, pinNumberAlign,
-  deviceSize, deviceRefParts, deviceCaption,
+  deviceSize, deviceRefParts, deviceCaption, type SpliceSplit,
 } from './geometry';
 /**
  * 러그 기호는 라이브러리 목록과 **같은 도형**을 쓴다 — 근거가 둘이면 목록과
@@ -47,6 +47,11 @@ export type ConnectorNodeData = {
   ref?: string;
   /** 이 노드에 물린, 현재 강조 중인 핀 id 들 */
   hotPins?: string[];
+  /**
+   * 양쪽 배선 스플라이스의 변 배정 — docToFlow.spliceSplits 가 위치에서 유도한다.
+   * 배선 계획·PDF 가 같은 값을 쓴다. 없으면 모든 핸들이 방향 쪽 변 하나에 선다.
+   */
+  split?: SpliceSplit;
 };
 export type DeviceNodeData = { device: Device; ref?: string; hotPins?: string[] };
 
@@ -78,11 +83,21 @@ function lugTurn(o: Orientation): string {
   return o === 0 ? 'scaleX(-1)' : o === 90 ? 'rotate(-90deg)' : o === 270 ? 'rotate(90deg)' : 'none';
 }
 
-export function ConnectorNode({ data, selected }: NodeProps) {
-  const { connector, housing, view, ref: refLabel, hotPins } = data as unknown as ConnectorNodeData;
+export function ConnectorNode({ id, data, selected }: NodeProps) {
+  const { connector, housing, view, ref: refLabel, hotPins, split } = data as unknown as ConnectorNodeData;
   const isSplice = connector.kind === 'splice';
   const o = connector.orientation;
   const hot = new Set(hotPins ?? []);
+
+  /*
+   * 스플라이스 핸들이 변을 옮기면 React Flow 에 다시 재 달라고 알린다.
+   * React Flow 는 핸들 자리(handleBounds)를 노드 크기가 바뀔 때만 다시 재는데,
+   * 변을 옮겨도 노드 크기는 그대로다 — 알리지 않으면 엣지가 옛 변에 붙어 있다.
+   * (노드를 끌어 이웃의 좌우가 바뀌는 순간이 바로 그 경우다)
+   */
+  const updateNodeInternals = useUpdateNodeInternals();
+  const splitKey = split ? `${split.left.join(',')}|${split.right.join(',')}` : '';
+  useEffect(() => { updateNodeInternals(id); }, [id, splitKey, updateNodeInternals]);
 
   // ── 물리 뷰: 기존 회전 렌더 유지 (제조 도면 뷰는 별도 과제) ──────────────
   /**
@@ -168,23 +183,27 @@ export function ConnectorNode({ data, selected }: NodeProps) {
    * 그래서 `cell` 은 **그리는 격자** 좌표다. 저장된 pinLayout.offset(부품 정의
    * 기준)이 필요하면 `geo.defCellOf` 를 써라.
    */
-  const geo = connectorLayout(connector, housing);
-  const { layout, boxW, boxH, side, orderedPins } = geo;
+  const geo = connectorLayout(connector, housing, split);
+  const { layout, boxW, boxH, orderedPins } = geo;
 
   // 이름표 글자는 geometry 가 만든다 — 경계 상자의 폭을 그 글자로 재기 때문에
   // 여기서 따로 조립하면 상자와 화면이 조용히 갈린다(PDF 도 같은 함수를 쓴다).
-  const refParts = connectorRefParts(connector, housing, refLabel);
+  const refParts = connectorRefParts(connector, housing, refLabel, split);
 
-  /** 핸들 위치 — 노드 **가장자리**에 절대 위치 (핀 셀에 붙이면 선이 도형 중간에서 시작한다) */
+  /**
+   * 핸들 위치 — 노드 **가장자리**에 절대 위치 (핀 셀에 붙이면 선이 도형 중간에서 시작한다).
+   * 변은 핀마다 geometry.sideOf 가 정한다 — 양쪽 스플라이스는 핀마다 다르다.
+   */
   const handleStyle = (index: number): CSSProperties => {
     const along = geo.along(index);
+    const s = geo.sideOf(index);
     const common: CSSProperties = {
       width: 6, height: 6, background: 'var(--accent)',
       border: '1px solid #fff', borderRadius: 0, zIndex: 3,
     };
-    if (o === 90) return { ...common, top: 0, left: along, transform: 'translate(-50%, -50%)' };
-    if (o === 270) return { ...common, bottom: 0, left: along, transform: 'translate(-50%, 50%)' };
-    if (o === 0) return { ...common, left: 0, top: along, transform: 'translate(-50%, -50%)' };
+    if (s === Position.Top) return { ...common, top: 0, left: along, transform: 'translate(-50%, -50%)' };
+    if (s === Position.Bottom) return { ...common, bottom: 0, left: along, transform: 'translate(-50%, 50%)' };
+    if (s === Position.Left) return { ...common, left: 0, top: along, transform: 'translate(-50%, -50%)' };
     return { ...common, right: 0, top: along, transform: 'translate(50%, -50%)' };
   };
 
@@ -200,6 +219,8 @@ export function ConnectorNode({ data, selected }: NodeProps) {
    * 근거와 다른 방향의 처리는 geometry.labelsAlignRight 에 적어 뒀다.
    */
   const alignRight = labelsAlignRight(o);
+  /** 양쪽 스플라이스는 이름표를 가운데에 둔다 (geometry.connectorLabelRects 와 같은 규칙) */
+  const centered = geo.twoSided;
 
   /** 핀 번호를 패드 안에서 배선이 나가는 변 쪽으로 붙인다 (geometry.pinNumberAlign) */
   const numAlign = pinNumberAlign(o);
@@ -214,7 +235,12 @@ export function ConnectorNode({ data, selected }: NodeProps) {
    * absolute 로 띄우면 글자는 슬롯 밖으로 넘치되 레이아웃 폭은 boxW 로 남는다.
    */
   const labelSlot = (h: number): CSSProperties => ({ position: 'relative', width: boxW, height: h });
-  const labelAt: CSSProperties = { position: 'absolute', top: 0, ...(alignRight ? { right: 0 } : { left: 0 }) };
+  const labelAt: CSSProperties = {
+    position: 'absolute', top: 0,
+    ...(centered
+      ? { left: '50%', transform: 'translateX(-50%)', whiteSpace: 'nowrap' }
+      : alignRight ? { right: 0 } : { left: 0 }),
+  };
 
   const refBlock = (
     <div className="hz-label-slot" style={labelSlot(REF_BLOCK_H)}>
@@ -225,7 +251,8 @@ export function ConnectorNode({ data, selected }: NodeProps) {
       >
         <b className="num">{refParts.ref}</b>
         <span className="hz-ref-name">{refParts.name}</span>
-        <span className="hz-ref-dir num">{refParts.dir}</span>
+        {/* 양쪽 스플라이스는 방향 칸이 비어 있다 — 빈 칸에 gap 이 붙지 않게 아예 빼 둔다 */}
+        {refParts.dir && <span className="hz-ref-dir num">{refParts.dir}</span>}
       </div>
     </div>
   );
@@ -271,7 +298,8 @@ export function ConnectorNode({ data, selected }: NodeProps) {
           </div>
         ) : (
           <>
-            <Latch o={o} color={boxColor} />
+            {/* 양쪽 스플라이스에는 결합 방향이 없다 — 래치를 그리면 핸들 위에 겹친다 */}
+            {!geo.twoSided && <Latch o={o} color={boxColor} />}
             {/* 좌상단 등록 마크 = 1번 핀 기준점 */}
             <div
               className="hz-regmark"
@@ -319,8 +347,8 @@ export function ConnectorNode({ data, selected }: NodeProps) {
         {/* 핸들: 노드 가장자리 고정 — 배선이 도형 변에서 시작한다 */}
         {orderedPins.map((pin) => (
           <div key={`h-${pin.id}`}>
-            <Handle id={pin.id} type="target" position={side} style={{ ...handleStyle(pin.index), opacity: 0 }} />
-            <Handle id={pin.id} type="source" position={side} style={handleStyle(pin.index)} />
+            <Handle id={pin.id} type="target" position={geo.sideOf(pin.index)} style={{ ...handleStyle(pin.index), opacity: 0 }} />
+            <Handle id={pin.id} type="source" position={geo.sideOf(pin.index)} style={handleStyle(pin.index)} />
           </div>
         ))}
       </div>
